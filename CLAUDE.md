@@ -1,0 +1,84 @@
+# CLAUDE.md
+
+Rules for every agent session in this repository. The process is in `docs/process.md`; coding rules
+are in `docs/coding-guidelines.md`; review rules are in `REVIEW.md`.
+
+## Sources of truth
+
+Order of authority: Margo specification → `SPEC.md` → `docs/adr/` → code. Code is never the source
+of truth.
+
+- `SPEC.md` — implementation contract (MUST/SHOULD, §17 tests, §18 checklist, Appendix B order).
+- `docs/system-overview.md` — how the system works and why.
+- `docs/adr/` — decisions on anything the spec calls "implementation-defined".
+
+## Working rules
+
+1. **Spec first.** No behavior change without a `SPEC.md` change in the same PR. If the spec is
+   ambiguous or silent, stop and propose a spec edit or ADR; don't decide it in code.
+2. **Plan before code.** State the § sections, files, tests and out-of-scope items, with at least two
+   design options for any new or changed module (G-A7). Wait for approval.
+3. **Tests before code.** Write the §17 tests first, named after their bullet
+   (`TestSpec_17_4_…`), and show them failing for the right reason.
+4. **Small slices.** One Appendix B step or smaller per PR. Stay inside the approved slice; record
+   anything else as an issue or ADR draft.
+5. **Traceability.** Cite § numbers in code comments (`// SPEC §8.5`), test names, commits and PRs.
+6. **Follow `docs/coding-guidelines.md`.** Cite rule IDs (G-A1…) when explaining a design choice.
+7. **Verify locally before every push** (commands below). Never push red.
+
+## Guardrails
+
+- Never push to `main`, merge, skip/disable tests, or weaken a test to make it pass.
+- Never edit generated code by hand (`ent/` is generated; see `docs/contributing.md`).
+- No secrets in prompts, code, logs, tests or fixtures.
+- §15 areas (TLS, credentials, enrollment, archive extraction, §9.2 safety invariants) always get
+  `/security-review` and human review.
+- Intelligent features (placement scoring, anomaly detection, assistants) advise; the deterministic
+  core decides, with a baseline fallback.
+
+## Repository map
+
+Go module `github.com/balaji-balu/margo-hello-world` (Go 1.25).
+
+| Path | Contents |
+| --- | --- |
+| `cmd/co`, `internal/co`, `pkg/co` | Central Orchestrator (CO) |
+| `cmd/lo`, `internal/lo` | Local Orchestrator (LO): reconciler, boltstore, watcher, actuators |
+| `cmd/era`, `internal/era`, `pkg/era` | Edge Node agent (EN in `SPEC.md`; called ERA in code): runtime plugins, lifecycle, heartbeat |
+| `cmd/edgectl`, `edgectl/` | Operator CLI |
+| `internal/natsbroker`, `internal/streammanager` | NATS messaging |
+| `internal/git*`, `internal/ocifetch` | Git-based delivery (being replaced, Appendix B step 2) and OCI fetch |
+| `ent/`, `db/`, `atlas.hcl` | ent schema (generated), migrations |
+| `pkg/model`, `pkg/deployment`, `pkg/application` | Shared domain types |
+| `proto/` | Protobuf definitions |
+| `configs/` | Component configs and FSM definitions |
+| `deploy/` | Compose and Helm deployment |
+| `tests/` | e2e tests, fixtures, seeds |
+
+## Commands
+
+```sh
+gofmt -l .                       # must print nothing for changed files
+go build ./...
+go vet ./...
+golangci-lint run ./...          # on changed packages at minimum
+go test -race ./...              # changed packages at minimum
+```
+
+Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
+`go run ./cmd/co`, `./cmd/lo`, `./cmd/era`. Schema changes: see `docs/contributing.md`.
+
+Known baseline issues (as of this file's creation): `go build ./...` fails in
+`internal/era/plugins/wasm`, and `tests/e2e` fails. Don't make them worse; fix them only in a slice
+that covers them. Until they are fixed, verify with the package paths you changed.
+
+## Pull requests
+
+- List the affected § sections; update `SPEC.md` (and the overview if the design changed).
+- Include the §17 tests added or updated, and tick §18 checklist items where they apply.
+- Run `/code-review` before asking for human review; resolve or answer every finding.
+
+## Learning
+
+When a review finding repeats, or a session goes wrong in a way a rule would have prevented, propose
+an addition to this file or `docs/coding-guidelines.md` in the same PR (process stage 9).
