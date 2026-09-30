@@ -1,7 +1,7 @@
 # PR gate for docs/process.md stage 6 (Verify). Mirrors the local commands in CLAUDE.md.
 #
 # Ratchet: legacy code is not yet clean, so
-#  - build and test skip the packages listed in scripts/go-packages.sh (KNOWN_BROKEN);
+#  - build and test skip the broken packages listed in scripts/go-packages.sh;
 #  - lint and format checks apply only to lines a change adds or modifies.
 # Both tighten as the baseline is fixed. Never loosen them to get green.
 name: CI
@@ -16,7 +16,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only PR runs are superseded. Each main run lints just its own commit, so
+  # cancelling one would leave that merge unchecked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-test:
@@ -35,7 +37,7 @@ jobs:
       # go vet runs in the lint job (govet, new issues only); legacy vet
       # findings would otherwise fail every test run.
       - name: Test
-        run: go test -race -vet=off -count=1 $(scripts/go-packages.sh)
+        run: go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
 
   lint:
     name: Lint (new issues)
@@ -52,18 +54,23 @@ jobs:
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
 
+      # PRs: everything the branch adds since it left the base.
+      # main: the merged commit against its first parent (the previous main),
+      # which exists even after a force-push or on a first push.
       - name: Choose baseline revision
         id: base
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
-          BEFORE: ${{ github.event.before }}
         run: |
           if [ "$EVENT" = "pull_request" ]; then
             echo "flag=--new-from-merge-base=origin/$BASE_REF" >> "$GITHUB_OUTPUT"
           else
-            echo "flag=--new-from-rev=$BEFORE" >> "$GITHUB_OUTPUT"
+            echo "flag=--new-from-rev=HEAD^1" >> "$GITHUB_OUTPUT"
           fi
 
       - name: golangci-lint (includes gofmt, goimports, govet)
-        run: golangci-lint run ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh)
+        run: golangci-lint run ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh test)
+
+      - name: golangci-lint, packages with broken tests (production code only)
+        run: golangci-lint run --tests=false ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh no-test)

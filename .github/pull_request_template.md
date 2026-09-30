@@ -39,4 +39,4 @@ Closes #
 - [ ] `/security-review` run, if this touches §15 areas (TLS, credentials, enrollment, archive extraction, §9.2)
 - [ ] ADR added for any implementation-defined choice
 - [ ] §18 checklist items ticked where applicable
-- [ ] No package added to `KNOWN_BROKEN` in `scripts/go-packages.sh`; fixed packages removed from it
+- [ ] No package added to `KNOWN_BROKEN`/`BROKEN_TESTS` in `scripts/go-packages.sh`; fixed packages removed

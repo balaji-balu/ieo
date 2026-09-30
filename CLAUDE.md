@@ -62,19 +62,20 @@ Go module `github.com/balaji-balu/margo-hello-world` (Go 1.25).
 Same checks as CI (`.github/workflows/ci.yaml`):
 
 ```sh
-PKGS=$(scripts/go-packages.sh)   # all packages except KNOWN_BROKEN
-go build $PKGS
-go test -race -vet=off -count=1 $PKGS
-golangci-lint run --new-from-merge-base=origin/main $PKGS   # gofmt, goimports, govet, … on changed lines
+go build $(scripts/go-packages.sh)
+go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
+# gofmt, goimports, govet, … on changed lines only:
+golangci-lint run --new-from-merge-base=origin/main $(scripts/go-packages.sh test)
+golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-packages.sh no-test)
 ```
 
 Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
 `go run ./cmd/co`, `./cmd/lo`, `./cmd/era`. Schema changes: see `docs/contributing.md`.
 
-Known baseline issues: the packages in `KNOWN_BROKEN` (`scripts/go-packages.sh`) don't compile or
-have tests that don't compile, and the rest of the legacy code has lint and `go vet` findings. CI is
-a ratchet: it skips `KNOWN_BROKEN` and lints only changed lines. Never add a package to
-`KNOWN_BROKEN`; a slice that fixes one removes it from the list.
+Known baseline issues: in `scripts/go-packages.sh`, `KNOWN_BROKEN` packages don't compile and
+`BROKEN_TESTS` packages have test files that don't compile; the rest of the legacy code has lint and
+`go vet` findings. CI is a ratchet: it skips what is broken and lints only changed lines. Never add a
+package to either list; a slice that fixes one removes it.
 
 ## Pull requests
 
