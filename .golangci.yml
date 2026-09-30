@@ -1,0 +1,42 @@
+# golangci-lint v2 configuration. See docs/coding-guidelines.md §E.
+# CI runs this with only-new-issues: legacy code is not yet clean, so only
+# lines a PR adds or changes must pass. Tighten as the baseline is fixed.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # G-E5: no leaked HTTP bodies
+    - contextcheck # G-E2: context passed through
+    - errorlint # G-B3: errors.Is/As and %w
+    - gocognit # G-C5: cognitive load
+    - misspell
+    - nilerr # G-B3: returning nil after an error
+    - noctx # G-E2: HTTP requests carry a context
+    - revive # G-C1: exported identifiers documented
+  settings:
+    gocognit:
+      min-complexity: 30
+    revive:
+      rules:
+        - name: exported
+        - name: error-strings
+        - name: error-naming
+        - name: var-naming
+        - name: context-as-argument
+  exclusions:
+    generated: strict # G-E8: never lint generated code (ent/)
+    paths:
+      - ent/
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: strict
+    paths:
+      - ent/

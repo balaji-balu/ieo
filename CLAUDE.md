@@ -59,20 +59,22 @@ Go module `github.com/balaji-balu/margo-hello-world` (Go 1.25).
 
 ## Commands
 
+Same checks as CI (`.github/workflows/ci.yaml`):
+
 ```sh
-gofmt -l .                       # must print nothing for changed files
-go build ./...
-go vet ./...
-golangci-lint run ./...          # on changed packages at minimum
-go test -race ./...              # changed packages at minimum
+PKGS=$(scripts/go-packages.sh)   # all packages except KNOWN_BROKEN
+go build $PKGS
+go test -race -vet=off -count=1 $PKGS
+golangci-lint run --new-from-merge-base=origin/main $PKGS   # gofmt, goimports, govet, … on changed lines
 ```
 
 Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
 `go run ./cmd/co`, `./cmd/lo`, `./cmd/era`. Schema changes: see `docs/contributing.md`.
 
-Known baseline issues (as of this file's creation): `go build ./...` fails in
-`internal/era/plugins/wasm`, and `tests/e2e` fails. Don't make them worse; fix them only in a slice
-that covers them. Until they are fixed, verify with the package paths you changed.
+Known baseline issues: the packages in `KNOWN_BROKEN` (`scripts/go-packages.sh`) don't compile or
+have tests that don't compile, and the rest of the legacy code has lint and `go vet` findings. CI is
+a ratchet: it skips `KNOWN_BROKEN` and lints only changed lines. Never add a package to
+`KNOWN_BROKEN`; a slice that fixes one removes it from the list.
 
 ## Pull requests
 

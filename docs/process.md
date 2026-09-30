@@ -74,9 +74,9 @@ Order of authority: Margo → `SPEC.md` → ADRs → code.
 | `CLAUDE.md` | Agent rules, repo map, commands to run |
 | `docs/coding-guidelines.md` | Rules applied at Plan, Implement and Review |
 | `REVIEW.md` | Guides `/code-review`: what to check, severity, red flags |
-| `.github/workflows/ci.yaml` | PR gate: build, vet, golangci-lint, `go test -race` |
+| `.github/workflows/ci.yaml` | PR gate: build, `go test -race`, golangci-lint (incl. vet, gofmt) on changed lines; skips `KNOWN_BROKEN` in `scripts/go-packages.sh` |
 | SessionStart hook | Cloud sessions can run the same checks |
-| PR template | Definition of done as checkboxes |
+| `.github/pull_request_template.md` | Definition of done as checkboxes |
 | ADR template | Consistent decision records |
 | Conformance script | Lists §17 bullets with no matching test |
 
