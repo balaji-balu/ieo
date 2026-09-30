@@ -2,6 +2,8 @@
 
 Status: v1 · Referenced by: `constitution.md`
 
+Map of how the process documents link: `docs/docs-map.md`.
+
 ## 1. Sources of truth
 
 | Artifact | Role | Owner |
