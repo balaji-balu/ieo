@@ -1,6 +1,6 @@
 # AI-Native SDLC — Intelligent Edge Orchestrator
 
-Status: v1 · Referenced by: `constitution.md`
+Status: v1.1 · Referenced by: `CLAUDE.md`
 
 ## 1. Sources of truth
 
@@ -40,6 +40,13 @@ Order of authority: Margo → `SPEC.md` → ADRs → code.
 | 7 | Review | AI: `/code-review`, `/security-review` (for §15 areas). Human: "matches spec?" | All threads resolved |
 | 8 | Merge | Squash merge; §18 checklist updated | Spec, overview and code agree |
 | 9 | Learn | Update `CLAUDE.md`/spec from what went wrong | — |
+
+### 3.1 Already-specified work (ADR 0007)
+
+When a change only implements `SPEC.md` bullets that already exist, stages 1–2 collapse into the
+issue (goal, § bullets, out of scope) and no spec PR is needed. The human gates are plan approval
+(stage 3) and PR review and merge (stages 7–8); tests are reviewed in the PR. New, changed or
+unspecified behavior still goes through stage 2 first.
 
 ## 4. Roles
 
@@ -87,4 +94,4 @@ Order of authority: Margo → `SPEC.md` → ADRs → code.
 
 ## 9. Build sequence
 
-Setup (§7 enablers) → Appendix B steps 1–6, one slice per PR → intelligent features, each entering as a new `[IEO]` spec section.
+Setup (§7 enablers) → Appendix B vertical slices, one per PR, as listed in `docs/roadmap.md` → next proposals, each entering as a new `[IEO]` spec section.

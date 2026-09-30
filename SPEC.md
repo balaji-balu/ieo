@@ -1472,12 +1472,17 @@ design.
 
 ## Appendix B. Migration Notes for This Repository
 
-The current code predates this specification. Implementations in this repository SHOULD migrate in
-this order, keeping the Site Integration golden path (§17.8) green after each step:
+The current code predates this specification. It is replaced, not migrated: new packages are built
+from this document and the old Git-based code is deleted as each slice replaces it (ADR 0002).
 
-1. Contract types and test harness (§11, §17.8 environment).
-2. CO Margo API and manifest; LO sync replacing Git-based delivery.
-3. EN Compose execution and the §11.2 message set, replacing per-component messages.
-4. Status mapping and outbox.
-5. Mutual TLS and scoped NATS credentials.
-6. Appendix A.
+Implementations in this repository SHOULD build in vertical slices, each one running end to end
+from `edgectl` through CO, LO and EN, in this order (details in `docs/roadmap.md`):
+
+1. Golden path v0: contract types and test harness (§11, §17.1), then CO deployment and manifest,
+   LO sync, LO planning with EN Compose execution, and status to `edgectl`, one slice per change.
+2. Golden path complete: update, delete, autonomous placement, host liveness.
+3. Site autonomy and recovery: status outbox, retries, restart recovery, observability.
+4. Mutual TLS and scoped NATS credentials, replacing the interim token rules (ADR 0005).
+5. Appendix A (moving to a proposal; see ADR 0006).
+
+After each slice, the parts of the §17.8 golden path it covers MUST stay green.
