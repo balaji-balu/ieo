@@ -3,11 +3,11 @@
 | | |
 | --- | --- |
 | Status | Draft v0.3 |
-| Last updated | 2026-09-29 |
+| Last updated | 2026-09-30 |
 | Margo baseline | Margo Specification pre-draft, Workload Management API `1.0.0-rc.3` ([margo/specification](https://github.com/margo/specification), commit `f209a7f`, 2026-09-16) |
 | Audience | Contributors and coding agents. Read this before any feature spec. |
 
-This document describes **how the system works**: its parts, their responsibilities, the contracts between them, and the end-to-end flows. It is not a requirements list. Requirements live in per-feature specs under `specs/`; project-wide rules live in the constitution. When a feature changes anything described here, the same change updates this document.
+This document describes **how the system works**: its parts, their responsibilities, the contracts between them, and the end-to-end flows. It is not a requirements list. The implementation contract (normative requirements, reference algorithms and conformance tests) lives in [`SPEC.md`](../SPEC.md). When a feature changes anything described here, the same change updates this document.
 
 Words in **MUST / SHOULD / MAY** follow RFC 2119. Where this document repeats a Margo rule, the Margo specification is authoritative; where it defines something Margo leaves open (marked **[IEO]**), this document is authoritative.
 
@@ -132,7 +132,7 @@ Per the Margo Identity and Authorization Framework:
 ### 4.3 Site-internal identity (LO ↔ EN) [IEO]
 
 - NATS runs with TLS and per-host credentials (NKEY or user JWT) in the **CONTROL** account, issued when a host joins the site.
-- Each EN may publish only on its own subjects (`site.<site-id>.host.<host-id>.>`) and subscribe only to its own command subject. The LO has access to all host subjects of its site.
+- Each EN may publish only on its own subjects (`site.<site-id>.host.<host-id>.>`) and subscribe only to its own command subject and to the site-wide inventory request (`site.<site-id>.inventory.request`). The LO has access to all host subjects of its site.
 - Workloads never receive CONTROL credentials. Their data-plane identity is described in §11.6.
 
 ## 5. End-to-end flows
@@ -290,7 +290,8 @@ Subjects (all JSON payloads; `<s>` = site ID, `<h>` = host ID):
 | `site.<s>.host.<h>.status` | EN → LO | publish | `ComponentStatusEvent` |
 | `site.<s>.host.<h>.inventory` | EN → LO | publish (on start, on reconnect, every 60 s) | `Inventory` |
 | `site.<s>.host.<h>.heartbeat` | EN → LO | publish (every 10 s) | `Heartbeat` |
-| `site.<s>.host.<h>.capabilities` | EN → LO | publish (on start and on change) | Margo `DeviceCapabilitiesManifest` properties + labels |
+| `site.<s>.host.<h>.capabilities` | EN → LO | publish (on start and on change) | `Capabilities` |
+| `site.<s>.inventory.request` | LO → all ENs | publish | `{}`; every EN answers by publishing its `Inventory` |
 
 Messages:
 
@@ -316,6 +317,9 @@ Messages:
 
 // Heartbeat (EN → LO)
 { "hostId": "host-03", "at": "RFC 3339", "uptimeSeconds": 12345 }
+
+// Capabilities (EN → LO): Margo DeviceCapabilitiesManifest properties plus labels
+{ "hostId": "host-03", "capabilities": { /* cpus, memory, storage, … (§5.2) */ }, "labels": { "line": "2" } }
 ```
 
 Design decisions:
@@ -347,7 +351,7 @@ The LO MUST persist `manifestVersion` and ETag durably so that rollback protecti
 | EN unreachable from LO | Host marked offline after 3 missed heartbeats; no commands sent; its deployments reported `pending`. On return: EN publishes inventory, LO reconciles. |
 | Command fails on EN | Component reported `failed` with error; actual state unchanged; LO retries on subsequent reconcile passes with exponential backoff per deployment. |
 | Container crashes | Compose restart policy applies; if it does not recover, component reported `failed`. |
-| LO restarts | Reloads BoltDB, re-polls CO, requests inventory from all ENs, reconciles. |
+| LO restarts | Reloads BoltDB, re-polls CO, requests inventory from all ENs (`site.<s>.inventory.request`), reconciles. |
 | EN restarts | Reloads its record of applied deployments, publishes inventory; LO reconciles any drift. |
 | Site loses its hub link | Site-local services, topics and object store keep working. Outgoing topic data is buffered in the site stream (24 h default) and forwarded on reconnect. Cross-site service calls fail fast with "no responders"; callers must handle it (§11.7). |
 | Hub unavailable | Same as above for every site; aggregated streams catch up from the site buffers when the hub returns. |
