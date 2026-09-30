@@ -7,6 +7,10 @@ How the process documents relate. GitHub renders the diagrams below.
 ```mermaid
 mindmap
   root((AI-native SDLC))
+    Principles
+      constitution.md
+        8 non-negotiable articles
+        Amendment rule
     Intent and contract
       SPEC.md
         MUST / SHOULD rules
@@ -48,6 +52,7 @@ mindmap
 
 ```mermaid
 flowchart LR
+  const["constitution.md<br/><i>principles</i>"]
   margo[/"Margo specification<br/>(external)"/]
   spec["SPEC.md<br/><i>implementation contract</i>"]
   overview["docs/system-overview.md<br/><i>design and reasons</i>"]
@@ -57,6 +62,11 @@ flowchart LR
   guide["docs/coding-guidelines.md<br/><i>G-A1…G-F5</i>"]
   review["REVIEW.md<br/><i>review checklist</i>"]
 
+  const -- "governs" --> process
+  const -- "governs" --> spec
+  const -- "governs" --> guide
+  const -- "governs" --> review
+  const -- "governs" --> claude
   margo -- "authoritative over [Margo] rules" --> spec
   spec <-- "explains / implements" --> overview
   adr -- "fills gaps in" --> spec
@@ -97,6 +107,7 @@ flowchart LR
 
 ## Documents
 
+- [constitution.md](../constitution.md)
 - [SPEC.md](../SPEC.md)
 - [docs/system-overview.md](system-overview.md)
 - [docs/adr/](adr/)

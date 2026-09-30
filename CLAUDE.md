@@ -5,6 +5,8 @@ are in `docs/coding-guidelines.md`; review rules are in `REVIEW.md`.
 
 ## Sources of truth
 
+Project principles: `constitution.md` (nothing here may contradict it).
+
 Order of authority: Margo specification → `SPEC.md` → `docs/adr/` → code. Code is never the source
 of truth.
 
