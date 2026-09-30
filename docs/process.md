@@ -12,6 +12,8 @@ Status: v1 · Referenced by: `constitution.md`
 | Tests | The executable spec; the acceptance gate | Agent writes, human reviews |
 | Code | Implements the spec; never the source of truth | Agent |
 | `CLAUDE.md` | Rules every agent session follows | Human |
+| `docs/coding-guidelines.md` | Coding rules (APOSD-based), cited by ID in plans and reviews | Human |
+| `REVIEW.md` | AI review checklist and severity levels | Human |
 
 Order of authority: Margo → `SPEC.md` → ADRs → code.
 
@@ -68,6 +70,8 @@ Order of authority: Margo → `SPEC.md` → ADRs → code.
 | Enabler | Purpose |
 | --- | --- |
 | `CLAUDE.md` | Agent rules, repo map, commands to run |
+| `docs/coding-guidelines.md` | Rules applied at Plan, Implement and Review |
+| `REVIEW.md` | Guides `/code-review`: what to check, severity, red flags |
 | `.github/workflows/ci.yaml` | PR gate: build, vet, golangci-lint, `go test -race` |
 | SessionStart hook | Cloud sessions can run the same checks |
 | PR template | Definition of done as checkboxes |
