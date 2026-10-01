@@ -108,6 +108,19 @@ jobs:
           echo "en1 → $id1"; echo "en2 → $id2"
           test -n "$id1" && test -n "$id2" && test "$id1" != "$id2"
 
+      - name: An EN cannot reach another host's engine
+        run: |
+          if $COMPOSE exec -T en2 wget -qO- -T 5 http://host1:2375/version; then
+            echo "en2 reached host1's engine"; exit 1
+          fi
+
+      - name: A restarted EN registers again
+        run: |
+          $COMPOSE restart en1
+          sleep 15
+          $COMPOSE logs en1 | tail -5
+          test "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$($COMPOSE ps -q en1)")" = "true 0"
+
       - name: Logs
         if: failure()
         run: $COMPOSE logs --no-color

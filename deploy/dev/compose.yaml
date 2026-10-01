@@ -10,8 +10,8 @@
 #
 # Each simulated host is two containers that act as one machine: hostN runs its own Docker engine
 # (docker:dind) and enN shares its network namespace, so enN reaches that engine, and only that
-# engine, at tcp://127.0.0.1:2375. Both mount the host's EN data volume at the same path, so
-# Compose files the EN writes are visible to the engine at the same path.
+# engine, at tcp://127.0.0.1:2375. When slice D has the EN write Compose files, it adds a volume
+# shared by both at the same path.
 # See docs/dev-setup.md.
 
 name: ieo-dev
@@ -24,10 +24,14 @@ x-host: &host
   image: docker:27-dind
   privileged: true # dind needs it
   environment:
-    DOCKER_TLS_CERTDIR: "" # plain TCP, bound to the host's own loopback only
+    DOCKER_TLS_CERTDIR: "" # no TLS: the TCP listener is on the host's own loopback only
+  # Starts with "dockerd" so the dind entrypoint adds no defaults of its own (they would also listen
+  # on 0.0.0.0:2375, open to every container on the network).
   command:
+    - dockerd
     - --host=unix:///var/run/docker.sock
     - --host=tcp://127.0.0.1:2375
+    - --tls=false
     - --insecure-registry=registry:5000
   healthcheck:
     test: ["CMD", "docker", "version"]
@@ -45,6 +49,11 @@ x-en: &en
     IEO_EN_NATS_URL: nats://nats:4222
     IEO_EN_LO_URL: http://lo:9010
     DOCKER_HOST: tcp://127.0.0.1:2375 # this host's engine; used once slice D wires EN to Docker
+  # EN keeps its host ID here. tmpfs starts empty on every container start, so each start registers
+  # a new ID: the current CO rejects a host ID it already has, so a kept ID could never register
+  # again after a restart.
+  tmpfs:
+    - /var/lib/ieo/en
   # EN registers with the LO once at startup and exits if that fails; restart retries it.
   restart: unless-stopped
 
@@ -141,12 +150,9 @@ services:
     <<: *host
     volumes:
       - host1-engine:/var/lib/docker
-      - host1-en:/var/lib/ieo/en
   en1:
     <<: *en
     network_mode: service:host1
-    volumes:
-      - host1-en:/var/lib/ieo/en
     depends_on:
       host1: { condition: service_healthy }
       lo: { condition: service_healthy }
@@ -156,12 +162,9 @@ services:
     <<: *host
     volumes:
       - host2-engine:/var/lib/docker
-      - host2-en:/var/lib/ieo/en
   en2:
     <<: *en
     network_mode: service:host2
-    volumes:
-      - host2-en:/var/lib/ieo/en
     depends_on:
       host2: { condition: service_healthy }
       lo: { condition: service_healthy }
@@ -171,6 +174,4 @@ volumes:
   registry:
   lo-data:
   host1-engine:
-  host1-en:
   host2-engine:
-  host2-en:

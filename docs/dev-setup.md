@@ -45,7 +45,8 @@ later ones reuse the cache.
 **Simulated hosts.** A host is two containers that act as one machine. `hostN` runs a Docker engine;
 `enN` shares its network, so the EN reaches that engine at `tcp://127.0.0.1:2375` and cannot reach
 the other host's. Workloads the EN starts run inside `hostN`, isolated from the laptop's own
-containers and from the other host. To look inside a host:
+containers and from the other host. The EN keeps no state across restarts: each start registers
+with a new host ID, and the CO keeps a row for every old one. To look inside a host:
 
 ```sh
 docker compose -f deploy/dev/compose.yaml exec host1 docker ps
