@@ -80,3 +80,51 @@ jobs:
 
       - name: golangci-lint, packages with broken tests (production code only)
         run: golangci-lint run --tests=false ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh no-test)
+
+  # The laptop harness (ADR 0009, roadmap 0.5) must come up on a clean machine. §17.8 tests will run
+  # against this same stack.
+  harness:
+    name: Dev harness
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE: docker compose -f deploy/dev/compose.yaml
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the stack
+        run: $COMPOSE up -d --build --wait --wait-timeout 300
+
+      - name: Every service is running
+        run: |
+          want="co en1 en2 host1 host2 lo nats postgres registry"
+          got=$($COMPOSE ps --status running --services | sort | xargs)
+          echo "running: $got"
+          test "$got" = "$want"
+
+      - name: Each EN reaches its own engine, and the engines differ
+        run: |
+          id1=$($COMPOSE exec -T en1 wget -qO- http://127.0.0.1:2375/info | grep -o '"ID":"[^"]*"')
+          id2=$($COMPOSE exec -T en2 wget -qO- http://127.0.0.1:2375/info | grep -o '"ID":"[^"]*"')
+          echo "en1 → $id1"; echo "en2 → $id2"
+          test -n "$id1" && test -n "$id2" && test "$id1" != "$id2"
+
+      - name: An EN cannot reach another host's engine
+        run: |
+          if $COMPOSE exec -T en2 wget -qO- -T 5 http://host1:2375/version; then
+            echo "en2 reached host1's engine"; exit 1
+          fi
+
+      - name: A restarted EN registers again
+        run: |
+          $COMPOSE restart en1
+          sleep 15
+          $COMPOSE logs en1 | tail -5
+          test "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$($COMPOSE ps -q en1)")" = "true 0"
+
+      - name: Logs
+        if: failure()
+        run: $COMPOSE logs --no-color
+
+      - name: Stop
+        if: always()
+        run: $COMPOSE down -v

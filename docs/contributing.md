@@ -10,62 +10,40 @@ This project is part of the **Edge Orchestration Platform (CO, LO, EN)** ecosyst
 ## Get Started
 
 Run the three services from source against a local Postgres and NATS. All commands run from the
-repository root; PowerShell and POSIX shell variants are shown where they differ.
+repository root; PowerShell and POSIX shell variants are shown where they differ. To run the whole
+stack in containers instead, including two simulated hosts, see [`dev-setup.md`](dev-setup.md).
 
 ### 1. Start Postgres and NATS
 
+Start only those two services of the laptop harness:
+
 ```sh
-docker compose -f docker-compose.dev.yaml up -d     # or: podman-compose -f docker-compose.dev.yaml up -d
+docker compose -f deploy/dev/compose.yaml up -d --wait nats postgres
 ```
 
 This starts Postgres on `5432` (user `postgres`, password `postgres`, database `orchestration`)
 and NATS on `4222`.
 
-### 2. Create the database schema
+### 2. Database schema
 
-The CO does not create its tables at startup. Apply the Atlas migrations in
-`ent/migrate/migrations/` once, after Postgres is up and before starting the CO. Without them every
-site or host registration fails with `{"error":"db query failed"}`.
+The CO does not create its tables at startup. Postgres creates them from
+`deploy/compose/db/init.sql` (the Atlas migrations in `ent/migrate/migrations/`, concatenated) on
+its first start with an empty volume. Without them every site or host registration fails with
+`{"error":"db query failed"}`.
 
-**With [Atlas](https://atlasgo.io/getting-started) (recommended).** The `local` env in `atlas.hcl`
-points at the dev Postgres:
-
-```sh
-atlas migrate apply --env local
-```
-
-**Without Atlas.** Feed the migration files to `psql` in the container, in name order:
-
-```powershell
-# PowerShell
-Get-ChildItem ent\migrate\migrations\*.sql | Sort-Object Name | ForEach-Object {
-  Get-Content $_.FullName -Raw | docker exec -i postgres psql -U postgres -d orchestration -v ON_ERROR_STOP=1
-}
-```
-
-```sh
-# POSIX shell
-for f in ent/migrate/migrations/*.sql; do
-  docker exec -i postgres psql -U postgres -d orchestration -v ON_ERROR_STOP=1 < "$f"
-done
-```
-
-This path does not record Atlas revisions. If you switch to Atlas later, pass
-`--baseline <latest applied version>` on the first `atlas migrate apply` (see below).
-
-**Check:** `docker exec -it postgres psql -U postgres -d orchestration -c "\dt"` lists `sites`
-and `hosts`, among others.
+**Check:** `docker compose -f deploy/dev/compose.yaml exec postgres psql -U postgres -d orchestration -c "\dt"`
+lists `sites` and `hosts`, among others.
 
 **Existing database with an older schema.** If `\dt` shows `site`/`host` but not `sites`/`hosts`,
-the database was created from an older `init.sql`. Either reset it (dev only; deletes all data):
+the volume was created from an older `init.sql`. Either reset it (dev only; deletes all data):
 
 ```sh
-docker compose -f docker-compose.dev.yaml down -v
-docker compose -f docker-compose.dev.yaml up -d
-atlas migrate apply --env local
+docker compose -f deploy/dev/compose.yaml down -v
+docker compose -f deploy/dev/compose.yaml up -d --wait nats postgres
 ```
 
-or keep it and apply only the missing migrations, naming the last migration it already has:
+or keep it and apply only the missing migrations with [Atlas](https://atlasgo.io/getting-started),
+naming the last migration it already has (the `local` env in `atlas.hcl` points at this Postgres):
 
 ```sh
 atlas migrate apply --env local --baseline 20251129053632
@@ -121,7 +99,7 @@ at startup; neither retries. If you start them out of order, restart the later o
 | EN: `Post "http://localhost:9010/register" … actively refused` | LO not running, or `LO_PORT` unset (the LO then listens on a random port; check its `HTTP server started` line) |
 | LO: `unsupported protocol scheme ""` | `LO_CO_URL` unset |
 | LO: `Post "http://localhost:9001/api/v1/register" … actively refused` | CO not running; start it, then restart the LO |
-| LO: `CO rejected: {"error":"db query failed"}` | Schema not applied; see step 2 |
+| LO: `CO rejected: {"error":"db query failed"}` | Schema missing; see step 2 |
 | LO: `CO rejected: {"error":"site already exists"}` | Harmless: the site was registered on an earlier run |
 | CO/LO: `clone failed: authentication required: Repository not found` | Git-based delivery without `GITHUB_TOKEN`; harmless for registration |
 

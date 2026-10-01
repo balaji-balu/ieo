@@ -1,0 +1,177 @@
+# Laptop harness (ADR 0009): 1 CO, 1 LO and 2 simulated hosts, plus NATS, Postgres and an OCI
+# registry. Works the same from PowerShell and bash, on Docker Desktop (WSL 2) and in CI:
+#
+#   docker compose -f deploy/dev/compose.yaml up -d --build --wait
+#   docker compose -f deploy/dev/compose.yaml down -v
+#
+# CO, LO and EN are built from this checkout (deploy/dev/Dockerfile). Until roadmap slices B–D
+# replace them they are the Git-based code: CO and LO clone public GitHub repos at startup and log
+# an error if that fails; EN runs a mock runtime and does not use its host's engine yet.
+#
+# Each simulated host is two containers that act as one machine: hostN runs its own Docker engine
+# (docker:dind) and enN shares its network namespace, so enN reaches that engine, and only that
+# engine, at tcp://127.0.0.1:2375. When slice D has the EN write Compose files, it adds a volume
+# shared by both at the same path.
+# See docs/dev-setup.md.
+
+name: ieo-dev
+
+x-ieo-build: &ieo-build
+  context: ../..
+  dockerfile: deploy/dev/Dockerfile
+
+x-host: &host
+  image: docker:27-dind
+  privileged: true # dind needs it
+  environment:
+    DOCKER_TLS_CERTDIR: "" # no TLS: the TCP listener is on the host's own loopback only
+  # Starts with "dockerd" so the dind entrypoint adds no defaults of its own (they would also listen
+  # on 0.0.0.0:2375, open to every container on the network).
+  command:
+    - dockerd
+    - --host=unix:///var/run/docker.sock
+    - --host=tcp://127.0.0.1:2375
+    - --tls=false
+    - --insecure-registry=registry:5000
+  healthcheck:
+    test: ["CMD", "docker", "version"]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+
+x-en: &en
+  build:
+    <<: *ieo-build
+    args: { CMD: en }
+  environment:
+    APP_ENV: prod
+    IEO_EN_NATS_URL: nats://nats:4222
+    IEO_EN_LO_URL: http://lo:9010
+    DOCKER_HOST: tcp://127.0.0.1:2375 # this host's engine; used once slice D wires EN to Docker
+  # EN keeps its host ID here. tmpfs starts empty on every container start, so each start registers
+  # a new ID: the current CO rejects a host ID it already has, so a kept ID could never register
+  # again after a restart.
+  tmpfs:
+    - /var/lib/ieo/en
+  # EN registers with the LO once at startup and exits if that fails; restart retries it.
+  restart: unless-stopped
+
+services:
+  # LO ↔ EN messaging. 8222 is the monitoring endpoint.
+  nats:
+    image: nats:2.10-alpine
+    command: ["--http_port", "8222"]
+    ports: ["4222:4222", "8222:8222"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # CO database. The schema is created from deploy/compose/db/init.sql on the first start with an
+  # empty volume (deploy/README.md). Same credentials as atlas.hcl's local env.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orchestration
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../compose/db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "orchestration"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Application Registry. Push from the laptop to localhost:5000; hosts pull from registry:5000.
+  registry:
+    image: registry:2
+    ports: ["5000:5000"]
+    volumes:
+      - registry:/var/lib/registry
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5000/v2/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Central Orchestrator: API on 9001.
+  co:
+    build:
+      <<: *ieo-build
+      args: { CMD: co }
+    environment:
+      APP_ENV: prod
+      CO_PORT: "9001"
+      CO_METRICS_PORT: "9200"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/orchestration?sslmode=disable
+    ports: ["9001:9001"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9001/api/v1/sites"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  # Local Orchestrator for the one site. Registers with the CO once at startup.
+  lo:
+    build:
+      <<: *ieo-build
+      args: { CMD: lo }
+    environment:
+      APP_ENV: prod
+      LO_PORT: "9010"
+      LO_METRICS_PORT: "9200"
+      LO_NATS_URL: nats://nats:4222
+      LO_CO_URL: http://co:9001
+    ports: ["9010:9010"]
+    volumes:
+      - lo-data:/var/lib/lo
+    depends_on:
+      nats: { condition: service_healthy }
+      co: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9010/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  # Simulated host 1: its engine, and its EN.
+  host1:
+    <<: *host
+    volumes:
+      - host1-engine:/var/lib/docker
+  en1:
+    <<: *en
+    network_mode: service:host1
+    depends_on:
+      host1: { condition: service_healthy }
+      lo: { condition: service_healthy }
+
+  # Simulated host 2.
+  host2:
+    <<: *host
+    volumes:
+      - host2-engine:/var/lib/docker
+  en2:
+    <<: *en
+    network_mode: service:host2
+    depends_on:
+      host2: { condition: service_healthy }
+      lo: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  registry:
+  lo-data:
+  host1-engine:
+  host2-engine:

@@ -63,7 +63,7 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 | `pkg/model`, `pkg/deployment`, `pkg/application` | Shared domain types |
 | `proto/` | Protobuf definitions |
 | `configs/` | Component configs and FSM definitions |
-| `deploy/` | Compose and Helm deployment |
+| `deploy/` | Compose and Helm deployment; `deploy/dev/` is the laptop harness |
 | `tests/` | e2e tests, fixtures, seeds |
 | `tools/` | Go helper programs (ADR 0009): `conformance` (§17 gap list), `sessionstart` (cloud SessionStart hook) |
 
@@ -83,8 +83,9 @@ go run ./tools/conformance
 
 Cloud sessions install `golangci-lint` through the SessionStart hook in `.claude/settings.json`.
 
-Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
-`go run ./cmd/co`, `./cmd/lo`, `./cmd/en`. Schema changes: see `docs/contributing.md`.
+Local stack (ADR 0009, `docs/dev-setup.md`): `docker compose -f deploy/dev/compose.yaml up -d --build --wait`
+runs everything, including two simulated hosts; add `nats postgres` to start only those and
+`go run ./cmd/co`, `./cmd/lo`, `./cmd/en` from source. Schema changes: see `docs/contributing.md`.
 
 Known baseline issues: in `scripts/go-packages.sh`, `KNOWN_BROKEN` packages don't compile and
 `BROKEN_TESTS` packages have test files that don't compile; the rest of the legacy code has lint and

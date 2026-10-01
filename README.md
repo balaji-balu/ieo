@@ -53,8 +53,7 @@ Run the services against a local NATS and Postgres (configure `.env` first; see
 [`docs/contributing.md`](docs/contributing.md#get-started)):
 
 ```sh
-docker compose -f docker-compose.dev.yaml up -d
-atlas migrate apply --env local     # create the CO schema once; no Atlas? see docs/contributing.md
+docker compose -f deploy/dev/compose.yaml up -d --wait nats postgres   # schema created on first start
 go run ./cmd/co
 go run ./cmd/lo
 go run ./cmd/en
