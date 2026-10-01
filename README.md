@@ -49,10 +49,12 @@ go build ./cmd/...        # co, lo, en, edgectl
 go test ./...
 ```
 
-Run the services against a local NATS and Postgres:
+Run the services against a local NATS and Postgres (configure `.env` first; see
+[`docs/contributing.md`](docs/contributing.md#get-started)):
 
 ```sh
 docker compose -f docker-compose.dev.yaml up -d
+atlas migrate apply --env local     # create the CO schema once; no Atlas? see docs/contributing.md
 go run ./cmd/co
 go run ./cmd/lo
 go run ./cmd/en
