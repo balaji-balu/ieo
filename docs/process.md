@@ -83,10 +83,10 @@ unspecified behavior still goes through stage 2 first.
 | `docs/coding-guidelines.md` | Rules applied at Plan, Implement and Review |
 | `REVIEW.md` | Guides `/code-review`: what to check, severity, red flags |
 | `.github/workflows/ci.yaml` | PR gate: build, `go test -race`, golangci-lint (incl. vet, gofmt) on changed lines; skips broken packages listed in `scripts/go-packages.sh` |
-| SessionStart hook | Cloud sessions can run the same checks |
+| `.claude/settings.json` SessionStart hook (`tools/sessionstart`) | Cloud sessions can run the same checks |
 | `.github/pull_request_template.md` | Definition of done as checkboxes |
 | ADR template | Consistent decision records |
-| Conformance script | Lists §17 bullets with no matching test |
+| `go run ./tools/conformance` | Lists §17 bullets with no matching test (ADR 0011) |
 
 ## 8. Metrics
 

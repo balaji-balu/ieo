@@ -39,6 +39,12 @@ jobs:
       - name: Test
         run: go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
 
+      # Report only until v0.1.0 (docs/roadmap.md), when it gains -strict.
+      - name: Conformance gap list (§17, ADR 0011)
+        run: |
+          go run ./tools/conformance | tee conformance.txt
+          { echo '## Conformance'; echo; echo '```'; cat conformance.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
   lint:
     name: Lint (new issues)
     runs-on: ubuntu-latest

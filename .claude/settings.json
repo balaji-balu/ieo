@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go run ./tools/sessionstart",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}
