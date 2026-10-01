@@ -7,7 +7,9 @@ edge sites, each with a few hosts, over networks that are slow, metered or inter
 unavailable.
 
 Margo baseline: Margo Specification pre-draft, Workload Management API `1.0.0-rc.3`
-([margo/specification](https://github.com/margo/specification), commit `f209a7f`).
+([margo/specification](https://github.com/margo/specification), commit `f209a7f`). The pinned
+OpenAPI file is kept unchanged at `api/margo/f209a7f/workload-management-api-1.0.0-rc.3.yaml`; a pin
+change follows §17.1 (ADR 0010).
 
 ## Normative Language
 
@@ -1258,7 +1260,17 @@ Unless otherwise noted, §17.1–§17.7 are `Core Conformance`.
 
 ### 17.1 Contracts and Identifiers
 
-- Margo API request and response bodies validate against the pinned Margo OpenAPI.
+The pinned Margo OpenAPI is the file named in the header, under `api/margo/<commit>/`, copied
+unchanged from the upstream commit with a `README.md` giving the repository, full commit SHA and
+source path. Contract types are tested against this file, not generated from it. A pin change is a
+PR of its own that MUST: name the prior and new commit; summarize the upstream changes to the
+management interface; append an endpoint diff table (method, path, `Match | Different | Missing |
+Local-Only`, note) to `docs/margo-pins.md`, with a reason for every row that is not `Match`; state
+whether the change is compatible, needs an adapter, or is breaking; update the header, the vendored
+file and the affected sections; and keep §17.1 green. The Margo API surface has no `Local-Only`
+endpoints (§11.3 holds IEO-specific operations).
+
+- Margo API request and response bodies validate against the vendored Margo OpenAPI file.
 - Site messages validate against the schemas in §11.2; unknown fields are ignored; invalid messages
   are dropped without state change.
 - Site IDs and host IDs with characters outside RFC 3986 unreserved are rejected; `any` is rejected
