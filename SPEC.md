@@ -938,7 +938,8 @@ Rules:
 - LO and EN log lines MUST include `site_id`; EN and host-scoped LO lines MUST include `host_id`.
 - Sync attempts MUST log their outcome (§7.4) and `manifest_version`.
 - `RejectedRollback` and `AbortedDigestMismatch` MUST be logged at a security/warning level with
-  the offending values.
+  the offending values: the stored and received `manifestVersion`, or the expected and computed
+  digest.
 - Log sink failures MUST NOT stop orchestration.
 
 ### 13.2 Metrics
@@ -1364,6 +1365,14 @@ Unless otherwise noted, §17.1–§17.7 are `Core Conformance`.
 - No credential, key or token appears in logs or status messages.
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
 - `edgectl site add` produces a certificate whose SPIFFE ID matches §4.2.
+- Every tier writes each log line as one JSON object.
+- Every log line about a deployment carries `deployment_id`, and `digest` once the digest is known.
+- Every LO and EN log line carries `site_id`; every EN log line and every host-scoped LO log line
+  carries `host_id`.
+- Each sync attempt writes one log line with its §7.4 outcome and `manifest_version`, for every
+  outcome in §7.4.
+- `RejectedRollback` and `AbortedDigestMismatch` are logged at the security/warning level with the
+  offending values: the stored and received `manifestVersion`, or the expected and computed digest.
 - REQUIRED metrics in §13.2 are exposed and change as expected in the scenarios above.
 - A log sink failure does not stop orchestration.
 
@@ -1406,13 +1415,11 @@ Gaps. Every §17.1–§17.7 bullet supports at least one row. A change that adds
 | 6. Idempotent Compose Apply/Remove | §5, §8.5, §8.9 | §17.1 Compose project names, tag comparison; §17.4 retries and backoff; §17.6 idempotent Apply and Remove, order, `wait`/`timeout`, parameters, OTel variables, update cleanup, one command at a time | §17.8 golden path |
 | 7. Status host → site → center with buffering | §7.2, §8.1.2, §8.7, §8.8, §10 | §17.2 status history, `removed`; §17.5 all bullets | §17.8 outbox |
 | 8. Recovery from durable state, no replay | §12, §14 | §17.3 version and ETag survive restart; §17.4 placement survives, inventory request after restart; §17.5 outbox survives; §17.6 inventory after restart and reconnect | §17.8 LO restart, site autonomy |
-| 9. Structured logs and metrics | §13 | §17.7 metrics, log sink failure | — |
+| 9. Structured logs and metrics | §7.4, §13 | §17.7 JSON log lines, log fields, sync outcome log, security-level log, metrics, log sink failure | — |
 | Cross-cutting: security (§15) | §11.2, §15 | §17.1 site messages; §17.7 client certificate, NATS scoping, no secrets in logs, SPIFFE ID | — |
 | Cross-cutting: operator interface | §11.3 | §17.7 `edgectl` errors | §17.8 golden path |
 
-Gaps, to close with new §17 bullets in a later change: goal 9 has no bullet for the §13.1 log
-fields (`deployment_id`, `digest`, `site_id`, `host_id`, sync outcome) or for the security-level log
-of `RejectedRollback` and `AbortedDigestMismatch`.
+Gaps: none.
 
 ## 18. Implementation Checklist (Definition of Done)
 
