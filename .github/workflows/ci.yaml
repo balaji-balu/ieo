@@ -1,7 +1,7 @@
 # PR gate for docs/process.md stage 6 (Verify). Mirrors the local commands in CLAUDE.md.
 #
 # Ratchet: legacy code is not yet clean, so
-#  - build and test skip the broken packages listed in scripts/go-packages.sh;
+#  - build and test skip the broken packages listed in tools/gopackages;
 #  - lint and format checks apply only to lines a change adds or modifies.
 # Both tighten as the baseline is fixed. Never loosen them to get green.
 name: CI
@@ -32,12 +32,12 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: go build $(scripts/go-packages.sh)
+        run: go build $(go run ./tools/gopackages)
 
       # go vet runs in the lint job (govet, new issues only); legacy vet
       # findings would otherwise fail every test run.
       - name: Test
-        run: go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
+        run: go test -race -vet=off -count=1 $(go run ./tools/gopackages test)
 
   lint:
     name: Lint (new issues)
@@ -70,7 +70,7 @@ jobs:
           fi
 
       - name: golangci-lint (includes gofmt, goimports, govet)
-        run: golangci-lint run ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh test)
+        run: golangci-lint run ${{ steps.base.outputs.flag }} $(go run ./tools/gopackages test)
 
       - name: golangci-lint, packages with broken tests (production code only)
-        run: golangci-lint run --tests=false ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh no-test)
+        run: golangci-lint run --tests=false ${{ steps.base.outputs.flag }} $(go run ./tools/gopackages no-test)

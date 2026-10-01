@@ -71,18 +71,21 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 Same checks as CI (`.github/workflows/ci.yaml`):
 
 ```sh
-go build $(scripts/go-packages.sh)
-go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
+go build $(go run ./tools/gopackages)
+go test -race -vet=off -count=1 $(go run ./tools/gopackages test)
 # gofmt, goimports, govet, … on changed lines only:
-golangci-lint run --new-from-merge-base=origin/main $(scripts/go-packages.sh test)
-golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-packages.sh no-test)
+golangci-lint run --new-from-merge-base=origin/main $(go run ./tools/gopackages test)
+golangci-lint run --tests=false --new-from-merge-base=origin/main $(go run ./tools/gopackages no-test)
 ```
+
+These run unchanged in PowerShell and Git Bash. On Windows, `-race` needs cgo and a C compiler; without
+one, drop `-race` locally (CI still runs it). See `docs/contributing.md`.
 
 Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
 `go run ./cmd/co`, `./cmd/lo`, `./cmd/en`. Schema changes: see `docs/contributing.md`.
 
-Known baseline issues: in `scripts/go-packages.sh`, `KNOWN_BROKEN` packages don't compile and
-`BROKEN_TESTS` packages have test files that don't compile; the rest of the legacy code has lint and
+Known baseline issues: in `tools/gopackages`, `knownBroken` packages don't compile and
+`brokenTests` packages have test files that don't compile; the rest of the legacy code has lint and
 `go vet` findings. CI is a ratchet: it skips what is broken and lints only changed lines. Never add a
 package to either list; a slice that fixes one removes it.
 

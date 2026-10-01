@@ -41,5 +41,5 @@ Intent: INT-NNN <!-- from docs/intents/; "n/a" for tooling or docs-only PRs -->
 - [ ] `/security-review` run, if this touches §15 areas (TLS, credentials, enrollment, archive extraction, §9.2)
 - [ ] ADR added for any implementation-defined choice
 - [ ] §18 checklist items ticked where applicable
-- [ ] No package added to `KNOWN_BROKEN`/`BROKEN_TESTS` in `scripts/go-packages.sh`; fixed packages removed
+- [ ] No package added to `knownBroken`/`brokenTests` in `tools/gopackages`; fixed packages removed
 - [ ] Intent ID cited; its status updated if this PR completes a stage

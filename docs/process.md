@@ -82,7 +82,7 @@ unspecified behavior still goes through stage 2 first.
 | `CLAUDE.md` | Agent rules, repo map, commands to run |
 | `docs/coding-guidelines.md` | Rules applied at Plan, Implement and Review |
 | `REVIEW.md` | Guides `/code-review`: what to check, severity, red flags |
-| `.github/workflows/ci.yaml` | PR gate: build, `go test -race`, golangci-lint (incl. vet, gofmt) on changed lines; skips broken packages listed in `scripts/go-packages.sh` |
+| `.github/workflows/ci.yaml` | PR gate: build, `go test -race`, golangci-lint (incl. vet, gofmt) on changed lines; skips broken packages listed in `tools/gopackages` |
 | SessionStart hook | Cloud sessions can run the same checks |
 | `.github/pull_request_template.md` | Definition of done as checkboxes |
 | ADR template | Consistent decision records |

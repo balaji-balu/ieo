@@ -57,6 +57,35 @@ boltbrowser ~/.lo/<siteid>/bolt.db
 docker cp tests/seeds/site.sql postgres:/tmp/site.sql
 docker exec -it postgres psql -U postgres -d orchestration -f ./tmp/site.sql
 
+## Local checks
+
+Run the same checks as CI (`.github/workflows/ci.yaml`) before every push. The commands work
+unchanged in PowerShell and Git Bash; `tools/gopackages` picks the packages and skips the known
+broken ones (see "Known baseline issues" in `CLAUDE.md`).
+
+```sh
+go build $(go run ./tools/gopackages)
+go test -race -vet=off -count=1 $(go run ./tools/gopackages test)
+golangci-lint run --new-from-merge-base=origin/main $(go run ./tools/gopackages test)
+golangci-lint run --tests=false --new-from-merge-base=origin/main $(go run ./tools/gopackages no-test)
+```
+
+Plain `go test ./...` fails on the known broken packages and on legacy `go vet` findings; use the
+commands above.
+
+### Windows: the race detector
+
+`-race` needs cgo, and Go turns cgo off when it can't find a C compiler. Without one you get
+`go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`. Either:
+
+- **Drop `-race` locally** (simplest). CI still runs with `-race` on Linux before merge:
+  ```sh
+  go test -vet=off -count=1 $(go run ./tools/gopackages test)
+  ```
+- **Install a 64-bit GCC** to keep `-race`. For example, with [MSYS2](https://www.msys2.org/):
+  `pacman -S mingw-w64-ucrt-x86_64-gcc`, add `C:\msys64\ucrt64\bin` to `PATH`, then run
+  `go env -w CGO_ENABLED=1`. Check with `gcc --version` and `go env CGO_ENABLED` (prints `1`).
+
 ## 💬 Ways to Contribute
 
 You can help the project in many ways:
@@ -146,14 +175,13 @@ git checkout -b feature/my-change
 
 ### **4. Make changes & test locally**
 
-* Run unit tests
+* Run the [local checks](#local-checks)
 * Build CO/LO/EN services
 * Smoke test using `podman compose`
 
-Typical commands:
+Typical commands (plus the [local checks](#local-checks)):
 
 ```sh
-go test ./...
 podman compose up --build
 ```
 
@@ -192,9 +220,7 @@ This project supports:
 
 ### **Unit Tests**
 
-```sh
-go test ./...
-```
+See [Local checks](#local-checks).
 
 ### **Smoke Tests (GitHub Actions)**
 
