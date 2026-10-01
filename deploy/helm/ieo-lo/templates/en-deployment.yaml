@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-en
+spec:
+  replicas: {{ .Values.en.replicas }}
+  selector:
+    matchLabels:
+      app: en
+  template:
+    metadata:
+      labels:
+        app: en
+    spec:
+      containers:
+        - name: en
+          image: {{ .Values.en.image }}
+          env:
+            - name: IEO_EN_PORT
+              value: "{{ .Values.en.port }}"
+
+            - name: IEO_EN_NATS_URL
+              value: nats://{{ .Values.nats.host }}:{{ .Values.nats.port }}
+
+            # - name: GITHUB_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: {{ .Release.Name }}-github
+            #       key: GITHUB_TOKEN       
+
+            - name: IEO_EN_LO_URL
+              value: http://{{ .Values.en.lo.host }}:{{ .Values.en.lo.port }}
+          ports:
+            - containerPort: {{ .Values.en.port }}
+
+      #     volumeMounts:
+      #       - name: lo-data
+      #         mountPath: /data
+
+      # volumes:
+      #   - name: lo-data
+      #     persistentVolumeClaim:
+      #       claimName: {{ .Release.Name }}-lo-data

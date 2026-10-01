@@ -13,7 +13,7 @@ set -euo pipefail
 
 # Production code doesn't compile: skipped entirely.
 KNOWN_BROKEN=(
-  internal/era/plugins/wasm # undefined: runtime
+  internal/en/plugins/wasm  # undefined: runtime
   tests/e2e                 # needs a running stack; fails
 )
 

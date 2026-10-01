@@ -5,36 +5,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+
 	//"os"
+	"net/http"
 	"time"
+
 	"github.com/google/go-github/v55/github"
 	"golang.org/x/oauth2"
-	"net/http"
+
 	//"strings"
 
 	//"github.com/joho/godotenv"
 	//"path/filepath"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
-	"github.com/gin-gonic/gin"
 
-	//pb "github.com/balaji-balu/margo-hello-world/proto_generated"
-	"github.com/balaji-balu/margo-hello-world/ent"
-	"github.com/balaji-balu/margo-hello-world/ent/component"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentprofile"
-	"github.com/balaji-balu/margo-hello-world/ent/applicationdesc"
-	//"github.com/balaji-balu/margo-hello-world/internal/config"
-	"github.com/balaji-balu/margo-hello-world/internal/co"
-	"github.com/balaji-balu/margo-hello-world/internal/streammanager"
-	"github.com/balaji-balu/margo-hello-world/internal/metrics"
-	"github.com/balaji-balu/margo-hello-world/pkg/application"
-	"github.com/balaji-balu/margo-hello-world/pkg/deployment"
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
-	
+	//pb "github.com/balaji-balu/ieo/proto_generated"
+	"github.com/balaji-balu/ieo/ent"
+	"github.com/balaji-balu/ieo/ent/applicationdesc"
+	"github.com/balaji-balu/ieo/ent/component"
+	"github.com/balaji-balu/ieo/ent/deploymentprofile"
+
+	//"github.com/balaji-balu/ieo/internal/config"
+	"github.com/balaji-balu/ieo/internal/co"
+	"github.com/balaji-balu/ieo/internal/metrics"
+	"github.com/balaji-balu/ieo/internal/streammanager"
+	"github.com/balaji-balu/ieo/pkg/application"
+	"github.com/balaji-balu/ieo/pkg/deployment"
+	"github.com/balaji-balu/ieo/pkg/model"
 )
 
 var (
-//sm = streammanager.NewStreamManager()
+// sm = streammanager.NewStreamManager()
 )
 
 // server implements CentralOrchestrator gRPC interface
@@ -49,13 +52,13 @@ type HostMapping struct {
 }
 
 type App struct {
-	AppID     string        `json:"app_id"`
-	AppName   string 		`json:"app_name"`
-	Version   string 		`json:"version"`
-	Category 	string		`json:"category"`
+	AppID    string `json:"app_id"`
+	AppName  string `json:"app_name"`
+	Version  string `json:"version"`
+	Category string `json:"category"`
 	//ProfileID string        `json:"profile_id"`
-	Sites     []HostMapping `json:"sites"`
-	DeployType string 		`json:"deploy_type"`
+	Sites      []HostMapping `json:"sites"`
+	DeployType string        `json:"deploy_type"`
 }
 
 func init() {
@@ -77,22 +80,21 @@ func init() {
 // 	}, nil
 // }
 
-
 func buildDeployParameters(siteID string) []deployment.Parameter {
 	var params []deployment.Parameter
 
 	//for _, site := range sites {
-		param := deployment.Parameter{
-			Name:  "SiteId",
-			Value: siteID, // This can represent site or contextual value
-			Targets: []deployment.Target{
-				{
-					Pointer:    fmt.Sprintf("/sites/%s", siteID),
-					//Components: [], // hostIDs act as components or nodes
-				},
+	param := deployment.Parameter{
+		Name:  "SiteId",
+		Value: siteID, // This can represent site or contextual value
+		Targets: []deployment.Target{
+			{
+				Pointer: fmt.Sprintf("/sites/%s", siteID),
+				//Components: [], // hostIDs act as components or nodes
 			},
-		}
-		params = append(params, param)
+		},
+	}
+	params = append(params, param)
 	//}
 
 	return params
@@ -147,8 +149,8 @@ func buildApplicationDeployment(
 			},
 			Annotations: deployment.Annotations{
 				ApplicationID: appDesc.AppID,
-				ID:            id, 
-				Version: appDesc.Version, 
+				ID:            id,
+				Version:       appDesc.Version,
 			},
 		},
 		Spec: deployment.Spec{
@@ -199,9 +201,10 @@ func PushDeploymentYAML(ctx context.Context,
 	return nil
 }
 
-func CreateDeployment(c *gin.Context,co *co.CO,  client *ent.Client, repo string) {
+// CreateDeployment handles a deployment request from the operator API.
+func CreateDeployment(c *gin.Context, co *co.CO, client *ent.Client, repo string) {
 	//log.Println("CreateDeployment called. Site:", cfg.Server.Site)
- 
+
 	//c.StartDeplotment
 
 	start := time.Now()
@@ -229,7 +232,7 @@ func CreateDeployment(c *gin.Context,co *co.CO,  client *ent.Client, repo string
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid uuid"})
 			return
-		}		
+		}
 		q = q.Where(applicationdesc.IDEQ(uid))
 	} else if app.AppName != "" {
 		log.Println("searching name....", app.AppName)
@@ -263,7 +266,6 @@ func CreateDeployment(c *gin.Context,co *co.CO,  client *ent.Client, repo string
 	appDesc := existingApps[0]
 	log.Printf("✅ Found app match: %s (id=%s)\n", appDesc.Name, appDesc.ID)
 
-
 	profile, err := client.DeploymentProfile.
 		Query().
 		Where(
@@ -288,7 +290,7 @@ func CreateDeployment(c *gin.Context,co *co.CO,  client *ent.Client, repo string
 	log.Println("components:", components)
 
 	//TBD: create deployment for all the selected targets
-	// 
+	//
 	var deployments []string
 	for _, site := range app.Sites {
 
@@ -320,7 +322,7 @@ func CreateDeployment(c *gin.Context,co *co.CO,  client *ent.Client, repo string
 		// log.Println("path:", path)
 		// //log.Println("message:", message)
 
-		// if err := PushDeploymentYAML(ctx, token, owner, 
+		// if err := PushDeploymentYAML(ctx, token, owner,
 		// 				repo, path, message, appdply); err != nil {
 		// 	log.Fatal(err)
 		// }
@@ -345,20 +347,19 @@ func CreateDeployment(c *gin.Context,co *co.CO,  client *ent.Client, repo string
 		}
 		var cs []model.DeploymentComponent
 		for _, c := range components {
-			cs = append(cs, model.DeploymentComponent{	
-				Name: c.Name, 
+			cs = append(cs, model.DeploymentComponent{
+				Name:  c.Name,
 				State: string(model.StatePending),
 			})
 		}
 		status.Components = cs
-		
 
 		SaveDeploymentStatus(ctx, client, status)
 
 		deployments = append(deployments, deploymentID)
 		log.Println("before calling metrics:", site.SiteID)
 		metrics.DeploymentsTotal.WithLabelValues(deploymentID).Inc()
-    	metrics.DeploymentsActive.WithLabelValues(deploymentID).Inc()
+		metrics.DeploymentsActive.WithLabelValues(deploymentID).Inc()
 		log.Printf("✅ Successfully pushed deployment YAML for profile %s", profile.ID)
 	}
 
@@ -366,8 +367,8 @@ func CreateDeployment(c *gin.Context,co *co.CO,  client *ent.Client, repo string
 
 	c.JSON(http.StatusOK, gin.H{
 		"deployment_ids": deployments,
-		"status":        "started",
-	})	
+		"status":         "started",
+	})
 
 	duration := time.Since(start).Seconds()
 	metrics.RequestDuration.WithLabelValues("/deploy").Observe(duration)
@@ -432,7 +433,6 @@ func GenerateDeploymentID() string {
 	return uuid.New().String()
 }
 
-
 func SaveDeploymentStatus(ctx context.Context, client *ent.Client, ds *model.DeploymentStatus) error {
 	id, err := uuid.Parse(ds.DeploymentID)
 	if err != nil {
@@ -478,5 +478,3 @@ func SaveDeploymentStatus(ctx context.Context, client *ent.Client, ds *model.Dep
 
 	return tx.Commit()
 }
-
-

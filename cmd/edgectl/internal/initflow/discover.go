@@ -5,6 +5,7 @@ import (
 	"runtime"
 )
 
+// DiscoverEnvironment records the OS and architecture in ctx.
 func DiscoverEnvironment(ctx *Context) error {
 	fmt.Println("✔ Discovering environment")
 

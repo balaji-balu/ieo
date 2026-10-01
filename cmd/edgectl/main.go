@@ -4,7 +4,7 @@ import (
 	"os"
 	//"log"
 	 "github.com/joho/godotenv"
-	"github.com/balaji-balu/margo-hello-world/cmd/edgectl/cmd"
+	"github.com/balaji-balu/ieo/cmd/edgectl/cmd"
 )
 
 func init() {

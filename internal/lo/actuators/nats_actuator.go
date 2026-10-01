@@ -12,10 +12,10 @@ import (
 
     //"github.com/nats-io/nats.go"
 
-    "github.com/balaji-balu/margo-hello-world/internal/natsbroker"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/reconciler"
-    "github.com/balaji-balu/margo-hello-world/internal/lo/boltstore"
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
+    "github.com/balaji-balu/ieo/internal/natsbroker"
+	"github.com/balaji-balu/ieo/internal/lo/reconciler"
+    "github.com/balaji-balu/ieo/internal/lo/boltstore"
+	"github.com/balaji-balu/ieo/pkg/model"
 )
 
 // NatsActuator implements Actuator and talks to EN over NATS

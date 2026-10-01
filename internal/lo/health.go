@@ -9,10 +9,10 @@ import (
 	"log"
 	
 
-	"github.com/balaji-balu/margo-hello-world/internal/lo/heartbeat"
-	//"github.com/balaji-balu/margo-hello-world/internal/lo/reconciler"
-	//"github.com/balaji-balu/margo-hello-world/internal/lo/logger"
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
+	"github.com/balaji-balu/ieo/internal/lo/heartbeat"
+	//"github.com/balaji-balu/ieo/internal/lo/reconciler"
+	//"github.com/balaji-balu/ieo/internal/lo/logger"
+	"github.com/balaji-balu/ieo/pkg/model"
 
 )
 

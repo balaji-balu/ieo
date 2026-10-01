@@ -1,5 +1,0 @@
-apiVersion: v2
-name: edgeorch-co
-description: CO with Postgres and NATS
-version: 0.1.0
-appVersion: "0.1"

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-en
+spec:
+  selector:
+    app: en
+  ports:
+    - port: {{ .Values.en.port }}

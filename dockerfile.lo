@@ -7,7 +7,7 @@ RUN go mod download
 COPY . .
 # RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o lo ./cmd/lo
 # RUN go build -o lo ./cmd/lo
-RUN go install -ldflags="-s -w" ./cmd/lo
+RUN go build -ldflags="-s -w" -o /go/bin/ieo-lo ./cmd/lo
 
 FROM debian:bookworm-slim
 WORKDIR /app
@@ -15,6 +15,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
     
-COPY --from=builder /go/bin/lo .
-CMD ["./lo"]
+COPY --from=builder /go/bin/ieo-lo .
+CMD ["./ieo-lo"]
 

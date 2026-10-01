@@ -10,7 +10,7 @@ import (
 	"entgo.io/ent/schema"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
-	"github.com/balaji-balu/margo-hello-world/pkg/application"
+	"github.com/balaji-balu/ieo/pkg/application"
 )
 
 type Component struct {

@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"sync"
 	"github.com/spf13/cobra"
-	"github.com/balaji-balu/margo-hello-world/cmd/edgectl/internal/co"
-	"github.com/balaji-balu/margo-hello-world/cmd/edgectl/internal/util"
+	"github.com/balaji-balu/ieo/cmd/edgectl/internal/co"
+	"github.com/balaji-balu/ieo/cmd/edgectl/internal/util"
 )
 
 func newCOCmd() *cobra.Command {

@@ -9,8 +9,8 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/balaji-balu/margo-hello-world/ent/applicationdesc"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentprofile"
+	"github.com/balaji-balu/ieo/ent/applicationdesc"
+	"github.com/balaji-balu/ieo/ent/deploymentprofile"
 	"github.com/google/uuid"
 )
 

@@ -1,7 +1,7 @@
 package main
 
 import (
-    //"context"
+	//"context"
 	"flag"
 	"fmt"
 	"net"
@@ -10,76 +10,79 @@ import (
 
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
-	_ "github.com/lib/pq" // enables the 'postgres' driver
 	"github.com/joho/godotenv"
-	"google.golang.org/grpc"
+	_ "github.com/lib/pq" // enables the 'postgres' driver
 	"go.uber.org/zap"
-	
-	"github.com/balaji-balu/margo-hello-world/pkg/logx"
-	"github.com/balaji-balu/margo-hello-world/pkg/co/model"
-	"github.com/balaji-balu/margo-hello-world/ent"
-	"github.com/balaji-balu/margo-hello-world/internal/api"
-	//"github.com/balaji-balu/margo-hello-world/internal/config"
-	"github.com/balaji-balu/margo-hello-world/internal/gitmanager"
-	"github.com/balaji-balu/margo-hello-world/internal/metrics"
-	"github.com/balaji-balu/margo-hello-world/internal/co"
-)
+	"google.golang.org/grpc"
 
+	"github.com/balaji-balu/ieo/ent"
+	"github.com/balaji-balu/ieo/internal/api"
+	"github.com/balaji-balu/ieo/pkg/co/model"
+	"github.com/balaji-balu/ieo/pkg/logx"
+
+	//"github.com/balaji-balu/ieo/internal/config"
+	"github.com/balaji-balu/ieo/internal/co"
+	"github.com/balaji-balu/ieo/internal/gitmanager"
+	"github.com/balaji-balu/ieo/internal/metrics"
+)
 
 func init() {
 	err := godotenv.Load("./.env") // relative path to project root
 	if err != nil {
 		//log.Println("No .env file found, reading from system environment")
 	}
-	
+
 }
 
 func main() {
 	//ctx := context.Background()
-    logx.Init(logx.Options{
-        Env:     os.Getenv("APP_ENV"),     // dev / prod
-        //Version: "0.1.0",
-    })    
-    log := logx.New("co")	
-    port := os.Getenv("CO_PORT")
+	if err := logx.Init(logx.Options{
+		Env: os.Getenv("APP_ENV"), // dev / prod
+		//Version: "0.1.0",
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "logger init failed:", err)
+		os.Exit(1)
+	}
+	log := logx.New("co")
+	port := os.Getenv("CO_PORT")
 	metrics_port := os.Getenv("CO_METRICS_PORT")
 
-    // options := config.Options{
-    //     AppName: "edge-orch",
-    //     Unit: "co",
-    //     Env: os.Getenv("APP_ENV"),
-    // }
-    // rootDir, err := config.RootDir(options) 
-    // if err != nil {
-    //     log.Fatalw("rootdir detection error","error", err)
-    // }
+	// options := config.Options{
+	//     AppName: "ieo",
+	//     Unit: "co",
+	//     Env: os.Getenv("APP_ENV"),
+	// }
+	// rootDir, err := config.RootDir(options)
+	// if err != nil {
+	//     log.Fatalw("rootdir detection error","error", err)
+	// }
 
-    // log.Debugw("root directory", "rootDir", rootDir)
-    // //cfgPath := filepath.Join("./configs", options.Unit, "dev.yaml")
-    // //options.RootDir = rootDir
-    // var cfg model.COConfig
-    // if err := config.Load(options, &cfg); err != nil {
-    //     log.Fatalw("Configution load error","error", err)
-    // }    
-    cfg := model.COConfig{}
-cfg.Git.Repo = "deployments"
-cfg.Git.Branch = "main"
+	// log.Debugw("root directory", "rootDir", rootDir)
+	// //cfgPath := filepath.Join("./configs", options.Unit, "dev.yaml")
+	// //options.RootDir = rootDir
+	// var cfg model.COConfig
+	// if err := config.Load(options, &cfg); err != nil {
+	//     log.Fatalw("Configution load error","error", err)
+	// }
+	cfg := model.COConfig{}
+	cfg.Git.Repo = "deployments"
+	cfg.Git.Branch = "main"
 
-cfg.Appregistry.Repo = "https://github.com/edge-orchestration-platform/app-registry"
-cfg.Appregistry.Branch = "main"
+	cfg.Appregistry.Repo = "https://github.com/edge-orchestration-platform/app-registry"
+	cfg.Appregistry.Branch = "main"
 
-    // log.Debugw("loaded config", "cfg:", cfg)
+	// log.Debugw("loaded config", "cfg:", cfg)
 
-    log.Infow("CO starting", "pid", os.Getpid())
+	log.Infow("CO starting", "pid", os.Getpid())
 	log.Infow("conf done")
 
 	grpcPort := flag.String("grpc", ":50051", "CO gRPC listen address")
 	// versionFlag := flag.Bool("version", false, "Print the version and exit")
 	// flag.Parse()
-    // if *versionFlag {
-    //     fmt.Println("CO version:", cfg.Server.Version)
-    //     os.Exit(0)
-    // }	
+	// if *versionFlag {
+	//     fmt.Println("CO version:", cfg.Server.Version)
+	//     os.Exit(0)
+	// }
 
 	dsn := os.Getenv("DATABASE_URL")
 	log.Infow("connecting to postgres at", zap.String("dsn:", dsn))
@@ -105,40 +108,40 @@ cfg.Appregistry.Branch = "main"
 	client := ent.NewClient(ent.Driver(drv))
 	defer client.Close()
 
-// if err := client.Schema.Create(ctx); err != nil {
-//     log.Fatalf("failed creating schema resources: %v", err)
-// }	
+	// if err := client.Schema.Create(ctx); err != nil {
+	//     log.Fatalf("failed creating schema resources: %v", err)
+	// }
 	metrics.Init("co")
 	metrics.StartServer(metrics_port)
 
 	gitm := gitmanager.NewManager()
 
 	gitm.Register(gitmanager.RepoConfig{
-		Name: "app-registry",
-		Mode: gitmanager.GitRemote, // or GitLocal
-		RemoteURL: "https://github.com/edge-orchestration-platform/app-registry.git",
-		Branch: "main",
+		Name:        "app-registry",
+		Mode:        gitmanager.GitRemote, // or GitLocal
+		RemoteURL:   "https://github.com/edge-orchestration-platform/app-registry.git",
+		Branch:      "main",
 		WorkingPath: "/tmp/app-registry",
 	})
 
 	gitm.Register(gitmanager.RepoConfig{
-		Name: "deployments",
-		Mode: gitmanager.GitRemote, //GitLocal, //,
+		Name:      "deployments",
+		Mode:      gitmanager.GitRemote, //GitLocal, //,
 		RemoteURL: "https://github.com/edge-orchestration-platform/deployments.git",
 		//LocalPath: "/home/balaji/local-deployments",
-		Branch: "main",
-		Token: os.Getenv("GITHUB_TOKEN"),
+		Branch:      "main",
+		Token:       os.Getenv("GITHUB_TOKEN"),
 		WorkingPath: "/tmp/deployments-co",
 	})
 	if err := gitm.InitRepo("deployments"); err != nil {
-    	log.Errorw("Git initrepo failed", "err", err)
+		log.Errorw("Git initrepo failed", "err", err)
 	}
 	cfg1, err := gitm.GetConfig("deployments")
 	if err != nil {
 		log.Errorw("config", "err", err)
 	}
 	log.Infow("CONFIG: \n", "config", cfg1)
-	//fmt.Printf("CONFIG: %+v\n", gitm.GetConfig("deployments"))	
+	//fmt.Printf("CONFIG: %+v\n", gitm.GetConfig("deployments"))
 	c := co.NewCO(gitm, "app-registry", "deployments")
 
 	router := api.NewRouter(client, c, cfg)
@@ -152,7 +155,7 @@ cfg.Appregistry.Branch = "main"
 	go func() {
 		lis, err := net.Listen("tcp", *grpcPort)
 		if err != nil {
-			log.Errorw("[CO] failed to listen:","", err)
+			log.Errorw("[CO] failed to listen:", "", err)
 		}
 		s := grpc.NewServer()
 		//pb.RegisterCentralOrchestratorServer(s, &server{})
@@ -163,5 +166,3 @@ cfg.Appregistry.Branch = "main"
 		}
 	}()
 }
-
-

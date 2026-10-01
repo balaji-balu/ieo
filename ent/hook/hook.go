@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/balaji-balu/margo-hello-world/ent"
+	"github.com/balaji-balu/ieo/ent"
 )
 
 // The ApplicationDescFunc type is an adapter to allow the use of ordinary

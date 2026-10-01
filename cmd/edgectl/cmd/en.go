@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/spf13/cobra"
 
-	"github.com/balaji-balu/margo-hello-world/cmd/edgectl/internal/lo"
-	"github.com/balaji-balu/margo-hello-world/cmd/edgectl/internal/util"
+	"github.com/balaji-balu/ieo/cmd/edgectl/internal/lo"
+	"github.com/balaji-balu/ieo/cmd/edgectl/internal/util"
 )
 
 func newENCmd() *cobra.Command {

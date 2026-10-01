@@ -2,22 +2,25 @@ package config
 
 import (
 	//"os"
-	"log"
 	"fmt"
-	"runtime"
+	"log"
 	"path/filepath"
-	"github.com/knadh/koanf/v2"
+	"runtime"
+
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/v2"
 )
 
+// Options selects which component config to load and for which environment.
 type Options struct {
 	//RootDir	string
 	Env     string // dev | prod | staging
-	AppName string // edge-orch
-	Unit    string // co | lo | era
+	AppName string // ieo
+	Unit    string // co | lo | en
 }
 
+// RootDir returns the root directory for a component: "./" in dev, the OS default otherwise.
 func RootDir(opts Options) (string, error) {
 	// dev mode → ~/.<app>/<unit>
 	if opts.Env == "" || opts.Env == "dev" {
@@ -33,19 +36,20 @@ func RootDir(opts Options) (string, error) {
 		return "./", nil
 	}
 
-	// flags 
-	
+	// flags
+
 	// prod / staging → OS defaults
 	return osDefaultRoot(opts)
 }
-
 
 // func LoadPath(options Options) {
 // 	path := osDefault(options)
 // 	return path
 // }
 
-func Load(o Options, out interface{}) (error) {
+// Load reads the component's YAML config into out: configs/<unit>.yaml in dev, otherwise
+// /etc/<app>/<unit>/config.yaml.
+func Load(o Options, out interface{}) error {
 	path := ""
 	if o.Env == "" || o.Env == "dev" {
 		path = filepath.Join("./", "configs", o.Unit+".yaml")
@@ -79,7 +83,7 @@ func osDefaultRoot(o Options) (string, error) {
 
 // LoadOrCreateID returns a persistent UUID stored at path
 func LoadOrCreateID(path string) (string, error) {
-	log.Println("LoadOrCreateId: enter" )
+	log.Println("LoadOrCreateId: enter")
 	// if b, err := os.ReadFile(path); err == nil {
 	// 	log.Println("readfile err", err)
 	// 	return string(b), nil
@@ -100,5 +104,5 @@ func LoadOrCreateID(path string) (string, error) {
 	// }
 
 	//return id, nil
-	return "",nil
+	return "", nil
 }

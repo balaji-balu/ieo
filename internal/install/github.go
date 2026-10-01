@@ -11,7 +11,7 @@ import (
 
 const (
 	githubOwner = "balaji-balu"
-	githubRepo  = "margo-hello-world"
+	githubRepo  = "ieo"
 )
 
 // GitHubRelease holds part of the GitHub API response

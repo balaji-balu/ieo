@@ -6,7 +6,7 @@ Edge-Orch is composed of three independent components:
 | --------- | -------------------- |
 | **CO**    | Central Orchestrator |
 | **LO**    | Local Orchestrator   |
-| **ERA**   | Edge Runtime Agent   |
+| **EN**    | Edge Node agent      |
 
 In production, these typically run on **different hosts**.
 For demos and development, they may be co-located on a single host.
@@ -25,27 +25,27 @@ For demos and development, they may be co-located on a single host.
 
 ## Install Layout (per host)
 
-Each host has a single install root (example: `/opt/edge-orch`).
+Each host has a single install root (example: `/opt/ieo`).
 
 ```text
-/opt/edge-orch/
+/opt/ieo/
 ├── bin/
-│   ├── co
-│   ├── lo
-│   └── era
+│   ├── ieo-co
+│   ├── ieo-lo
+│   └── ieo-en
 ├── config/
-│   └── edge-orch/
+│   └── ieo/
 │       ├── co/co.yaml
 │       ├── lo/lo.yaml
-│       └── era/era.yaml
+│       └── en/en.yaml
 ├── data/
 │   ├── co/
 │   ├── lo/
-│   └── era/
+│   └── en/
 ├── logs/
 │   ├── co/
 │   ├── lo/
-│   └── era/
+│   └── en/
 └── install.yaml
 ```
 
@@ -56,9 +56,9 @@ Each host has a single install root (example: `/opt/edge-orch`).
 ## Download
 
 ```bash
-curl -LO https://github.com/<org>/edge-orch/releases/download/v0.1.0/edge-orch_0.1.0_linux_amd64.tar.gz
-tar xzf edge-orch_0.1.0_linux_amd64.tar.gz
-cd edge-orch_0.1.0_linux_amd64
+curl -LO https://github.com/balaji-balu/ieo/releases/download/v0.1.0/ieo_0.1.0_linux_amd64.tar.gz
+tar xzf ieo_0.1.0_linux_amd64.tar.gz
+cd ieo_0.1.0_linux_amd64
 ```
 
 ---
@@ -69,8 +69,8 @@ Install all components on one machine.
 
 ```bash
 sudo ./edgectl init \
-  --root-dir /opt/edge-orch \
-  --units co,lo,era
+  --root-dir /opt/ieo \
+  --units co,lo,en
 ```
 
 This:
@@ -91,7 +91,7 @@ edgectl status
 UNIT  STATE
 co    running
 lo    running
-era   running
+en   running
 ```
 
 ---
@@ -101,19 +101,19 @@ era   running
 ### CO host
 
 ```bash
-sudo ./edgectl init --unit co --root-dir /opt/edge-orch
+sudo ./edgectl init --unit co --root-dir /opt/ieo
 ```
 
 ### LO host
 
 ```bash
-sudo ./edgectl init --unit lo --root-dir /opt/edge-orch
+sudo ./edgectl init --unit lo --root-dir /opt/ieo
 ```
 
-### ERA host(s)
+### EN host(s)
 
 ```bash
-sudo ./edgectl init --unit era --root-dir /opt/edge-orch
+sudo ./edgectl init --unit en --root-dir /opt/ieo
 ```
 
 ✅ Same binaries
@@ -127,9 +127,9 @@ sudo ./edgectl init --unit era --root-dir /opt/edge-orch
 On systemd-based hosts:
 
 ```bash
-edgectl start era
-edgectl stop era
-edgectl restart era
+edgectl start en
+edgectl stop en
+edgectl restart en
 edgectl status
 ```
 
@@ -151,16 +151,16 @@ In this mode:
 
 ```bash
 docker run -d \
-  --name era \
-  -e EDGE_ORCH_ROOT=/edge-orch \
-  -v /data/edge-orch:/edge-orch \
-  edge-orch/era:latest
+  --name en \
+  -e IEO_ROOT=/ieo \
+  -v /data/ieo:/ieo \
+  ghcr.io/balaji-balu/ieo-en:latest
 ```
 
 The same layout applies inside the container:
 
 ```text
-/edge-orch/config/edge-orch/era/era.yaml
+/ieo/config/ieo/en/en.yaml
 ```
 
 ---
@@ -170,13 +170,13 @@ The same layout applies inside the container:
 Each component reads its own config file:
 
 ```text
-<ROOT>/config/edge-orch/<unit>/<unit>.yaml
+<ROOT>/config/ieo/<unit>/<unit>.yaml
 ```
 
 Override if needed:
 
 ```bash
-era --config /custom/path/era.yaml
+en --config /custom/path/en.yaml
 ```
 
 ---
@@ -185,7 +185,7 @@ era --config /custom/path/era.yaml
 
 | Variable          | Purpose                   |
 | ----------------- | ------------------------- |
-| `EDGE_ORCH_ROOT`  | Install root (required)   |
+| `IEO_ROOT`  | Install root (required)   |
 | `APP_CONFIG_FILE` | Explicit config file      |
 | `APP_CONFIG_DIR`  | Explicit config directory |
 
@@ -194,8 +194,8 @@ era --config /custom/path/era.yaml
 ## Uninstall
 
 ```bash
-sudo edgectl stop co lo era
-sudo rm -rf /opt/edge-orch
+sudo edgectl stop co lo en
+sudo rm -rf /opt/ieo
 ```
 
 ---
@@ -203,7 +203,7 @@ sudo rm -rf /opt/edge-orch
 ## Development Mode (no install)
 
 ```bash
-go run ./cmd/era --config configs/era/dev.yaml
+go run ./cmd/en --config configs/en/dev.yaml
 ```
 
 ---

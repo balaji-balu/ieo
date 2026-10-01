@@ -36,7 +36,7 @@ The system has two planes:
 | --- | --- | --- | --- |
 | **CO** — Central Orchestrator | The central control plane. One per organization. | Workload Fleet Manager (WFM) | `cmd/co` |
 | **LO** — Local Orchestrator | The site controller. One per site. Talks to the CO, manages the site's hosts. | WFM Client acting as a **see-thru gateway** | `cmd/lo` |
-| **EN** — Edge Node agent | The agent on each host that runs workloads. | Child device behind the gateway (no Margo client of its own) | `cmd/era` |
+| **EN** — Edge Node agent | The agent on each host that runs workloads. | Child device behind the gateway (no Margo client of its own) | `cmd/en` |
 | **Site** | A physical location served by one LO. | The scope of one WFM Client | — |
 | **Host** | A machine at a site that runs workloads. Runs one EN. | Child device | — |
 | **`edgectl`** | Operator CLI. | — (vendor-specific) | `cmd/edgectl` |

@@ -8,8 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/boltstore"
+	"github.com/balaji-balu/ieo/pkg/model"
+	"github.com/balaji-balu/ieo/internal/lo/boltstore"
 
 )
 

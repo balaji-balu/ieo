@@ -18,20 +18,22 @@ node_id: {{ .NodeID }}
 component: LO
 `
 
-const eraTemplateStr = `
+const enTemplateStr = `
 node_id: {{ .NodeID }}
-component: ERA
+component: EN
 `
 
+// NodeConfig is the template data for an EN config file.
 type NodeConfig struct {
 	NodeID string
 }
 
+// GenerateDirs creates the /etc/ieo config directories for each component.
 func GenerateDirs() error {
 	paths := []string{
-		"/etc/edge-orch/co",
-		"/etc/edge-orch/lo",
-		"/etc/edge-orch/era",
+		"/etc/ieo/co",
+		"/etc/ieo/lo",
+		"/etc/ieo/en",
 	}
 
 	for _, p := range paths {
@@ -42,17 +44,23 @@ func GenerateDirs() error {
 	return nil
 }
 
-func GenerateConfigFile(path, tmplStr string, data interface{}) error {
+// GenerateConfigFile renders tmplStr with data into the file at path.
+func GenerateConfigFile(path, tmplStr string, data interface{}) (err error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", path, err)
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close file %s: %w", path, cerr)
+		}
+	}()
 
 	tpl := template.Must(template.New("config").Parse(tmplStr))
 	return tpl.Execute(file, data)
 }
 
+// GenerateAllConfigs writes the CO, LO and EN config files.
 func GenerateAllConfigs(ctx *Context) error {
 	if err := GenerateDirs(); err != nil {
 		return err
@@ -60,19 +68,19 @@ func GenerateAllConfigs(ctx *Context) error {
 
 	// CO
 	coData := NodeConfig{NodeID: uuid.New().String()}
-	if err := GenerateConfigFile("/etc/edge-orch/co/config.yaml", coTemplateStr, coData); err != nil {
+	if err := GenerateConfigFile("/etc/ieo/co/config.yaml", coTemplateStr, coData); err != nil {
 		return err
 	}
 
 	// LO
 	loData := NodeConfig{NodeID: uuid.New().String()}
-	if err := GenerateConfigFile("/etc/edge-orch/lo/config.yaml", loTemplateStr, loData); err != nil {
+	if err := GenerateConfigFile("/etc/ieo/lo/config.yaml", loTemplateStr, loData); err != nil {
 		return err
 	}
 
-	// ERA
-	eraData := NodeConfig{NodeID: uuid.New().String()}
-	if err := GenerateConfigFile("/etc/edge-orch/era/config.yaml", eraTemplateStr, eraData); err != nil {
+	// EN
+	enData := NodeConfig{NodeID: uuid.New().String()}
+	if err := GenerateConfigFile("/etc/ieo/en/config.yaml", enTemplateStr, enData); err != nil {
 		return err
 	}
 

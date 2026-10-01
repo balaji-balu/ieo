@@ -1,6 +1,6 @@
 # **CONTRIBUTING.md**
 
-# Contributing to **margo-hello-world**
+# Contributing to **ieo**
 
 Thank you for your interest in contributing! 🎉
 This project is part of the **Edge Orchestration Platform (CO, LO, EN)** ecosystem, and we welcome contributions of all forms — code, documentation, tests, issue reports, and feature suggestions.
@@ -73,7 +73,7 @@ You can help the project in many ways:
 ## 🧱 Project Structure Overview
 
 ```
-margo-hello-world/
+ieo/
  ├── co/           # Coordinator service
  ├── lo/           # Local orchestrator
  ├── en/           # Edge node runtime
@@ -134,8 +134,8 @@ Click **Fork** on GitHub.
 ### **2. Clone your fork**
 
 ```sh
-git clone https://github.com/<your-username>/margo-hello-world.git
-cd margo-hello-world
+git clone https://github.com/<your-username>/ieo.git
+cd ieo
 ```
 
 ### **3. Create a feature branch**

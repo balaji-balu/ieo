@@ -5,7 +5,7 @@ import (
     "sync"
     "time"
 
-    "github.com/balaji-balu/margo-hello-world/internal/lo/boltstore"
+    "github.com/balaji-balu/ieo/internal/lo/boltstore"
 )
 
 type Status int

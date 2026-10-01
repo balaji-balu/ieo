@@ -17,3 +17,5 @@ reconciler-old
 db-to-be-deleted
 reconciler-last
 reconiler-new
+# compiled edgectl binary (go build in repo root)
+/edgectl
