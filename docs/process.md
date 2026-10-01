@@ -8,6 +8,7 @@ Map of how the process documents link: `docs/docs-map.md`.
 
 | Artifact | Role | Owner |
 | --- | --- | --- |
+| `docs/intents/` | Why a change is worth doing and what done looks like | Human |
 | `docs/system-overview.md` | How the system works and why | Human |
 | `SPEC.md` | Implementation contract (MUST/SHOULD, §17 tests, §18 checklist) | Human (agent drafts) |
 | `docs/adr/` | Decisions on anything the spec leaves "implementation-defined" | Human (agent drafts) |
@@ -33,8 +34,8 @@ Order of authority: Margo → `SPEC.md` → ADRs → code.
 
 | # | Stage | Output | Gate |
 | --- | --- | --- | --- |
-| 1 | Intent | Issue: problem, affected spec sections | Human agrees it's worth doing |
-| 2 | Spec | `SPEC.md` edit: rules, `[IEO]`/`[Margo]` tag, §17 bullets; ADR if needed | Human approves spec diff |
+| 1 | Intent | Intent file in `docs/intents/` plus a GitHub issue linking to it | Human agrees it's worth doing |
+| 2 | Spec | `SPEC.md` edit: rules, `[IEO]`/`[Margo]` tag, §17 bullets; ADR if needed. The PR cites the intent ID and moves its status to `specced` | Human approves spec diff |
 | 3 | Plan | Agent plan: sections, files, tests, out-of-scope | Human approves plan |
 | 4 | Tests | §17 tests written, failing for the right reason | Human reviews tests |
 | 5 | Implement | Code until tests pass; `// SPEC §x.y` comments | All local checks green |

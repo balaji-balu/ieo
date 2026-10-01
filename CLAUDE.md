@@ -11,6 +11,7 @@ Order of authority: Margo specification → `SPEC.md` → `docs/adr/` → code. 
 of truth.
 
 - `SPEC.md` — implementation contract (MUST/SHOULD, §17 tests, §18 checklist, Appendix B order).
+- `docs/intents/` — why a change exists: problem, outcome, acceptance criteria (`INT-NNN`).
 - `docs/system-overview.md` — how the system works and why.
 - `docs/adr/` — decisions on anything the spec calls "implementation-defined" (index in `docs/adr/README.md`).
 - `docs/roadmap.md` — the ordered list of slices; work only on the slice named in the issue.
@@ -25,13 +26,16 @@ of truth.
    (`TestSpec_17_4_…`), and show them failing for the right reason.
 4. **Small slices.** One Appendix B step or smaller per PR. Stay inside the approved slice; record
    anything else as an issue or ADR draft.
-5. **Traceability.** Cite § numbers in code comments (`// SPEC §8.5`), test names, commits and PRs.
+5. **Traceability.** Cite § numbers in code comments (`// SPEC §8.5`), test names, commits and PRs;
+   commits and PRs also cite the intent ID (`INT-NNN`) they serve.
 6. **Follow `docs/coding-guidelines.md`.** Cite rule IDs (G-A1…) when explaining a design choice.
 7. **Verify locally before every push** (commands below). Never push red.
 8. **Build new, don't patch old (ADR 0002).** New code never imports the Git-based packages; delete
    old code in the PR that replaces it.
 9. **Windows-friendly (ADR 0009).** The maintainer tests on Windows 11: no shell scripts (helpers are
    Go programs under `tools/`), use `filepath`, and keep Unix-only calls inside the EN runtime package.
+10. **Intents.** A plan cites the intent ID it serves. Agents never set an intent's status to
+    `accepted`; a human does.
 
 ## Guardrails
 
