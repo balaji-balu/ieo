@@ -5,6 +5,8 @@ are in `docs/coding-guidelines.md`; review rules are in `REVIEW.md`.
 
 ## Sources of truth
 
+Project principles: `constitution.md` (nothing here may contradict it).
+
 Order of authority: Margo specification → `SPEC.md` → `docs/adr/` → code. Code is never the source
 of truth.
 
@@ -57,20 +59,23 @@ Go module `github.com/balaji-balu/margo-hello-world` (Go 1.25).
 
 ## Commands
 
+Same checks as CI (`.github/workflows/ci.yaml`):
+
 ```sh
-gofmt -l .                       # must print nothing for changed files
-go build ./...
-go vet ./...
-golangci-lint run ./...          # on changed packages at minimum
-go test -race ./...              # changed packages at minimum
+go build $(scripts/go-packages.sh)
+go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
+# gofmt, goimports, govet, … on changed lines only:
+golangci-lint run --new-from-merge-base=origin/main $(scripts/go-packages.sh test)
+golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-packages.sh no-test)
 ```
 
 Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
 `go run ./cmd/co`, `./cmd/lo`, `./cmd/era`. Schema changes: see `docs/contributing.md`.
 
-Known baseline issues (as of this file's creation): `go build ./...` fails in
-`internal/era/plugins/wasm`, and `tests/e2e` fails. Don't make them worse; fix them only in a slice
-that covers them. Until they are fixed, verify with the package paths you changed.
+Known baseline issues: in `scripts/go-packages.sh`, `KNOWN_BROKEN` packages don't compile and
+`BROKEN_TESTS` packages have test files that don't compile; the rest of the legacy code has lint and
+`go vet` findings. CI is a ratchet: it skips what is broken and lints only changed lines. Never add a
+package to either list; a slice that fixes one removes it.
 
 ## Pull requests
 
