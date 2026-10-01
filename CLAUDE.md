@@ -12,7 +12,8 @@ of truth.
 
 - `SPEC.md` — implementation contract (MUST/SHOULD, §17 tests, §18 checklist, Appendix B order).
 - `docs/system-overview.md` — how the system works and why.
-- `docs/adr/` — decisions on anything the spec calls "implementation-defined".
+- `docs/adr/` — decisions on anything the spec calls "implementation-defined" (index in `docs/adr/README.md`).
+- `docs/roadmap.md` — the ordered list of slices; work only on the slice named in the issue.
 
 ## Working rules
 
@@ -27,6 +28,10 @@ of truth.
 5. **Traceability.** Cite § numbers in code comments (`// SPEC §8.5`), test names, commits and PRs.
 6. **Follow `docs/coding-guidelines.md`.** Cite rule IDs (G-A1…) when explaining a design choice.
 7. **Verify locally before every push** (commands below). Never push red.
+8. **Build new, don't patch old (ADR 0002).** New code never imports the Git-based packages; delete
+   old code in the PR that replaces it.
+9. **Windows-friendly (ADR 0009).** The maintainer tests on Windows 11: no shell scripts (helpers are
+   Go programs under `tools/`), use `filepath`, and keep Unix-only calls inside the EN runtime package.
 
 ## Guardrails
 
