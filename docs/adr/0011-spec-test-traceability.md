@@ -23,7 +23,8 @@ Bullets have no IDs, and a free-text name can't be matched to a bullet reliably.
   may wrap across comment lines.
 - One test may quote several bullets (a table-driven test). At least one quote must be from the
   section in the test's name.
-- A test with no quote, or a quote that matches no bullet or several, covers nothing and is reported.
+- A test with no quote, or with no quote from its own section, covers nothing and is reported. A
+  quote that matches no bullet or several is reported; the test's other quotes still count.
 - `-strict` fails on a Core bullet without a test or on any test that covers nothing. Integration
   gaps are listed but never fail.
 
