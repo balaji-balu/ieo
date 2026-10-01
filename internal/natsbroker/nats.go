@@ -2,12 +2,12 @@ package natsbroker
 
 import (
 	"encoding/json"
-	"github.com/balaji-balu/margo-hello-world/internal/gitobserver"
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
-	//"github.com/balaji-balu/margo-hello-world/pkg/model/reconciler"
+	"github.com/balaji-balu/ieo/internal/gitobserver"
+	"github.com/balaji-balu/ieo/pkg/model"
+	//"github.com/balaji-balu/ieo/pkg/model/reconciler"
 	
 
-	//"github.com/balaji-balu/margo-hello-world/pkg/deployment"
+	//"github.com/balaji-balu/ieo/pkg/deployment"
 	"github.com/nats-io/nats.go"
 )
 

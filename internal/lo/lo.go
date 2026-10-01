@@ -12,16 +12,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
-	"github.com/balaji-balu/margo-hello-world/internal/gitmanager"
-	"github.com/balaji-balu/margo-hello-world/internal/natsbroker"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/heartbeat"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/reconciler"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/watcher"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/boltstore"
-	"github.com/balaji-balu/margo-hello-world/internal/metrics"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/actuators"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/logger"	
+	"github.com/balaji-balu/ieo/pkg/model"
+	"github.com/balaji-balu/ieo/internal/gitmanager"
+	"github.com/balaji-balu/ieo/internal/natsbroker"
+	"github.com/balaji-balu/ieo/internal/lo/heartbeat"
+	"github.com/balaji-balu/ieo/internal/lo/reconciler"
+	"github.com/balaji-balu/ieo/internal/lo/watcher"
+	"github.com/balaji-balu/ieo/internal/lo/boltstore"
+	"github.com/balaji-balu/ieo/internal/metrics"
+	"github.com/balaji-balu/ieo/internal/lo/actuators"
+	"github.com/balaji-balu/ieo/internal/lo/logger"	
 )
 
 type EventType string
@@ -207,7 +207,7 @@ func (l *LocalOrchestrator) RegisterSite() error {
     return nil
 }
 /*
-func (l *LocalOrchestrator) RegisterERA(c *gin.Context) {
+func (l *LocalOrchestrator) RegisterEN(c *gin.Context) {
     var req struct {
         HostID string `json:"host_id"`
     }
@@ -232,7 +232,7 @@ func (l *LocalOrchestrator) RegisterERA(c *gin.Context) {
 	c.JSON(http.StatusOK, l.Config.Site)
 }
 */
-func (l *LocalOrchestrator) RegisterERA(c *gin.Context) {
+func (l *LocalOrchestrator) RegisterEN(c *gin.Context) {
     var req struct {
         HostID   string            `json:"host_id"`
         // additional fields you might want to pass, e.g.

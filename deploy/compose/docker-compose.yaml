@@ -18,7 +18,7 @@ services:
       - edge-net
 
   co:
-    image: ghcr.io/balaji-balu/edgeorch-co:latest
+    image: ghcr.io/balaji-balu/ieo-co:latest
     depends_on: [postgres]
     ports: ["9001:9001"]
     expose:
@@ -34,7 +34,7 @@ services:
   lo:
     # build:
     #   dockerfile: ./dockerfile.lo 
-    image: ghcr.io/balaji-balu/edgeorch-lo:latest   
+    image: ghcr.io/balaji-balu/ieo-lo:latest   
     depends_on: [nats]
     ports: ["9010:9010"]
     expose:
@@ -56,20 +56,20 @@ services:
       - 1.1.1.1
 
 
-  era:
+  en:
     # build:
-    #   dockerfile: ./dockerfile.era 
-    image: ghcr.io/balaji-balu/edgeorch-era:latest   
+    #   dockerfile: ./dockerfile.en 
+    image: ghcr.io/balaji-balu/ieo-en:latest   
     depends_on: [nats]
     ports: ["9011:9011"]
     expose:
       - "9200"
     environment:
       APP_ENV: prod
-      ERA_PORT: 9011
-      ERA_METRICS_PORT: 9200
-      ERA_NATS_URL: nats://nats:4222
-      ERA_LO_URL: http://lo:9010
+      IEO_EN_PORT: 9011
+      IEO_EN_METRICS_PORT: 9200
+      IEO_EN_NATS_URL: nats://nats:4222
+      IEO_EN_LO_URL: http://lo:9010
     networks:
       - edge-net
 

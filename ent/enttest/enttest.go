@@ -5,12 +5,12 @@ package enttest
 import (
 	"context"
 
-	"github.com/balaji-balu/margo-hello-world/ent"
+	"github.com/balaji-balu/ieo/ent"
 	// required by schema hooks.
-	_ "github.com/balaji-balu/margo-hello-world/ent/runtime"
+	_ "github.com/balaji-balu/ieo/ent/runtime"
 
 	"entgo.io/ent/dialect/sql/schema"
-	"github.com/balaji-balu/margo-hello-world/ent/migrate"
+	"github.com/balaji-balu/ieo/ent/migrate"
 )
 
 type (

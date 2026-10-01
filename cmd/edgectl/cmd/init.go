@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/balaji-balu/margo-hello-world/cmd/edgectl/internal/initflow"
+	"github.com/balaji-balu/ieo/cmd/edgectl/internal/initflow"
 )
 
 func newInitCmd() *cobra.Command{
@@ -21,7 +21,7 @@ var initCmd = &cobra.Command{
 This command installs and starts all required components:
 - Central Orchestrator (CO)
 - Local Orchestrator (LO)
-- Edge Runtime Agent (ERA)
+- Edge Node agent (EN)
 
 No configuration is required.`,
 	RunE: func(cmd *cobra.Command, args []string) error {

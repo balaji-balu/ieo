@@ -43,8 +43,8 @@ jobs:
           file: dockerfile.co
           push: true
           tags: |
-            ghcr.io/${{ env.IMAGE_PREFIX }}/edgeorch-co:latest
-            ghcr.io/${{ env.IMAGE_PREFIX }}/edgeorch-co:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-co:latest
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-co:${{ github.sha }}
 
       # ---------- LO ----------
       - name: Build & push LO
@@ -54,16 +54,16 @@ jobs:
           file: dockerfile.lo
           push: true
           tags: |
-            ghcr.io/${{ env.IMAGE_PREFIX }}/edgeorch-lo:latest
-            ghcr.io/${{ env.IMAGE_PREFIX }}/edgeorch-lo:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-lo:latest
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-lo:${{ github.sha }}
 
-      # ---------- ERA ----------
-      - name: Build & push ERA
+      # ---------- EN ----------
+      - name: Build & push EN
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: dockerfile.era
+          file: dockerfile.en
           push: true
           tags: |
-            ghcr.io/${{ env.IMAGE_PREFIX }}/edgeorch-era:latest
-            ghcr.io/${{ env.IMAGE_PREFIX }}/edgeorch-era:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-en:latest
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-en:${{ github.sha }}

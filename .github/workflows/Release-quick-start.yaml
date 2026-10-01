@@ -28,26 +28,26 @@ jobs:
 
       - name: Prepare release bundle
         run: |
-          mkdir -p bundle/edge-orch-quickstart/db
+          mkdir -p bundle/ieo-quickstart/db
 
-          cp dist/edgectl bundle/edge-orch-quickstart/
-          cp deploy/docker-compose.yaml bundle/edge-orch-quickstart/
-          cp deploy/.env.example bundle/edge-orch-quickstart/
-          cp deploy/db/init.sql bundle/edge-orch-quickstart/db/
-          cp README.md bundle/edge-orch-quickstart/
+          cp dist/edgectl bundle/ieo-quickstart/
+          cp deploy/docker-compose.yaml bundle/ieo-quickstart/
+          cp deploy/.env.example bundle/ieo-quickstart/
+          cp deploy/db/init.sql bundle/ieo-quickstart/db/
+          cp README.md bundle/ieo-quickstart/
 
       - name: Create tar.gz
         run: |
-          tar -czf edge-orch-quickstart-linux-amd64.tar.gz \
-              -C bundle edge-orch-quickstart
+          tar -czf ieo-quickstart-linux-amd64.tar.gz \
+              -C bundle ieo-quickstart
 
       - name: Create zip
         run: |
-          cd bundle && zip -r ../edge-orch-quickstart-linux-amd64.zip edge-orch-quickstart
+          cd bundle && zip -r ../ieo-quickstart-linux-amd64.zip ieo-quickstart
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            edge-orch-quickstart-linux-amd64.tar.gz
-            edge-orch-quickstart-linux-amd64.zip
+            ieo-quickstart-linux-amd64.tar.gz
+            ieo-quickstart-linux-amd64.zip

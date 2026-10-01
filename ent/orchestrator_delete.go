@@ -8,8 +8,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/balaji-balu/margo-hello-world/ent/orchestrator"
-	"github.com/balaji-balu/margo-hello-world/ent/predicate"
+	"github.com/balaji-balu/ieo/ent/orchestrator"
+	"github.com/balaji-balu/ieo/ent/predicate"
 )
 
 // OrchestratorDelete is the builder for deleting a Orchestrator entity.

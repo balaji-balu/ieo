@@ -4,7 +4,7 @@ import (
 	"context"
 	
 	"github.com/looplab/fsm"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/logger"
+	"github.com/balaji-balu/ieo/internal/lo/logger"
 	"sync"
 )
 

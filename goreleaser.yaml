@@ -1,4 +1,4 @@
-project_name: edge-installer
+project_name: ieo
 
 builds:
   - id: installer
@@ -9,9 +9,9 @@ builds:
     ldflags: ["-s -w"]
     env: [CGO_ENABLED=0]
 
-  - id: era
-    main: ./cmd/era
-    binary: era
+  - id: en
+    main: ./cmd/en
+    binary: ieo-en
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ldflags: ["-s -w"]
@@ -19,7 +19,7 @@ builds:
 
   - id: lo
     main: ./cmd/lo
-    binary: lo
+    binary: ieo-lo
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ldflags: ["-s -w"]
@@ -27,7 +27,7 @@ builds:
 
   - id: co
     main: ./cmd/co
-    binary: co
+    binary: ieo-co
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ldflags: ["-s -w"]
@@ -44,7 +44,7 @@ builds:
 # Produce raw binaries (not tar.gz or zip)
 archives:
   - id: binaries
-    builds: [installer, era, lo, co, edgectl]
+    builds: [installer, en, lo, co, edgectl]
     format: binary
     wrap_in_directory: false
     name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"

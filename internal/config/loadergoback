@@ -133,7 +133,7 @@ func LoadOrCreateID(path string) (string, error) {
 
 type RootDirOptions struct {
 	FlagValue string // from --config
-	EnvKey    string // e.g. ERA_CONFIG_ROOT
+	EnvKey    string // e.g. IEO_EN_CONFIG_ROOT
 	AppName   string // era
 }
 

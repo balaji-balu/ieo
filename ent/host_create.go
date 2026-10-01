@@ -11,7 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/balaji-balu/margo-hello-world/ent/host"
+	"github.com/balaji-balu/ieo/ent/host"
 	"github.com/google/uuid"
 )
 

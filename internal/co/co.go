@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	//"github.com/balaji-balu/margo-hello-world/internal/gitobserver"
-	//"github.com/balaji-balu/margo-hello-world/internal/natsbroker"
-	"github.com/balaji-balu/margo-hello-world/internal/gitmanager"
+	//"github.com/balaji-balu/ieo/internal/gitobserver"
+	//"github.com/balaji-balu/ieo/internal/natsbroker"
+	"github.com/balaji-balu/ieo/internal/gitmanager"
 )
 
 // CO uses gitmanager to read app-registry and write deployments

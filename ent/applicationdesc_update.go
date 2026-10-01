@@ -11,9 +11,9 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
-	"github.com/balaji-balu/margo-hello-world/ent/applicationdesc"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentprofile"
-	"github.com/balaji-balu/margo-hello-world/ent/predicate"
+	"github.com/balaji-balu/ieo/ent/applicationdesc"
+	"github.com/balaji-balu/ieo/ent/deploymentprofile"
+	"github.com/balaji-balu/ieo/ent/predicate"
 	"github.com/google/uuid"
 )
 

@@ -39,8 +39,8 @@ func TestResolveRootDir(t *testing.T) {
 
 		root, err := ResolveRootDir(RootDirOptions{
 			FlagValue: flagPath,
-			EnvKey:    "ERA_CONFIG_ROOT",
-			AppName:   "era",
+			EnvKey:    "IEO_EN_CONFIG_ROOT",
+			AppName:   "en",
 		})
 
 		require.NoError(t, err)
@@ -58,8 +58,8 @@ func TestResolveRootDir(t *testing.T) {
 		getenv = func(string) string { return envPath }
 
 		root, err := ResolveRootDir(RootDirOptions{
-			AppName: "era",
-			EnvKey:  "ERA_CONFIG_ROOT",
+			AppName: "en",
+			EnvKey:  "IEO_EN_CONFIG_ROOT",
 		})
 
 		require.NoError(t, err)
@@ -76,13 +76,13 @@ func TestResolveRootDir(t *testing.T) {
 	// 		return filepath.Join(tmp, "osdefault")
 	// 	}
 
-	// 	path := osDefaultRoot("era")
+	// 	path := osDefaultRoot("en")
 	// 	require.NoError(t, os.MkdirAll(path, 0755))
 
 	// 	getenv = func(string) string { return "" }
 
 	// 	root, err := ResolveRootDir(RootDirOptions{
-	// 		AppName: "era",
+	// 		AppName: "en",
 	// 	})
 
 	// 	require.NoError(t, err)
@@ -102,12 +102,12 @@ func TestResolveRootDir(t *testing.T) {
 		}
 
 		root, err := ResolveRootDir(RootDirOptions{
-			AppName: "era",
+			AppName: "en",
 		})
 
 		require.NoError(t, err)
 		require.DirExists(t, root)
-		require.FileExists(t, filepath.Join(root, "era.yaml"))
+		require.FileExists(t, filepath.Join(root, "en.yaml"))
 	})
 
 	t.Run("creates missing flag dir", func(t *testing.T) {
@@ -115,7 +115,7 @@ func TestResolveRootDir(t *testing.T) {
 
 		root, err := ResolveRootDir(RootDirOptions{
 			FlagValue: p,
-			AppName:   "era",
+			AppName:   "en",
 		})
 
 		require.NoError(t, err)

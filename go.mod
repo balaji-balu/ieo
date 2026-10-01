@@ -1,6 +1,6 @@
-module github.com/balaji-balu/margo-hello-world
+module github.com/balaji-balu/ieo
 
-go 1.25.3
+go 1.25
 
 require (
 	entgo.io/ent v0.14.5

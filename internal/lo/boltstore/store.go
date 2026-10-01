@@ -9,7 +9,7 @@ import (
 	//"time"
 
 	bolt "go.etcd.io/bbolt"
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
+	"github.com/balaji-balu/ieo/pkg/model"
 )
 
 // -------------------- Internal write request --------------------

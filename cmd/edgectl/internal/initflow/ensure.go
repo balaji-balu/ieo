@@ -7,9 +7,9 @@ import (
 )
 
 var requiredBinaries = []string{
-	"co",
-	"lo",
-	"era",
+	"ieo-co",
+	"ieo-lo",
+	"ieo-en",
 }
 
 func EnsureBinaries(ctx *Context) error {

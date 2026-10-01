@@ -7,13 +7,13 @@ import (
 	"time"
 	//"errors"
 
-	//. "github.com/balaji-balu/margo-hello-world/internal/config"
-	"github.com/balaji-balu/margo-hello-world/internal/gitobserver"
-	"github.com/balaji-balu/margo-hello-world/internal/natsbroker"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/watcher"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/logger"
-	//"github.com/balaji-balu/margo-hello-world/internal/lo/nwadapt"
-	//"github.com/balaji-balu/margo-hello-world/internal/lo"
+	//. "github.com/balaji-balu/ieo/internal/config"
+	"github.com/balaji-balu/ieo/internal/gitobserver"
+	"github.com/balaji-balu/ieo/internal/natsbroker"
+	"github.com/balaji-balu/ieo/internal/lo/watcher"
+	"github.com/balaji-balu/ieo/internal/lo/logger"
+	//"github.com/balaji-balu/ieo/internal/lo/nwadapt"
+	//"github.com/balaji-balu/ieo/internal/lo"
 )
 
 // Handles PushPreferred mode

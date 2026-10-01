@@ -43,7 +43,7 @@ jobs:
 
       - name: Print service logs
         run: |
-          docker logs intelligent-edge-orchestrator-co-1 || true
+          docker logs ieo-co-1 || true
           docker logs intelligent-edge-orchestrator-lo_1-1 || true
           docker logs intelligent-edge-orchestrator-lo_2-1 || true
 
@@ -59,7 +59,7 @@ jobs:
       #     # docker exec co curl -s http://localhost:9001/health || echo "CO not ready"
       #     # docker exec lo_1 curl -s http://localhost:9010/health || echo "LO_1 not ready"
       #     # docker exec lo_2 curl -s http://localhost:9011/health || echo "LO_2 not ready"
-      #     docker exec intelligent-edge-orchestrator-co-1 curl -s http://localhost:9001/health || echo "CO not ready"
+      #     docker exec ieo-co-1 curl -s http://localhost:9001/health || echo "CO not ready"
       #     docker exec intelligent-edge-orchestrator-lo_1-1 curl -s http://localhost:9010/health || echo "LO_1 not ready"
       #     docker exec intelligent-edge-orchestrator-lo_2-1 curl -s http://localhost:9011/health || echo "LO_2 not ready"
       - name: Stop all containers

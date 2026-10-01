@@ -5,12 +5,12 @@ package ent
 import (
 	"time"
 
-	"github.com/balaji-balu/margo-hello-world/ent/applicationdesc"
-	"github.com/balaji-balu/margo-hello-world/ent/component"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentcomponentstatus"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentprofile"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentstatus"
-	"github.com/balaji-balu/margo-hello-world/ent/schema"
+	"github.com/balaji-balu/ieo/ent/applicationdesc"
+	"github.com/balaji-balu/ieo/ent/component"
+	"github.com/balaji-balu/ieo/ent/deploymentcomponentstatus"
+	"github.com/balaji-balu/ieo/ent/deploymentprofile"
+	"github.com/balaji-balu/ieo/ent/deploymentstatus"
+	"github.com/balaji-balu/ieo/ent/schema"
 	"github.com/google/uuid"
 )
 

@@ -1,0 +1,44 @@
+# boltdb:
+#   path: 
+
+# nats:
+#   image: nats:2.10
+#   port: 4222
+
+# lo:
+#   image: ghcr.io/balaji-balu/ieo-lo:latest
+#   replicas: 1
+#   port: 9010
+
+
+
+site:
+  name: site-1
+
+github:
+  token: ""   
+
+nats:
+  host: co-nats.default.svc.cluster.local
+  port: 4222
+
+lo:
+  image: ghcr.io/balaji-balu/ieo-lo:latest
+  replicas: 1
+  port: 9010
+
+  boltdb:
+    path: /data/lo.db
+
+  co:
+    host: co-co.default.svc.cluster.local
+    port: 9001
+
+en:
+  image: ghcr.io/balaji-balu/ieo-en:latest
+  replicas: 1
+  port: 9011
+
+  lo:
+    host: ieo-site-1-lo
+    port: 9010

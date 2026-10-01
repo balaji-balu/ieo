@@ -92,10 +92,10 @@ jobs:
 
       # - name: Smoke test
       #   run: |
-      #     docker exec intelligent-edge-orchestrator-co-1 \
+      #     docker exec ieo-co-1 \
       #       cli co add app --name sample/hello/1.0 --artifact https://github.com/app-registry
 
-      #     docker exec intelligent-edge-orchestrator-co-1 \
+      #     docker exec ieo-co-1 \
       #       cli co deploy --app sample/hello/1.0 --sites lo_1
 
       - name: Logs on failure

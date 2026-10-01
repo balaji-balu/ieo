@@ -1,4 +1,4 @@
-// Package logx - a unified logging package for CO, LO, ERA, and edgectl
+// Package logx - a unified logging package for CO, LO, EN, and edgectl
 //
 // Features:
 // - Wrapper around zap (fast structured logger)

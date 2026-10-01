@@ -49,14 +49,14 @@ of truth.
 
 ## Repository map
 
-Go module `github.com/balaji-balu/margo-hello-world` (Go 1.25).
+Go module `github.com/balaji-balu/ieo` (Go 1.25).
 
 | Path | Contents |
 | --- | --- |
 | `cmd/co`, `internal/co`, `pkg/co` | Central Orchestrator (CO) |
 | `cmd/lo`, `internal/lo` | Local Orchestrator (LO): reconciler, boltstore, watcher, actuators |
-| `cmd/era`, `internal/era`, `pkg/era` | Edge Node agent (EN in `SPEC.md`; called ERA in code): runtime plugins, lifecycle, heartbeat |
-| `cmd/edgectl`, `edgectl/` | Operator CLI |
+| `cmd/en`, `internal/en`, `pkg/en` | Edge Node agent (EN): runtime plugins, lifecycle, heartbeat |
+| `cmd/edgectl` | Operator CLI |
 | `internal/natsbroker`, `internal/streammanager` | NATS messaging |
 | `internal/git*`, `internal/ocifetch` | Git-based delivery (being replaced, Appendix B step 2) and OCI fetch |
 | `ent/`, `db/`, `atlas.hcl` | ent schema (generated), migrations |
@@ -79,7 +79,7 @@ golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-p
 ```
 
 Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
-`go run ./cmd/co`, `./cmd/lo`, `./cmd/era`. Schema changes: see `docs/contributing.md`.
+`go run ./cmd/co`, `./cmd/lo`, `./cmd/en`. Schema changes: see `docs/contributing.md`.
 
 Known baseline issues: in `scripts/go-packages.sh`, `KNOWN_BROKEN` packages don't compile and
 `BROKEN_TESTS` packages have test files that don't compile; the rest of the legacy code has lint and

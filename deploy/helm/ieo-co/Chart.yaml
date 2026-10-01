@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ieo-co
+description: CO with Postgres and NATS
+version: 0.1.0
+appVersion: "0.1"

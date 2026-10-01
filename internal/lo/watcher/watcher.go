@@ -11,7 +11,7 @@ import (
 	"time"
 	"path/filepath"
 
-	"github.com/balaji-balu/margo-hello-world/internal/gitmanager"
+	"github.com/balaji-balu/ieo/internal/gitmanager"
 	git "github.com/go-git/go-git/v5"
 	//"github.com/go-git/go-git/v5/plumbing"
 )

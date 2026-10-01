@@ -9,22 +9,22 @@ import (
 	"log"
 	"reflect"
 
-	"github.com/balaji-balu/margo-hello-world/ent/migrate"
+	"github.com/balaji-balu/ieo/ent/migrate"
 	"github.com/google/uuid"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
-	"github.com/balaji-balu/margo-hello-world/ent/applicationdesc"
-	"github.com/balaji-balu/margo-hello-world/ent/component"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentcomponentstatus"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentprofile"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentstatus"
-	"github.com/balaji-balu/margo-hello-world/ent/host"
-	"github.com/balaji-balu/margo-hello-world/ent/orchestrator"
-	"github.com/balaji-balu/margo-hello-world/ent/site"
-	"github.com/balaji-balu/margo-hello-world/ent/user"
+	"github.com/balaji-balu/ieo/ent/applicationdesc"
+	"github.com/balaji-balu/ieo/ent/component"
+	"github.com/balaji-balu/ieo/ent/deploymentcomponentstatus"
+	"github.com/balaji-balu/ieo/ent/deploymentprofile"
+	"github.com/balaji-balu/ieo/ent/deploymentstatus"
+	"github.com/balaji-balu/ieo/ent/host"
+	"github.com/balaji-balu/ieo/ent/orchestrator"
+	"github.com/balaji-balu/ieo/ent/site"
+	"github.com/balaji-balu/ieo/ent/user"
 )
 
 // Client is the client that holds all ent builders.

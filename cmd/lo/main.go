@@ -17,11 +17,11 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/google/uuid"
 
-	"github.com/balaji-balu/margo-hello-world/pkg/logx"
-	"github.com/balaji-balu/margo-hello-world/internal/lo"
-	//"github.com/balaji-balu/margo-hello-world/internal/config"
-	"github.com/balaji-balu/margo-hello-world/internal/natsbroker"
-	"github.com/balaji-balu/margo-hello-world/internal/gitmanager"
+	"github.com/balaji-balu/ieo/pkg/logx"
+	"github.com/balaji-balu/ieo/internal/lo"
+	//"github.com/balaji-balu/ieo/internal/config"
+	"github.com/balaji-balu/ieo/internal/natsbroker"
+	"github.com/balaji-balu/ieo/internal/gitmanager"
 
 )
 
@@ -131,7 +131,7 @@ func main() {
 	r.GET("/hosts", localorch.HandlerGetHosts)
 	r.GET("/actual", localorch.HandlerGetActual)
 
-	r.POST("/register", localorch.RegisterERA)
+	r.POST("/register", localorch.RegisterEN)
 	//r.POST("/deployment_status", lo.DeployStatus)
 
 	srv := &http.Server{

@@ -15,14 +15,14 @@ import (
 	"google.golang.org/grpc"
 	"go.uber.org/zap"
 	
-	"github.com/balaji-balu/margo-hello-world/pkg/logx"
-	"github.com/balaji-balu/margo-hello-world/pkg/co/model"
-	"github.com/balaji-balu/margo-hello-world/ent"
-	"github.com/balaji-balu/margo-hello-world/internal/api"
-	//"github.com/balaji-balu/margo-hello-world/internal/config"
-	"github.com/balaji-balu/margo-hello-world/internal/gitmanager"
-	"github.com/balaji-balu/margo-hello-world/internal/metrics"
-	"github.com/balaji-balu/margo-hello-world/internal/co"
+	"github.com/balaji-balu/ieo/pkg/logx"
+	"github.com/balaji-balu/ieo/pkg/co/model"
+	"github.com/balaji-balu/ieo/ent"
+	"github.com/balaji-balu/ieo/internal/api"
+	//"github.com/balaji-balu/ieo/internal/config"
+	"github.com/balaji-balu/ieo/internal/gitmanager"
+	"github.com/balaji-balu/ieo/internal/metrics"
+	"github.com/balaji-balu/ieo/internal/co"
 )
 
 
@@ -45,7 +45,7 @@ func main() {
 	metrics_port := os.Getenv("CO_METRICS_PORT")
 
     // options := config.Options{
-    //     AppName: "edge-orch",
+    //     AppName: "ieo",
     //     Unit: "co",
     //     Env: os.Getenv("APP_ENV"),
     // }

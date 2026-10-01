@@ -15,8 +15,8 @@ Welcome! This guide helps you **set up and run** the Intelligent Edge Orchestrat
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/balaji-balu/intelligent-edge-orchestrator.git
-cd intelligent-edge-orchestrator
+git clone https://github.com/balaji-balu/ieo.git
+cd ieo
 ````
 
 

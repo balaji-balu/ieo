@@ -5,14 +5,14 @@ import (
 	"os"
 	"github.com/gin-gonic/gin"
 
-	"github.com/balaji-balu/margo-hello-world/ent"
-	"github.com/balaji-balu/margo-hello-world/internal/api/handlers"
-	"github.com/balaji-balu/margo-hello-world/internal/api/middleware"
-	//"github.com/balaji-balu/margo-hello-world/internal/config"
-	"github.com/balaji-balu/margo-hello-world/internal/streammanager"
-	"github.com/balaji-balu/margo-hello-world/internal/gitfetcher"
-	"github.com/balaji-balu/margo-hello-world/internal/co"
-	"github.com/balaji-balu/margo-hello-world/pkg/co/model"
+	"github.com/balaji-balu/ieo/ent"
+	"github.com/balaji-balu/ieo/internal/api/handlers"
+	"github.com/balaji-balu/ieo/internal/api/middleware"
+	//"github.com/balaji-balu/ieo/internal/config"
+	"github.com/balaji-balu/ieo/internal/streammanager"
+	"github.com/balaji-balu/ieo/internal/gitfetcher"
+	"github.com/balaji-balu/ieo/internal/co"
+	"github.com/balaji-balu/ieo/pkg/co/model"
 )
 
 func NewRouter(client *ent.Client, co *co.CO, cfg model.COConfig) *gin.Engine {

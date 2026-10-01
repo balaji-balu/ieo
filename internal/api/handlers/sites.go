@@ -5,9 +5,9 @@ import (
     "github.com/google/uuid"
 	"github.com/gin-gonic/gin"
 
-	"github.com/balaji-balu/margo-hello-world/ent"
-    "github.com/balaji-balu/margo-hello-world/ent/site"
-    "github.com/balaji-balu/margo-hello-world/ent/host"
+	"github.com/balaji-balu/ieo/ent"
+    "github.com/balaji-balu/ieo/ent/site"
+    "github.com/balaji-balu/ieo/ent/host"
 
 )
 func ListSites(c *gin.Context, client *ent.Client) {

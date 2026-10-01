@@ -18,9 +18,9 @@ node_id: {{ .NodeID }}
 component: LO
 `
 
-const eraTemplateStr = `
+const enTemplateStr = `
 node_id: {{ .NodeID }}
-component: ERA
+component: EN
 `
 
 type NodeConfig struct {
@@ -29,9 +29,9 @@ type NodeConfig struct {
 
 func GenerateDirs() error {
 	paths := []string{
-		"/etc/edge-orch/co",
-		"/etc/edge-orch/lo",
-		"/etc/edge-orch/era",
+		"/etc/ieo/co",
+		"/etc/ieo/lo",
+		"/etc/ieo/en",
 	}
 
 	for _, p := range paths {
@@ -60,19 +60,19 @@ func GenerateAllConfigs(ctx *Context) error {
 
 	// CO
 	coData := NodeConfig{NodeID: uuid.New().String()}
-	if err := GenerateConfigFile("/etc/edge-orch/co/config.yaml", coTemplateStr, coData); err != nil {
+	if err := GenerateConfigFile("/etc/ieo/co/config.yaml", coTemplateStr, coData); err != nil {
 		return err
 	}
 
 	// LO
 	loData := NodeConfig{NodeID: uuid.New().String()}
-	if err := GenerateConfigFile("/etc/edge-orch/lo/config.yaml", loTemplateStr, loData); err != nil {
+	if err := GenerateConfigFile("/etc/ieo/lo/config.yaml", loTemplateStr, loData); err != nil {
 		return err
 	}
 
-	// ERA
-	eraData := NodeConfig{NodeID: uuid.New().String()}
-	if err := GenerateConfigFile("/etc/edge-orch/era/config.yaml", eraTemplateStr, eraData); err != nil {
+	// EN
+	enData := NodeConfig{NodeID: uuid.New().String()}
+	if err := GenerateConfigFile("/etc/ieo/en/config.yaml", enTemplateStr, enData); err != nil {
 		return err
 	}
 

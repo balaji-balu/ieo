@@ -9,12 +9,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/balaji-balu/margo-hello-world/ent"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentstatus"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentcomponentstatus"
-	"github.com/balaji-balu/margo-hello-world/internal/streammanager"
-	"github.com/balaji-balu/margo-hello-world/internal/metrics"
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
+	"github.com/balaji-balu/ieo/ent"
+	"github.com/balaji-balu/ieo/ent/deploymentstatus"
+	"github.com/balaji-balu/ieo/ent/deploymentcomponentstatus"
+	"github.com/balaji-balu/ieo/internal/streammanager"
+	"github.com/balaji-balu/ieo/internal/metrics"
+	"github.com/balaji-balu/ieo/pkg/model"
 	
 )
 

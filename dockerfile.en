@@ -7,12 +7,12 @@ RUN go mod download
 
 COPY . .
 # RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o en ./cmd/en
-RUN go install -ldflags="-s -w" ./cmd/en
+RUN go build -ldflags="-s -w" -o /go/bin/ieo-en ./cmd/en
 
 FROM debian:bookworm-slim
 WORKDIR /app
-COPY --from=builder /go/bin/en .
+COPY --from=builder /go/bin/ieo-en .
 
-CMD ["./en"]
+CMD ["./ieo-en"]
 
 

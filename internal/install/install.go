@@ -7,7 +7,7 @@ import (
 	"runtime"
 )
 
-var bins = []string{"co", "lo", "era", "edgectl"}
+var bins = []string{"ieo-co", "ieo-lo", "ieo-en", "edgectl"}
 
 func RunInstall(version string) {
 	targetDir := defaultInstallDir()

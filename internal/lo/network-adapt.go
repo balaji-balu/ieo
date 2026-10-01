@@ -8,9 +8,9 @@ import (
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"		
 
-	//"github.com/balaji-balu/margo-hello-world/internal/lo/reconciler"
-	"github.com/balaji-balu/margo-hello-world/pkg/model"
-	"github.com/balaji-balu/margo-hello-world/internal/lo/logger"
+	//"github.com/balaji-balu/ieo/internal/lo/reconciler"
+	"github.com/balaji-balu/ieo/pkg/model"
+	"github.com/balaji-balu/ieo/internal/lo/logger"
 )
 
 type NetworkChangePayload struct {

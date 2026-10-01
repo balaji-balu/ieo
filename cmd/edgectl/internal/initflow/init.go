@@ -25,7 +25,7 @@ $ edgectl status
 
 CO    Running   v0.1.15   port=8080  pid=1234
 LO    Running   v0.1.15   node=bala-edge-01  pid=1240
-ERA   Running   v0.1.15   runtime=containerd pid=1245
+EN    Running   v0.1.15   runtime=containerd pid=1245
 
 System   ✔ Healthy
 */

@@ -31,7 +31,7 @@ services:
     build:
       dockerfile: ./dockerfile.co
 
-    # image: bbalu/edgeorch-co:latest
+    # image: bbalu/ieo-co:latest
     # command: ["--config=/config/prod.yaml"]
     # volumes:
       # - ./configs/co:/config
@@ -71,19 +71,19 @@ services:
       - 1.1.1.1
 
 
-  era:
+  en:
     build:
-      dockerfile: ./dockerfile.era    
+      dockerfile: ./dockerfile.en    
     depends_on: [nats]
     ports: ["9011:9011"]
     expose:
       - "9200"
     environment:
       APP_ENV: prod
-      ERA_PORT: 9011
-      ERA_METRICS_PORT: 9200
-      ERA_NATS_URL: nats://nats:4222
-      ERA_LO_URL: http://lo:9010
+      IEO_EN_PORT: 9011
+      IEO_EN_METRICS_PORT: 9200
+      IEO_EN_NATS_URL: nats://nats:4222
+      IEO_EN_LO_URL: http://lo:9010
     networks:
       - edge-net
 

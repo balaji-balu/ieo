@@ -10,7 +10,7 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/balaji-balu/margo-hello-world/ent/site"
+	"github.com/balaji-balu/ieo/ent/site"
 	"github.com/google/uuid"
 )
 

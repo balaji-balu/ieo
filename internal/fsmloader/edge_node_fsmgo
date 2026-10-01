@@ -7,8 +7,8 @@ import (
 	"github.com/looplab/fsm"
 	"go.uber.org/zap"
 
-	"github.com/balaji-balu/margo-hello-world/internal/edgenode"
-	//"github.com/balaji-balu/margo-hello-world/pkg/deployment"
+	"github.com/balaji-balu/ieo/internal/edgenode"
+	//"github.com/balaji-balu/ieo/pkg/deployment"
 )
 
 type EdgeNodeFSM struct {

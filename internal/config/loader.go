@@ -14,8 +14,8 @@ import (
 type Options struct {
 	//RootDir	string
 	Env     string // dev | prod | staging
-	AppName string // edge-orch
-	Unit    string // co | lo | era
+	AppName string // ieo
+	Unit    string // co | lo | en
 }
 
 func RootDir(opts Options) (string, error) {

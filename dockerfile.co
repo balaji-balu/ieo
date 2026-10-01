@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go install -ldflags="-s -w" ./cmd/co
+RUN go build -ldflags="-s -w" -o /go/bin/ieo-co ./cmd/co
 #RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o co ./cmd/co
 # RUN go build -o co ./cmd/co
 
@@ -18,13 +18,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     rm -rf /var/lib/apt/lists/*
 
 # Git identity for container commits
-ENV GIT_AUTHOR_NAME="edge-orch-bot"
-ENV GIT_AUTHOR_EMAIL="bot@edge-orch.local"
-ENV GIT_COMMITTER_NAME="edge-orch-bot"
-ENV GIT_COMMITTER_EMAIL="bot@edge-orch.local"
+ENV GIT_AUTHOR_NAME="ieo-bot"
+ENV GIT_AUTHOR_EMAIL="bot@ieo.local"
+ENV GIT_COMMITTER_NAME="ieo-bot"
+ENV GIT_COMMITTER_EMAIL="bot@ieo.local"
 
-COPY --from=builder /go/bin/co .
+COPY --from=builder /go/bin/ieo-co .
 COPY ./configs/co.yaml ./configs/co.yaml
 #ENTRYPOINT ["/app/co"]
 
-CMD ["./co", "--config=./configs/co.yaml"]
+CMD ["./ieo-co", "--config=./configs/co.yaml"]

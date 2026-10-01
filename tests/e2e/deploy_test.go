@@ -47,7 +47,7 @@ func createTempApp(t *testing.T, appName, version string) string {
 }
 
 // DeploymentStatus represents a simple structure returned by `edgectl status`
-// Adapt this to your actual CO/LO/ERA status JSON structure
+// Adapt this to your actual CO/LO/EN status JSON structure
 type DeploymentStatus struct {
     App     string `json:"app"`
     Version string `json:"version"`

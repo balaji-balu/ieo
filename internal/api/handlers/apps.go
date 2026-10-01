@@ -10,13 +10,13 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/google/uuid"
 
-	"github.com/balaji-balu/margo-hello-world/ent"
-	"github.com/balaji-balu/margo-hello-world/ent/applicationdesc"
-	"github.com/balaji-balu/margo-hello-world/ent/deploymentprofile"
-	"github.com/balaji-balu/margo-hello-world/ent/component"	
-	"github.com/balaji-balu/margo-hello-world/pkg/application"
-	//"github.com/balaji-balu/margo-hello-world/internal/co"
-	"github.com/balaji-balu/margo-hello-world/internal/gitfetcher"
+	"github.com/balaji-balu/ieo/ent"
+	"github.com/balaji-balu/ieo/ent/applicationdesc"
+	"github.com/balaji-balu/ieo/ent/deploymentprofile"
+	"github.com/balaji-balu/ieo/ent/component"	
+	"github.com/balaji-balu/ieo/pkg/application"
+	//"github.com/balaji-balu/ieo/internal/co"
+	"github.com/balaji-balu/ieo/internal/gitfetcher"
 )
 type AppRequest struct {
 	Category string `json:"category" binding:"required"`

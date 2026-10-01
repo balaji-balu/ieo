@@ -2,7 +2,7 @@ package deployment
 
 import (
 	//"gopkg.in/yaml.v3"
-	"github.com/balaji-balu/margo-hello-world/pkg/application"
+	"github.com/balaji-balu/ieo/pkg/application"
 	"github.com/goccy/go-yaml"
 	"os"
 )
