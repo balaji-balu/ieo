@@ -24,7 +24,7 @@ when the § bullets already exist.
 | 0.2 | Branding and rename (ADR 0001, 0008): module path, `cmd/era` → `cmd/en`, image and chart names, developer README, remove the committed `edgectl` binary, fix `relaase.yaml`, `go.mod` → `go 1.25` | `go build` of renamed packages works; no `margo-hello-world` left outside history |
 | 0.3 | Move data plane to `docs/proposals/data-plane.md` (ADR 0006) | SPEC and overview point to the proposal |
 | 0.4 | Agent enablers: `.github/workflows/ci.yaml` (build, vet, lint, `go test -race` on changed packages), PR template, conformance tool `go run ./tools/conformance` (lists §17 bullets without a `TestSpec_` test), `.claude/settings.json` SessionStart hook | Done: CI and PR template already in place; conformance tool prints the gap list |
-| 0.5 | Laptop harness (ADR 0009): `deploy/dev/compose.yaml` with NATS, Postgres, `registry:2`, CO, LO and two `docker:dind` hosts; `docs/dev-setup.md` for Windows | `docker compose -f deploy/dev/compose.yaml up` starts all services on the laptop |
+| 0.5 | Laptop harness (ADR 0009): `deploy/dev/compose.yaml` with NATS, Postgres, `registry:2`, CO, LO and two `docker:dind` hosts; `docs/dev-setup.md` for Windows | Done: `docker compose -f deploy/dev/compose.yaml up` starts all services on the laptop; CI job "Dev harness" checks it |
 
 ## Milestone 1 — Golden path v0: directed deploy to one host
 
