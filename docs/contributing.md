@@ -9,53 +9,168 @@ This project is part of the **Edge Orchestration Platform (CO, LO, EN)** ecosyst
 
 ## Get Started
 
-// setup nats, postgres
-podman-compose -f docker-compose.dev.yaml up -d
+Run the three services from source against a local Postgres and NATS. All commands run from the
+repository root; PowerShell and POSIX shell variants are shown where they differ.
 
-In separate terminal, start co
-`go run ./cmd/co` 
+### 1. Start Postgres and NATS
 
-In separate terminal, start lo
-`go run ./cmd/lo` 
-
-In separate terminal, start en
-`go run ./cmd/en`
-
-run cli
-`go run ./cmd/edgectl`
-
-#### Configuration
+```sh
+docker compose -f docker-compose.dev.yaml up -d     # or: podman-compose -f docker-compose.dev.yaml up -d
 ```
-GITHUB_TOKEN=
-DATABASE_URL=
-SITE_ID  = 
-NODE_ID  =
-RUNTIME = containerd(default), wasm, compose_pkg, helm
-DEPLOYMENTS_REPO = https://github.com/edge-orchestration-platform/deployments (this is where co writes deployment requests. lo will monitor for this repo changes for its site)
-APPLICATIONS_REPO = https://github.com/edge-orchestration-platform/app-registry (this is for testing. actual repo will be on developers site)
-AI_SAMPLE_DEMO = ghcr.io/edge-orchestration-platform/edge-ai-sample(sample edge ai)
-```
-##### Data Models addition/modifications
 
-go to root directory
-add schema files to `ent/schema` and then 
+This starts Postgres on `5432` (user `postgres`, password `postgres`, database `orchestration`)
+and NATS on `4222`.
 
-```
-ent generate ./ent/schema  --feature sql/upsert
-atlas migrate diff add_deloymentstatus --env local --to "ent://ent/schema"
+### 2. Create the database schema
+
+The CO does not create its tables at startup. Apply the Atlas migrations in
+`ent/migrate/migrations/` once, after Postgres is up and before starting the CO. Without them every
+site or host registration fails with `{"error":"db query failed"}`.
+
+**With [Atlas](https://atlasgo.io/getting-started) (recommended).** The `local` env in `atlas.hcl`
+points at the dev Postgres:
+
+```sh
 atlas migrate apply --env local
 ```
-uses atlas.hcl at the root directory
 
-### check db
-```
-docker exec -it postgres psql -U postgres -d orchestration
+**Without Atlas.** Feed the migration files to `psql` in the container, in name order:
 
-boltbrowser ~/.lo/<siteid>/bolt.db
+```powershell
+# PowerShell
+Get-ChildItem ent\migrate\migrations\*.sql | Sort-Object Name | ForEach-Object {
+  Get-Content $_.FullName -Raw | docker exec -i postgres psql -U postgres -d orchestration -v ON_ERROR_STOP=1
+}
 ```
-## seeding
-docker cp tests/seeds/site.sql postgres:/tmp/site.sql
-docker exec -it postgres psql -U postgres -d orchestration -f ./tmp/site.sql
+
+```sh
+# POSIX shell
+for f in ent/migrate/migrations/*.sql; do
+  docker exec -i postgres psql -U postgres -d orchestration -v ON_ERROR_STOP=1 < "$f"
+done
+```
+
+This path does not record Atlas revisions. If you switch to Atlas later, pass
+`--baseline <latest applied version>` on the first `atlas migrate apply` (see below).
+
+**Check:** `docker exec -it postgres psql -U postgres -d orchestration -c "\dt"` lists `sites`
+and `hosts`, among others.
+
+**Existing database with an older schema.** If `\dt` shows `site`/`host` but not `sites`/`hosts`,
+the database was created from an older `init.sql`. Either reset it (dev only; deletes all data):
+
+```sh
+docker compose -f docker-compose.dev.yaml down -v
+docker compose -f docker-compose.dev.yaml up -d
+atlas migrate apply --env local
+```
+
+or keep it and apply only the missing migrations, naming the last migration it already has:
+
+```sh
+atlas migrate apply --env local --baseline 20251129053632
+```
+
+### 3. Configure the services
+
+Each service loads `./.env` from the current directory at startup (missing file is ignored;
+variables already set in the shell win). One `.env` in the repository root serves all three:
+
+```dotenv
+# --- CO ---
+CO_PORT=9001
+CO_METRICS_PORT=9201
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
+
+# --- LO ---
+LO_PORT=9010
+LO_METRICS_PORT=9202
+LO_NATS_URL=nats://localhost:4222
+LO_CO_URL=http://localhost:9001     # no /api/v1 suffix; the LO adds it
+# BOLTDB_PATH=                      # optional; defaults under %ProgramData%\lo (Windows)
+
+# --- EN ---
+IEO_EN_NATS_URL=nats://localhost:4222
+IEO_EN_LO_URL=http://localhost:9010
+
+# --- Git-based delivery (being replaced, Appendix B step 2) ---
+# GITHUB_TOKEN=                     # read access to the deployments repo; without it the
+                                    # CO and LO log Git errors but keep running
+```
+
+Give the CO and LO metrics ports different values when both run on one machine.
+
+### 4. Start the services, in order
+
+Each in its own terminal, waiting for the previous one to come up:
+
+```sh
+go run ./cmd/co      # wait for: CO API running on : {"": "9001"}
+go run ./cmd/lo      # wait for: HTTP server started on : {"port": "9010"}
+go run ./cmd/en      # expect:   LO {"siteid": "..."}
+go run ./cmd/edgectl --help
+```
+
+The LO registers its site with the CO once, at startup, and the EN registers with the LO once,
+at startup; neither retries. If you start them out of order, restart the later one.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| EN: `Post "http://localhost:9010/register" … actively refused` | LO not running, or `LO_PORT` unset (the LO then listens on a random port; check its `HTTP server started` line) |
+| LO: `unsupported protocol scheme ""` | `LO_CO_URL` unset |
+| LO: `Post "http://localhost:9001/api/v1/register" … actively refused` | CO not running; start it, then restart the LO |
+| LO: `CO rejected: {"error":"db query failed"}` | Schema not applied; see step 2 |
+| LO: `CO rejected: {"error":"site already exists"}` | Harmless: the site was registered on an earlier run |
+| CO/LO: `clone failed: authentication required: Repository not found` | Git-based delivery without `GITHUB_TOKEN`; harmless for registration |
+
+### Data model changes
+
+Add or change schema files in `ent/schema`, then from the repository root:
+
+```sh
+ent generate ./ent/schema --feature sql/upsert
+atlas migrate diff <change_name> --env local --to "ent://ent/schema"
+atlas migrate apply --env local
+```
+
+`atlas.hcl` in the root holds the `local` env. `ent/` is generated: never edit it by hand.
+
+A new migration must also reach the deployment bundles, which create the schema from a single
+`init.sql` on first start (see [`deploy/README.md`](../deploy/README.md#database-schema)).
+Regenerate it from the migrations and keep the three copies identical:
+
+```powershell
+# PowerShell
+Get-Content (Get-ChildItem ent\migrate\migrations\*.sql | Sort-Object Name).FullName |
+  Set-Content deploy\helm\ieo-co\schemas\init.sql
+Copy-Item deploy\helm\ieo-co\schemas\init.sql deploy\compose\db\init.sql
+Copy-Item deploy\helm\ieo-co\schemas\init.sql db\init.sql
+```
+
+```sh
+# POSIX shell
+cat ent/migrate/migrations/*.sql > deploy/helm/ieo-co/schemas/init.sql
+cp deploy/helm/ieo-co/schemas/init.sql deploy/compose/db/init.sql
+cp deploy/helm/ieo-co/schemas/init.sql db/init.sql
+```
+
+| File | Used by |
+| --- | --- |
+| `deploy/helm/ieo-co/schemas/init.sql` | Helm chart `ieo-co` (Postgres init ConfigMap) |
+| `deploy/compose/db/init.sql` | `deploy/compose/docker-compose.yaml` |
+| `db/init.sql` | `docker-compose-demo.yaml` |
+
+### Inspect the databases
+
+```sh
+docker exec -it postgres psql -U postgres -d orchestration    # CO (Postgres)
+boltbrowser <BOLTDB_PATH>                                      # LO (bbolt), e.g. C:\ProgramData\lo\db\bolt.db
+```
+
+`tests/seeds/site.sql` targets the pre-`20251212095258` `site`/`host` tables and fails against the
+current schema. Local runs don't need it: the LO registers its own site.
 
 ## 💬 Ways to Contribute
 
