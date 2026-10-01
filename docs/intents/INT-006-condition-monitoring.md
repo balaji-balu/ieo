@@ -37,4 +37,4 @@ trends are crossed, and keeps working when the site is cut off from the centre.
 - Dashboards beyond a minimal status view.
 
 ## Open questions
-- Use Appendix A topics for alerts now, or plain MQTT until the data plane exists?
+- Use data-plane topics (`docs/proposals/data-plane.md`) for alerts now, or plain MQTT until the data plane exists?

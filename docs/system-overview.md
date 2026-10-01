@@ -22,7 +22,7 @@ Design goals:
 1. **Margo-conformant** at the central-to-site boundary, so the central manager and the site software can interoperate with other Margo implementations.
 2. **Site autonomy.** A site keeps its workloads running and converged while disconnected from the central manager, and catches up in one step when reconnected.
 3. **State-based, not command-based.** Every tier converges toward a declared desired state; retries and recovery fall out of reconciliation rather than message replay.
-4. **Cooperating workloads.** Applications, in particular AI models, can call each other, exchange data and share results within a site and across sites, over a data plane kept separate from orchestration (§11).
+4. **Cooperating workloads.** Applications, in particular AI models, can call each other, exchange data and share results within a site and across sites, over a data plane kept separate from orchestration (proposed in `docs/proposals/data-plane.md`).
 5. **Simple first.** Compose on OCI container runtimes first; Helm/Kubernetes later.
 
 The system has two planes:
@@ -81,7 +81,7 @@ The system has two planes:
    one per host: Docker/Podman Compose + OTel collector; workloads use the site NATS data plane
 ```
 
-The site NATS server carries two isolated accounts: **CONTROL** (LO ↔ EN orchestration messages, §6.3) and **DATA** (workload traffic, §11). Only the DATA account is linked to the hub.
+The site NATS server carries two isolated accounts: **CONTROL** (LO ↔ EN orchestration messages, §6.3) and **DATA** (workload traffic, `docs/proposals/data-plane.md`). Only the DATA account is linked to the hub.
 
 ### 3.1 Responsibilities
 
@@ -102,7 +102,7 @@ The site NATS server carries two isolated accounts: **CONTROL** (LO ↔ EN orche
 | LO / EN local store | BoltDB (embedded) |
 | CO ↔ LO | Margo Workload Management API over HTTPS with mutual TLS |
 | LO ↔ EN | NATS (core NATS; see §6.3) |
-| Data plane | NATS: site server per LO, JetStream for buffered streams and object store, leaf-node links to a central hub cluster (§11) |
+| Data plane | NATS: site server per LO, JetStream for buffered streams and object store, leaf-node links to a central hub cluster (`docs/proposals/data-plane.md`) |
 | Registry access | OCI Distribution API (e.g. `oras-go`) |
 | Workload runtime (phase 1) | Docker or Podman with Compose |
 | Observability | OpenTelemetry collector per host; Prometheus metrics and structured logs (zap) for IEO's own services |
@@ -133,7 +133,7 @@ Per the Margo Identity and Authorization Framework:
 
 - NATS runs with TLS and per-host credentials (NKEY or user JWT) in the **CONTROL** account, issued when a host joins the site.
 - Each EN may publish only on its own subjects (`site.<site-id>.host.<host-id>.>`) and subscribe only to its own command subject and to the site-wide inventory request (`site.<site-id>.inventory.request`). The LO has access to all host subjects of its site.
-- Workloads never receive CONTROL credentials. Their data-plane identity is described in §11.6.
+- Workloads never receive CONTROL credentials. Their data-plane identity is described in `docs/proposals/data-plane.md` §1.6.
 
 ## 5. End-to-end flows
 
@@ -219,7 +219,7 @@ On **Apply** for a Compose deployment, the EN:
 1. Pulls each component's **Margo Compose Archive** from its `oci://` repository at tag `revision` (converting `_` back to `+` when comparing SemVer). The OCI manifest has `artifactType: application/vnd.org.margo.component.compose+json` and a single layer of type `application/vnd.org.margo.component.compose.tar+gzip`. The EN MUST verify the layer's OCI digest before extracting.
 2. Validates the archive before extracting: exactly one top-level directory containing `compose.yaml` (other file names are invalid); no absolute paths, no `../`, no links pointing outside the top-level directory; setuid, setgid and sticky bits are stripped. A violation fails the component.
 3. Applies the deployment's parameters: for Compose, each target `pointer` is the **name of an environment variable** set for the listed components. **[IEO]** The EN writes them into the Compose project's environment file. Secrets are never taken from the archive; provisioning them is out of scope for phase 1.
-4. Injects the OpenTelemetry collector connection variables required by Margo into every container, and, for deployments that declare data-plane use, the data-plane settings and credentials file from the Apply command (§11.6).
+4. Injects the OpenTelemetry collector connection variables required by Margo into every container, and, for deployments that declare data-plane use, the data-plane settings and credentials file from the Apply command (`docs/proposals/data-plane.md` §1.6).
 5. Runs the components in the order listed, as one Compose project per component named `<deployment-id>-<component-name>`. When `wait` is true (the default, which Margo requires clients to support), it waits until all containers are running before starting the next component, failing the component if `timeout` elapses.
 6. Reports component states as they change: `installing` → `installed` or `failed` (with error code, source = component name, message).
 
@@ -300,7 +300,7 @@ Messages:
 { "commandId": "uuid", "action": "apply" | "remove",
   "deploymentId": "uuid", "digest": "sha256:…",
   "deployment": { /* ApplicationDeployment, present for "apply" */ },
-  "dataPlane": { "url": "tls://…", "creds": "…" } }   // present only if the deployment declares data-plane use (§11.6)
+  "dataPlane": { "url": "tls://…", "creds": "…" } }   // present only if the deployment declares data-plane use (data-plane proposal §1.6)
 
 // CommandAck (EN → LO): acceptance only; outcomes arrive as status events
 { "commandId": "uuid", "accepted": true, "error": { "code": "…", "message": "…" } }
@@ -334,7 +334,7 @@ Design decisions:
 | --- | --- | --- |
 | CO | Postgres | Apps and versions; sites and accepted-client policy; devices and latest capabilities; deployments (ID, current digest, target, parameters); immutable deployment YAML by digest; per-site manifest and `manifestVersion`; status history |
 | LO | BoltDB | Last accepted `manifestVersion` and ETag; desired deployments (YAML by digest); autonomous placement decisions; hosts (capabilities, last heartbeat); actual state per host (from inventory); status outbox |
-| Site NATS (run by LO) | JetStream | DATA account: site topic stream `DATA_<site>`, object store `obj-<site>` (§11) |
+| Site NATS (run by LO) | JetStream | DATA account: site topic stream `DATA_<site>`, object store `obj-<site>` (`docs/proposals/data-plane.md`) |
 | Hub | JetStream | Aggregated stream `DATA_ALL`; account configuration managed by the CO |
 | EN | BoltDB + container runtime | Host ID; deployments applied (ID, digest, Compose project names); last reported component states |
 
@@ -353,7 +353,7 @@ The LO MUST persist `manifestVersion` and ETag durably so that rollback protecti
 | Container crashes | Compose restart policy applies; if it does not recover, component reported `failed`. |
 | LO restarts | Reloads BoltDB, re-polls CO, requests inventory from all ENs (`site.<s>.inventory.request`), reconciles. |
 | EN restarts | Reloads its record of applied deployments, publishes inventory; LO reconciles any drift. |
-| Site loses its hub link | Site-local services, topics and object store keep working. Outgoing topic data is buffered in the site stream (24 h default) and forwarded on reconnect. Cross-site service calls fail fast with "no responders"; callers must handle it (§11.7). |
+| Site loses its hub link | Site-local services, topics and object store keep working. Outgoing topic data is buffered in the site stream (24 h default) and forwarded on reconnect. Cross-site service calls fail fast with "no responders"; callers must handle it (`docs/proposals/data-plane.md` §1.7). |
 | Hub unavailable | Same as above for every site; aggregated streams catch up from the site buffers when the hub returns. |
 
 ## 9. Configuration defaults [IEO]
@@ -367,7 +367,7 @@ The LO MUST persist `manifestVersion` and ETag durably so that rollback protecti
 | EN inventory | 60 s and on (re)connect | |
 | Reconcile safety-net interval | 5 min | |
 | Site topic buffer (data plane) | 24 h or 10 GiB, whichever first | Oldest data dropped first when the limit is hit |
-| Maximum message size (data plane) | 1 MiB | Larger payloads go through the object store (§11.2) |
+| Maximum message size (data plane) | 1 MiB | Larger payloads go through the object store (`docs/proposals/data-plane.md` §1.2) |
 | Default service request timeout | 5 s | Callers may set their own |
 | Object store retention | 24 h | Per object, unless the writer sets a TTL |
 
@@ -379,135 +379,13 @@ The LO MUST persist `manifestVersion` and ETag durably so that rollback protecti
 
 ## 11. Data plane [IEO]
 
-The data plane lets workloads, in particular AI models running on ENs, **work together**: one model calls another, models publish results that others consume, and data from many sites is combined for analytics. It is separate from orchestration: workloads cannot see or send orchestration messages, and data traffic cannot delay deployments.
-
-### 11.1 Topology
-
-- **Site server.** Each site runs one NATS server, operated by the LO. Workloads on every host of the site connect to it over the site network. Traffic between workloads at the same site never leaves the site.
-- **Hub.** A central NATS cluster, deployed alongside the CO but separate from the CO API. Each site server connects to it as a **leaf node**: the connection is outbound from the site, so plants need no inbound firewall rules.
-- **Accounts.** The site server keeps orchestration (CONTROL account) and workload traffic (DATA account) isolated. Only DATA is linked to the hub.
-- **No direct site-to-site links in phase 1.** Cross-site traffic goes through the hub. Direct links between nearby sites (e.g. one campus without internet) are a later option; the subject design below does not change for them.
-
-### 11.2 Cooperation patterns
-
-| Pattern | Use it for | Mechanism | Offline behavior |
-| --- | --- | --- | --- |
-| **Service call** (request/reply) | A model asks another model for an answer: detector → classifier, LLM → retrieval, model ensembles | NATS request/reply to a named service; replicas of a service share load as a queue group | Works within the site while the hub is down; cross-site calls fail fast |
-| **Topic stream** (publish/subscribe, buffered) | Continuous results, events and measurements: detections, production counts, model outputs for cross-site analytics | JetStream stream per site, aggregated at the hub | Buffered at the site and forwarded on reconnect |
-| **Shared object** | Payloads larger than a message: images, video clips, tensors, model weights, federated-learning updates | JetStream object store per site; messages carry a reference instead of the bytes | Site-local objects always available; cross-site retrieval when connected |
-
-Higher-level cooperation, such as a pipeline of models, an ensemble that votes, or federated learning that trains across sites without moving raw data, is built by applications from these three primitives. The platform does not prescribe the algorithm.
-
-### 11.3 Naming
-
-Data-plane subjects include the site, so every name is unambiguous across the fleet. The one exception is nearest-copy service calls (§11.4), which deliberately leave the site out. `<site>` is the site ID and `<app>` the application ID. The site ID `any` is reserved and cannot be assigned to a site.
-
-| What | Subject / name | Example |
-| --- | --- | --- |
-| Service endpoint, at a named site | `svc.<site>.<service>.<endpoint>` | `svc.lo-chennai.defect-classifier.classify` |
-| Service endpoint, nearest copy | `svc.any.<service>.<endpoint>` | `svc.any.defect-classifier.classify` |
-| Topic | `data.<site>.<app>.<topic>` | `data.lo-chennai.line-monitor.detections` |
-| Site stream (JetStream) | `DATA_<site>` capturing `data.<site>.>` | `DATA_lo-chennai` |
-| Aggregated stream at the hub | `DATA_ALL` sourcing every `DATA_<site>` | subscribe `data.*.line-monitor.detections` for all sites |
-| Object store bucket | `obj-<site>` | object name `<app>/<key>` |
-
-Service conventions:
-
-- Requests and replies are JSON unless the service declares another content type in a `Content-Type` header.
-- Errors are returned in a reply header `IEO-Error` (code and message), not as a missing reply.
-- Every service answers `svc.<site>.<service>.$health` so callers can check it is alive.
-- Every reply carries a header `IEO-Served-By: <site>/<host>` so the caller knows which copy answered.
-- A service name identifies one service across the whole fleet: the CO rejects an application that declares a service name already provided by a different application ID.
-
-### 11.4 Calling a model at the same site or another site
-
-A model can call another model at its own site or at any other site. There are two ways to address the call.
-
-**Explicit site (default).** The caller names the site in the subject:
-
-| Callee is at… | Caller uses | Route |
-| --- | --- | --- |
-| The caller's own site | `svc.<own-site>.<service>.<endpoint>` | Stays inside the site's NATS server |
-| Another site | `svc.<other-site>.<service>.<endpoint>` | Site NATS → hub → other site's NATS |
-
-This is predictable: the caller always knows whether a call is local (fast, works offline) or remote (slower, needs the hub). There is no implicit fallback from one site to another.
-
-**Nearest copy (opt-in per service).** A service can additionally be offered with `discovery: nearest`. Callers then use `svc.any.<service>.<endpoint>` and do not name a site. The call is answered by:
-
-1. a copy at the caller's own site, if at least one is running; otherwise
-2. a copy at another site, through the hub.
-
-Copies of the service answer both their site subject and the `svc.any` subject, so callers that need a specific site can still name it. Use nearest copy when failover matters more than predictability, for example a shared model that should keep answering when the local copy is being updated. Callers should expect latency to vary and read `IEO-Served-By` when they need to know where a call went. The platform does not retry a failed call at another copy; retries are the caller's decision.
-
-### 11.5 Declaring data-plane use
-
-An application declares what it needs in its Application Description, using Margo's specification-extension mechanism. The extension sits on the deployment profile, so the CO copies it unmodified into every ApplicationDeployment, and devices that do not know it ignore it, as Margo requires.
-
-```yaml
-deploymentProfiles:
-  - type: compose
-    id: com-example-line-monitor-compose
-    components: [ ... ]
-    x-ieo-extensions:
-      dataPlane:
-        provides:                      # services this app serves
-          - service: defect-classifier
-            endpoints: [classify]
-            exposure: global           # site (default) | global
-            discovery: nearest         # explicit (default) | nearest; nearest requires exposure: global
-        consumes:                      # services this app calls
-          - service: part-detector
-            sites: [local]             # local | a site ID | "*" | nearest
-        publishes: [detections]        # topics, prefixed data.<site>.<app>. automatically
-        subscribes:
-          - app: line-monitor
-            topic: detections
-            sites: ["*"]               # local | a site ID | "*"
-        objectStore: readwrite         # none (default) | read | readwrite
-```
-
-- `exposure: site` keeps a service reachable only from its own site; `global` lets other sites call it through the hub.
-- `discovery: nearest` additionally offers the service on `svc.any.<service>.<endpoint>` (§11.4). It is only valid with `exposure: global`, because a nearest-copy call may be answered at another site.
-- A consumer declares `sites: [nearest]` to call `svc.any.<service>.<endpoint>`. This is only allowed for services that are provided with `discovery: nearest`.
-- Anything **cross-site** (`exposure: global`, `discovery: nearest`, or `sites` other than `local`) is shown to the operator when the deployment is created and must be approved. The CO records the approval with the deployment.
-- A workload with no `dataPlane` declaration gets no data-plane access.
-
-### 11.6 Credentials and connection
-
-- When the LO sends **Apply** for a deployment that declares data-plane use, it issues a NATS user credential in the DATA account whose publish and subscribe permissions are exactly those implied by the declaration and the operator's approval. The credential is bound to the deployment and rotated when the deployment's digest changes.
-- The Apply command carries the credential to the EN (over the TLS-protected CONTROL connection). The EN writes it to a file mounted read-only into the deployment's containers and sets:
-
-  | Variable | Value |
-  | --- | --- |
-  | `IEO_NATS_URL` | The site server's URL |
-  | `IEO_NATS_CREDS` | Path of the mounted credentials file |
-  | `IEO_SITE_ID` | The site ID |
-  | `IEO_HOST_ID` | The host ID |
-  | `IEO_DEPLOYMENT_ID` | The deployment ID |
-  | `IEO_APP_ID` | The application ID |
-
-- The hub accepts a site's leaf-node link only with that site's credential. Through the hub, a site may publish topic data only under its own prefix (`data.<site>.>`), serve only its own services (`svc.<site>.>`) plus the nearest-copy subjects approved for services it runs (`svc.any.<service>.>`), and reach other sites' services and topics only where an approval in §11.5 allows it. The CO manages the hub's account configuration so that these permissions follow the approvals.
-- On Remove, the LO revokes the deployment's credential.
-
-### 11.7 Behavior while disconnected
-
-- **Within a site, everything keeps working** with the hub or the CO unreachable: service calls, topics and the object store are served by the site server.
-- **Outgoing topic data** stays in the site stream (up to 24 h or 10 GiB by default) and flows to the hub when the link returns. The hub's aggregated stream then catches up, so cross-site analytics are complete once every site has reconnected.
-- **Cross-site service calls** cannot be buffered: they fail immediately with "no responders" or time out. Applications that call other sites must treat those calls as optional or retry later.
-- **Nearest-copy calls** keep working offline as long as a copy runs at the caller's site. If none does and the hub is unreachable, they fail with "no responders" like any cross-site call.
-- **Placement tip:** models that call each other constantly should be deployed to the same site (and, when latency matters, the same host) using directed deployments or eligibility labels.
-
-### 11.8 Cross-site analytics
-
-Analytics across many sites is an ordinary application deployed through the CO, by default to a central host connected to the hub. It subscribes to the aggregated topic it needs (for example `data.*.line-monitor.detections`) with a durable consumer, so it sees every site's data in order per site, including data buffered during outages. The analytics app itself declares `subscribes` with `sites: ["*"]`, which the operator approves at deployment.
-
-System metrics (CPU, memory, container health) do not use the data plane; they flow through each host's OpenTelemetry collector (§10).
+Moved to `docs/proposals/data-plane.md` §1 (ADR 0006).
 
 ## 12. Scope
 
 **Phase 1 (this overview):** Compose deployment type on OCI container runtimes (Docker, Podman); see-thru gateway with directed and autonomous placement; operator-provisioned identities.
 
-**Phase 2 (designed here):** the data plane (§11): site NATS DATA account, hub with leaf-node links, services, topics, object store, declared and approved permissions.
+**Phase 2 (designed here):** the data plane (`docs/proposals/data-plane.md`): site NATS DATA account, hub with leaf-node links, services, topics, object store, declared and approved permissions.
 
 **Later:** Helm deployment type on k3s; custom runtimes via Margo extensions; automated SVID renewal and revocation; direct site-to-site data links; web portal; application package signature verification.
 
@@ -526,7 +404,7 @@ The current code was built around Git-based delivery. Moving to this design chan
 | LO → EN operations | Fine-grained add/update/remove app and component, subject `site.<s>.deploy.<h>` | Whole-deployment apply/remove, subjects in §6.3 |
 | EN runtime | containerd plugin running single images | Compose packages via Docker/Podman |
 | Security | None between tiers | Mutual TLS with SPIFFE SVIDs (CO ↔ LO); NATS TLS and credentials (LO ↔ EN) |
-| Workload-to-workload communication | None | Data plane (§11): site NATS DATA account, hub, declared permissions |
+| Workload-to-workload communication | None | Data plane (`docs/proposals/data-plane.md`): site NATS DATA account, hub, declared permissions |
 
 ## 14. Open questions
 
@@ -534,7 +412,7 @@ The current code was built around Git-based delivery. Moving to this design chan
 2. **Operator authentication** for `edgectl` in phase 1 (static token vs. Keycloak from the start).
 3. **Secrets for Compose workloads.** Margo keeps secrets out of archives and leaves provisioning to the device or WFM; IEO needs a design before workloads that require secrets are supported.
 4. **Data volumes.** The 24 h / 10 GiB site buffer and 1 MiB message limit are placeholders; size them against real per-site message rates and payload sizes.
-5. **Model-aware placement.** Co-locating models that call each other (§11.7) is manual today (directed deployments, labels). Automatic affinity ("place near service X") would extend §5.6.
+5. **Model-aware placement.** Co-locating models that call each other (`docs/proposals/data-plane.md` §1.7) is manual today (directed deployments, labels). Automatic affinity ("place near service X") would extend §5.6.
 6. **Direct site-to-site links** for sites on one campus without internet: when needed, and how they coexist with the hub.
 7. **Streaming inference.** Service calls are request/reply. Models exchanging continuous streams (e.g. video frames) with tight latency may need a streaming convention on top of topics; decide when the first such application appears.
-8. **Nearest-copy routing.** §11.4 relies on NATS delivering a request to queue-group members on the caller's own server before members reached over the leaf-node link. Verify this with the NATS version in use; if it does not hold, the fallback is a client helper that calls `svc.<own-site>.…` first and `svc.any.…` only on "no responders".
+8. **Nearest-copy routing.** `docs/proposals/data-plane.md` §1.4 relies on NATS delivering a request to queue-group members on the caller's own server before members reached over the leaf-node link. Verify this with the NATS version in use; if it does not hold, the fallback is a client helper that calls `svc.<own-site>.…` first and `svc.any.…` only on "no responders".

@@ -59,7 +59,7 @@ Which spec areas each intent exercises. A row with no mark is a gap.
 | Multi-arch / constrained host (proposed) | ● |  | ● |  | ● |  |  |
 | Large images on slow links |  | ● | ● |  |  | ● |  |
 | Stateful volumes across upgrades |  |  |  | ● |  |  | ● |
-| App. A data plane (optional) |  |  |  |  | ● |  | ● |
+| Data plane (proposal, `docs/proposals/data-plane.md`) |  |  |  |  | ● |  | ● |
 
 ## Open questions across intents
 

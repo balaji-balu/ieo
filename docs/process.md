@@ -97,4 +97,4 @@ unspecified behavior still goes through stage 2 first.
 
 ## 9. Build sequence
 
-Setup (§7 enablers) → Appendix B vertical slices, one per PR, as listed in `docs/roadmap.md` → next proposals, each entering as a new `[IEO]` spec section.
+Setup (§7 enablers) → Appendix B vertical slices, one per PR, as listed in `docs/roadmap.md` → next proposals (`docs/proposals/`), each entering as a new `[IEO]` spec section.
