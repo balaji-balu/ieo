@@ -9,7 +9,8 @@ unavailable.
 Margo baseline: Margo Specification pre-draft, Workload Management API `1.0.0-rc.3`
 ([margo/specification](https://github.com/margo/specification), commit `f209a7f`). The pinned
 OpenAPI file is kept unchanged at `api/margo/f209a7f/workload-management-api-1.0.0-rc.3.yaml`; a pin
-change follows §17.1 (ADR 0010).
+change follows §17.1 (ADR 0010). The Application Description schema (§5.3) is pinned in the same
+directory: Margo's LinkML source and the JSON Schema generated from it (see the README there).
 
 ## Normative Language
 
@@ -223,8 +224,8 @@ An application's package descriptor (`margo.yaml`) as stored in the registry `[M
 
 Fields used by IEO:
 
-- `metadata.id` (string) — application ID.
-- `metadata.version` (SemVer string) — one registry tag per version.
+- `id` (string) — application ID: lowercase letters, digits and `-`, at most 200 characters.
+- `metadata.version` (string) — the version; equal to the registry tag of its package (§5.1).
 - `deploymentProfiles` (list) — IEO phase 1 uses profiles with `type: compose` only. Each has:
   - `id` (string)
   - `components` (list), each with `name` and `properties.repository` (`oci://…`),
@@ -347,8 +348,11 @@ Single authoritative state owned by the LO. Durable fields MUST survive restart.
 
 ### 5.1 Registry Layout `[Margo]`
 
-- One OCI repository per application; one tag per `metadata.version`.
-- The package contains the Application Description and its resources.
+- One OCI repository per application; one tag per `metadata.version`, equal to it.
+- The package is an OCI image manifest with `artifactType` `application/vnd.margo.app.v1+json` and
+  an empty config. Each file of the package is one layer: exactly one layer of media type
+  `application/vnd.margo.app.description.v1+yaml` holds the Application Description; the others
+  are its resources (icon, release notes, description and license files).
 - Each Compose component's `repository` points to a separate OCI artifact holding a **Margo
   Compose Archive**:
   - manifest `artifactType`: `application/vnd.org.margo.component.compose+json`
@@ -367,16 +371,22 @@ On extraction the EN MUST strip setuid, setgid and sticky bits. Any violation fa
 
 ### 5.3 Import Validation (CO)
 
-The CO MUST reject an Application Description that:
+The CO imports one version at a time: the tag of that version in the application's repository.
+It MUST reject the import, with the reason, and store nothing, when:
 
-- fails schema validation against the pinned Margo schema;
-- has no deployment profile of a supported type (`compose` in phase 1);
-- has a component whose `repository` is not an `oci://` reference or whose `revision` is not
+- the tag's manifest is not a Margo application package (§5.1);
+- the Application Description is not exactly one YAML document, or uses YAML aliases (they can
+  expand without bound; §15.1);
+- the Application Description fails schema validation against the pinned Margo schema (header);
+- its `metadata.version` differs from the tag;
+- it has no deployment profile of a supported type (`compose` in phase 1);
+- it has a component whose `repository` is not an `oci://` reference or whose `revision` is not
   SemVer in the §4.2 form;
-- has a parameter target naming a component that does not exist in that profile;
-- duplicates an already imported `(metadata.id, metadata.version)` with different content.
+- it has a parameter target naming a component that is in none of its deployment profiles;
+- it duplicates an already imported `(id, metadata.version)` with different content.
 
-Re-importing an identical version MUST succeed without changes.
+Content is the exact bytes of the Application Description. Re-importing an identical version MUST
+succeed without changes.
 
 ### 5.4 Parameter Semantics for Compose `[IEO]`
 
