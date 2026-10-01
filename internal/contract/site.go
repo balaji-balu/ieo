@@ -3,10 +3,12 @@ package contract
 import (
 	"bytes"
 	"embed"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -29,12 +31,19 @@ type SiteMessage interface {
 // ignored. On any failure it returns the zero T and an error wrapping ErrInvalidMessage.
 func DecodeSiteMessage[T SiteMessage](data []byte) (T, error) {
 	var msg T
-	if err := validateSiteMessage[T](data); err != nil {
+	v, err := validateSiteMessage[T](data)
+	if err != nil {
 		return msg, err
 	}
-	if err := json.Unmarshal(data, &msg); err != nil {
+	// encoding/json matches keys case-insensitively, so an unknown key such as "STATE" would
+	// overwrite the validated "state". Decode only the keys that name a field exactly.
+	known, err := json.Marshal(keepKnownFields(v, reflect.TypeOf(msg)))
+	if err == nil {
+		err = json.Unmarshal(known, &msg)
+	}
+	if err != nil {
 		var zero T
-		return zero, fmt.Errorf("%w: %T: %w", ErrInvalidMessage, zero, err)
+		return zero, fmt.Errorf("%w: %s: %w", ErrInvalidMessage, schemaName[T](), err)
 	}
 	return msg, nil
 }
@@ -46,7 +55,7 @@ func EncodeSiteMessage[T SiteMessage](msg T) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode %T: %w", msg, err)
 	}
-	if err := validateSiteMessage[T](data); err != nil {
+	if _, err := validateSiteMessage[T](data); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -214,16 +223,77 @@ func schemaName[T SiteMessage]() string {
 	}
 }
 
-func validateSiteMessage[T SiteMessage](data []byte) error {
+// validateSiteMessage parses data and validates it against T's schema. It returns the parsed
+// value (maps, slices, json.Number, …) for decoding.
+func validateSiteMessage[T SiteMessage](data []byte) (any, error) {
 	name := schemaName[T]()
 	v, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("%w: %s: %w", ErrInvalidMessage, name, err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrInvalidMessage, name, err)
 	}
 	if err := siteSchemas()[name].Validate(v); err != nil {
-		return fmt.Errorf("%w: %s: %s", ErrInvalidMessage, name, schemaViolations(err))
+		return nil, fmt.Errorf("%w: %s: %s", ErrInvalidMessage, name, schemaViolations(err))
 	}
-	return nil
+	return v, nil
+}
+
+var (
+	textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+	jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()
+)
+
+// keepKnownFields returns v, a parsed JSON value, without the object keys that are not the exact
+// JSON name of a field of t, at every depth. Values that t decodes itself (UUIDs, times, IDs,
+// raw JSON, `any`) and map entries are kept whole.
+func keepKnownFields(v any, t reflect.Type) any {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	pt := reflect.PointerTo(t)
+	if pt.Implements(textUnmarshalerType) || pt.Implements(jsonUnmarshalerType) {
+		return v
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return v
+		}
+		out := make(map[string]any, len(obj))
+		for i := range t.NumField() {
+			f := t.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if !f.IsExported() || name == "-" || name == "" {
+				continue
+			}
+			if fv, ok := obj[name]; ok {
+				out[name] = keepKnownFields(fv, f.Type)
+			}
+		}
+		return out
+	case reflect.Slice, reflect.Array:
+		arr, ok := v.([]any)
+		if !ok {
+			return v
+		}
+		out := make([]any, len(arr))
+		for i, e := range arr {
+			out[i] = keepKnownFields(e, t.Elem())
+		}
+		return out
+	case reflect.Map:
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return v
+		}
+		out := make(map[string]any, len(obj))
+		for k, e := range obj {
+			out[k] = keepKnownFields(e, t.Elem())
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // schemaViolations returns the violations of a validation error on one line, e.g.

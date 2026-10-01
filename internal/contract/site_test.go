@@ -100,6 +100,27 @@ func TestSpec_17_1_SiteMessagesValidateAgainstSchemas(t *testing.T) {
 		{"malformed json", decodeAs[contract.Heartbeat](), `{"hostId":`, false},
 		{"empty payload", decodeAs[contract.Heartbeat](), ``, false},
 	}
+	// Unknown fields are ignored even when they differ from a known field only in case:
+	// encoding/json alone would let "STATE" overwrite the validated "state".
+	t.Run("case-variant unknown fields ignored", func(t *testing.T) {
+		got, err := contract.DecodeSiteMessage[contract.ComponentStatusEvent](
+			[]byte(withField(status, `"STATE":"bogus","Component":"","ERROR":{"code":"x"}`)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != contract.StateFailed || got.Component != "web" || got.Error.Code != "IEO-PULL-FAILED" {
+			t.Errorf("decoded %+v (error %+v); case-variant keys overrode validated fields", got, got.Error)
+		}
+		inv, err := contract.DecodeSiteMessage[contract.Inventory]([]byte(
+			strings.Replace(inventory, `"state":"installed"`, `"state":"installed","State":"up"`, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s := inv.Deployments[0].Components[0].State; s != contract.StateInstalled {
+			t.Errorf("nested component state = %q, want %q", s, contract.StateInstalled)
+		}
+	})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := tt.decode([]byte(tt.in))
