@@ -61,17 +61,19 @@ Important boundaries:
 
 ### 2.1 Goals
 
-- Serve the Margo Workload Management API from the central tier and consume it from the site tier.
-- Store every deployment revision immutably under its content digest.
-- Keep a site converged to its last accepted desired state while the central tier is unreachable.
-- Reject stale or tampered desired state (rollback protection and digest verification).
-- Place deployments that do not name a host on an eligible host, deterministically.
-- Apply and remove Compose-based deployments idempotently on hosts.
-- Report status from host to site to center, buffering the latest status per deployment while the
-  center is unreachable.
-- Recover every tier after a restart from durable local state plus a fresh sync, with no message
-  replay.
-- Expose structured logs and metrics for every tier.
+Numbered so §17.10 can trace each goal to its tests.
+
+1. Serve the Margo Workload Management API from the central tier and consume it from the site tier.
+2. Store every deployment revision immutably under its content digest.
+3. Keep a site converged to its last accepted desired state while the central tier is unreachable.
+4. Reject stale or tampered desired state (rollback protection and digest verification).
+5. Place deployments that do not name a host on an eligible host, deterministically.
+6. Apply and remove Compose-based deployments idempotently on hosts.
+7. Report status from host to site to center, buffering the latest status per deployment while the
+   center is unreachable.
+8. Recover every tier after a restart from durable local state plus a fresh sync, with no message
+   replay.
+9. Expose structured logs and metrics for every tier.
 
 ### 2.2 Non-Goals
 
@@ -936,7 +938,8 @@ Rules:
 - LO and EN log lines MUST include `site_id`; EN and host-scoped LO lines MUST include `host_id`.
 - Sync attempts MUST log their outcome (§7.4) and `manifest_version`.
 - `RejectedRollback` and `AbortedDigestMismatch` MUST be logged at a security/warning level with
-  the offending values.
+  the offending values: the stored and received `manifestVersion`, or the expected and computed
+  digest.
 - Log sink failures MUST NOT stop orchestration.
 
 ### 13.2 Metrics
@@ -1362,6 +1365,14 @@ Unless otherwise noted, §17.1–§17.7 are `Core Conformance`.
 - No credential, key or token appears in logs or status messages.
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
 - `edgectl site add` produces a certificate whose SPIFFE ID matches §4.2.
+- Every tier writes each log line as one JSON object.
+- Every log line about a deployment carries `deployment_id`, and `digest` once the digest is known.
+- Every LO and EN log line carries `site_id`; every EN log line and every host-scoped LO log line
+  carries `host_id`.
+- Each sync attempt writes one log line with its §7.4 outcome and `manifest_version`, for every
+  outcome in §7.4.
+- `RejectedRollback` and `AbortedDigestMismatch` are logged at the security/warning level with the
+  offending values: the stored and received `manifestVersion`, or the expected and computed digest.
 - REQUIRED metrics in §13.2 are exposed and change as expected in the scenarios above.
 - A log sink failure does not stop orchestration.
 
@@ -1384,6 +1395,31 @@ Run with 1 CO, 1 LO and 2 ENs using real NATS, a local OCI registry and Docker o
 
 - The LO syncs against another Margo WFM implementation.
 - Another Margo WFM client syncs against the CO.
+
+### 17.10 Goal Coverage
+
+Each goal in §2.1 is traced to the sections that specify it and the §17 bullets that test it. This
+section is a traceability table, not a test list: it adds no bullets for `TestSpec_` tests.
+
+Every §2.1 goal MUST have at least one `Core Conformance` bullet; a goal without one is listed under
+Gaps. Every §17.1–§17.7 bullet supports at least one row. A change that adds or removes a goal or a
+§17 bullet updates this table in the same change.
+
+| Goal (§2.1) | Specified in | Core Conformance | Integration (§17.8–§17.9) |
+| --- | --- | --- | --- |
+| 1. Margo WM API, central and site tier | §8.1.3, §8.2, §8.3, §11.1 | §17.1 OpenAPI, IDs, device ID parsing; §17.2 ETag, `304`, `bundle: null`, cache headers, caller scoping, retired site, gateway order; §17.3 first sync | §17.9 both bullets |
+| 2. Immutable revisions by digest | §8.1, §12 | §17.2 create, update, byte-identical serving | §17.8 golden path |
+| 3. Site converged while center unreachable | §8.2, §8.5, §14.2 | §17.3 outage converges in one poll, `404` not removal; §17.4 diff rules, offline/online hosts, re-Apply after `failed`; §17.6 container exit and recovery | §17.8 site autonomy, host outage |
+| 4. Reject stale or tampered state | §8.2, §8.9, §15.3 | §17.3 rollback, digest mismatch, rollback after restart; §17.6 layer digest, archive rejection, setuid bits | — |
+| 5. Deterministic placement | §8.4, §8.6 | §17.2 no eligible host; §17.4 most free memory, ties, durable, decommission, `IEO-NO-ELIGIBLE-HOST`, `103` | §17.8 autonomous |
+| 6. Idempotent Compose Apply/Remove | §5, §8.5, §8.9 | §17.1 Compose project names, tag comparison; §17.4 retries and backoff; §17.6 idempotent Apply and Remove, order, `wait`/`timeout`, parameters, OTel variables, update cleanup, one command at a time | §17.8 golden path |
+| 7. Status host → site → center with buffering | §7.2, §8.1.2, §8.7, §8.8, §10 | §17.2 status history, `removed`; §17.5 all bullets | §17.8 outbox |
+| 8. Recovery from durable state, no replay | §12, §14 | §17.3 version and ETag survive restart; §17.4 placement survives, inventory request after restart; §17.5 outbox survives; §17.6 inventory after restart and reconnect | §17.8 LO restart, site autonomy |
+| 9. Structured logs and metrics | §7.4, §13 | §17.7 JSON log lines, log fields, sync outcome log, security-level log, metrics, log sink failure | — |
+| Cross-cutting: security (§15) | §11.2, §15 | §17.1 site messages; §17.7 client certificate, NATS scoping, no secrets in logs, SPIFFE ID | — |
+| Cross-cutting: operator interface | §11.3 | §17.7 `edgectl` errors | §17.8 golden path |
+
+Gaps: none.
 
 ## 18. Implementation Checklist (Definition of Done)
 
