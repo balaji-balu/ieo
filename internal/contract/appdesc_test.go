@@ -109,6 +109,14 @@ func TestParseApplicationDescriptionRejects(t *testing.T) {
 		{"profile type outside helm, compose, custom", "type: helm", "type: helm.v3", "/type"},
 		{"version that is not a string", "version: 1.2.3", "version: 1.2", "/metadata/version"},
 		{"key differing only in case is unknown", "  version: 1.2.3\n", "  version: 1.2.3\n  Version: 9.9.9\n", "Version"},
+		// Aliases can expand exponentially ("billion laughs"), so none is accepted (SPEC §5.3).
+		{"YAML alias", "  name: Hello\n  version: 1.2.3\n  catalog:\n    organization:\n      - name: Example",
+			"  name: &n Hello\n  version: 1.2.3\n  catalog:\n    organization:\n      - name: *n", "alias"},
+		{"merge key alias",
+			"    x-acme-extensions: {gpu: false}\n    deviceConstraints:\n      capacityRequirements:\n        memory: 512Mi\n    components:\n      - name: web\n        x-acme-extensions: {probe: /healthz}",
+			"    x-acme-extensions: &e {gpu: false}\n    deviceConstraints:\n      capacityRequirements:\n        memory: 512Mi\n    components:\n      - name: web\n        x-acme-extensions: {<<: *e, probe: /healthz}",
+			"alias"},
+		{"two YAML documents", "configuration:", "---\nid: other\n---\nconfiguration:", "document"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

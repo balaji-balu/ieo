@@ -50,26 +50,39 @@ type Layer struct {
 	Data      []byte
 }
 
-// Push stores an OCI image manifest with the given artifactType, an empty config and the layers,
-// and tags it in repository, creating the repository if needed. A tag that exists is moved, as on
-// a real registry. It returns the manifest descriptor.
-func (r *Registry) Push(t testing.TB, repository, tag, artifactType string, layers ...Layer) ocispec.Descriptor {
+// Artifact is an OCI image manifest to push: its artifactType, its config (empty when nil) and its
+// layers.
+type Artifact struct {
+	ArtifactType string
+	Config       *Layer
+	Layers       []Layer
+}
+
+// Push stores a as an OCI image manifest and tags it in repository, creating the repository if
+// needed. A tag that exists is moved, as on a real registry. It returns the manifest descriptor.
+func (r *Registry) Push(t testing.TB, repository, tag string, a Artifact) ocispec.Descriptor {
 	t.Helper()
 	ctx := context.Background()
 	repo := r.repo(repository)
-	var descs []ocispec.Descriptor
-	for _, l := range layers {
+	push := func(l Layer) ocispec.Descriptor {
 		d := content.NewDescriptorFromBytes(l.MediaType, l.Data)
 		if l.Title != "" {
 			d.Annotations = map[string]string{ocispec.AnnotationTitle: l.Title}
 		}
 		if err := repo.Push(ctx, d, bytes.NewReader(l.Data)); err != nil && !errors.Is(err, errdef.ErrAlreadyExists) {
-			t.Fatalf("push layer %s to %s: %v", l.Title, repository, err)
+			t.Fatalf("push blob %s to %s: %v", l.MediaType, repository, err)
 		}
-		descs = append(descs, d)
+		return d
 	}
-	m, err := oras.PackManifest(ctx, repo, oras.PackManifestVersion1_1, artifactType,
-		oras.PackManifestOptions{Layers: descs})
+	opts := oras.PackManifestOptions{}
+	if a.Config != nil {
+		config := push(*a.Config)
+		opts.ConfigDescriptor = &config
+	}
+	for _, l := range a.Layers {
+		opts.Layers = append(opts.Layers, push(l))
+	}
+	m, err := oras.PackManifest(ctx, repo, oras.PackManifestVersion1_1, a.ArtifactType, opts)
 	if err != nil {
 		t.Fatalf("pack manifest for %s:%s: %v", repository, tag, err)
 	}
@@ -83,11 +96,11 @@ func (r *Registry) Push(t testing.TB, repository, tag, artifactType string, laye
 // margo.yaml plus one resource file, tagged tag in repository.
 func (r *Registry) PushApp(t testing.TB, repository, tag string, description []byte) ocispec.Descriptor {
 	t.Helper()
-	return r.Push(t, repository, tag, contract.AppPackageArtifactType,
-		Layer{MediaType: contract.AppDescriptionMediaType, Title: "margo.yaml", Data: description},
-		Layer{MediaType: "application/vnd.margo.app.licenseFile.v1+markdown", Title: "resources/license.md",
+	return r.Push(t, repository, tag, Artifact{ArtifactType: contract.AppPackageArtifactType, Layers: []Layer{
+		{MediaType: contract.AppDescriptionMediaType, Title: "margo.yaml", Data: description},
+		{MediaType: "application/vnd.margo.app.licenseFile.v1+markdown", Title: "resources/license.md",
 			Data: []byte("# License\n")},
-	)
+	}})
 }
 
 func (r *Registry) repo(repository string) *memory.Store {

@@ -375,6 +375,8 @@ The CO imports one version at a time: the tag of that version in the application
 It MUST reject the import, with the reason, and store nothing, when:
 
 - the tag's manifest is not a Margo application package (§5.1);
+- the Application Description is not exactly one YAML document, or uses YAML aliases (they can
+  expand without bound; §15.1);
 - the Application Description fails schema validation against the pinned Margo schema (header);
 - its `metadata.version` differs from the tag;
 - it has no deployment profile of a supported type (`compose` in phase 1);

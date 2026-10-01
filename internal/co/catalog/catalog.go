@@ -134,6 +134,10 @@ func descriptionLayer(desc ocispec.Descriptor, manifestBytes []byte) (ocispec.De
 	if m.ArtifactType != contract.AppPackageArtifactType {
 		return ocispec.Descriptor{}, fmt.Errorf("manifest artifactType %q, want %q", m.ArtifactType, contract.AppPackageArtifactType)
 	}
+	if m.Config.MediaType != ocispec.MediaTypeEmptyJSON {
+		return ocispec.Descriptor{}, fmt.Errorf("manifest config media type %q, want the empty config %q",
+			m.Config.MediaType, ocispec.MediaTypeEmptyJSON)
+	}
 	var found []ocispec.Descriptor
 	for _, l := range m.Layers {
 		if l.MediaType == contract.AppDescriptionMediaType {

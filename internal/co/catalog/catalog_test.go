@@ -75,25 +75,37 @@ func TestSpec_17_2_ImportRejectsInvalidApplicationDescription(t *testing.T) {
 		{
 			name: "manifest is not a Margo application package",
 			push: func(t *testing.T, reg *ocitest.Registry) {
-				reg.Push(t, repoA, version, "application/vnd.example.other+json", descLayer(description))
+				reg.Push(t, repoA, version, ocitest.Artifact{
+					ArtifactType: "application/vnd.example.other+json", Layers: []ocitest.Layer{descLayer(description)}})
 			},
 			reason: "artifactType",
 		},
 		{
 			name: "package has no Application Description layer",
 			push: func(t *testing.T, reg *ocitest.Registry) {
-				reg.Push(t, repoA, version, contract.AppPackageArtifactType,
-					ocitest.Layer{MediaType: "application/vnd.margo.app.icon.v1+png", Data: []byte("png")})
+				reg.Push(t, repoA, version, ocitest.Artifact{ArtifactType: contract.AppPackageArtifactType,
+					Layers: []ocitest.Layer{{MediaType: "application/vnd.margo.app.icon.v1+png", Data: []byte("png")}}})
 			},
 			reason: "description layer",
 		},
 		{
 			name: "package has two Application Description layers",
 			push: func(t *testing.T, reg *ocitest.Registry) {
-				reg.Push(t, repoA, version, contract.AppPackageArtifactType,
-					descLayer(description), descLayer(description+"# second\n"))
+				reg.Push(t, repoA, version, ocitest.Artifact{ArtifactType: contract.AppPackageArtifactType,
+					Layers: []ocitest.Layer{descLayer(description), descLayer(description + "# second\n")}})
 			},
 			reason: "description layer",
+		},
+		{
+			name: "package config is not empty",
+			push: func(t *testing.T, reg *ocitest.Registry) {
+				reg.Push(t, repoA, version, ocitest.Artifact{
+					ArtifactType: contract.AppPackageArtifactType,
+					Config:       &ocitest.Layer{MediaType: "application/vnd.oci.image.config.v1+json", Data: []byte(`{"os":"linux"}`)},
+					Layers:       []ocitest.Layer{descLayer(description)},
+				})
+			},
+			reason: "config",
 		},
 		{
 			name:   "fails schema validation: id with uppercase letters",

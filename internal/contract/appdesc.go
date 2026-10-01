@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
+	"github.com/goccy/go-yaml/parser"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/balaji-balu/ieo/api/margo"
@@ -64,6 +66,9 @@ type ApplicationParameter struct {
 // ErrInvalidApplicationDescription and names the violations.
 func ParseApplicationDescription(b []byte) (ApplicationDescription, error) {
 	var desc ApplicationDescription
+	if err := checkPlainYAML(b); err != nil {
+		return desc, fmt.Errorf("%w: %w", ErrInvalidApplicationDescription, err)
+	}
 	js, err := yaml.YAMLToJSON(b)
 	if err != nil {
 		return desc, fmt.Errorf("%w: %w", ErrInvalidApplicationDescription, err)
@@ -81,6 +86,24 @@ func ParseApplicationDescription(b []byte) (ApplicationDescription, error) {
 		return ApplicationDescription{}, fmt.Errorf("%w: %w", ErrInvalidApplicationDescription, err)
 	}
 	return desc, nil
+}
+
+// checkPlainYAML rejects input that isn't exactly one YAML document, or that uses aliases (SPEC
+// §5.3). The description comes from a registry and is untrusted: a few hundred bytes of nested
+// aliases expand to gigabytes. Parsing to the AST doesn't expand them.
+func checkPlainYAML(b []byte) error {
+	f, err := parser.ParseBytes(b, 0)
+	if err != nil {
+		return err
+	}
+	if len(f.Docs) != 1 {
+		return fmt.Errorf("want one YAML document, found %d", len(f.Docs))
+	}
+	if aliases := ast.Filter(ast.AliasType, f.Docs[0]); len(aliases) > 0 {
+		pos := aliases[0].GetToken().Position
+		return fmt.Errorf("YAML alias at line %d, column %d is not allowed", pos.Line, pos.Column)
+	}
+	return nil
 }
 
 const appDescriptionSchemaURL = "https://margo.invalid/application-description.schema.json"
