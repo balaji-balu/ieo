@@ -9,6 +9,7 @@ Order of authority: Margo specification → `SPEC.md` → `docs/adr/` → code. 
 of truth.
 
 - `SPEC.md` — implementation contract (MUST/SHOULD, §17 tests, §18 checklist, Appendix B order).
+- `docs/intents/` — why a change exists: problem, outcome, acceptance criteria (`INT-NNN`).
 - `docs/system-overview.md` — how the system works and why.
 - `docs/adr/` — decisions on anything the spec calls "implementation-defined".
 
@@ -22,9 +23,12 @@ of truth.
    (`TestSpec_17_4_…`), and show them failing for the right reason.
 4. **Small slices.** One Appendix B step or smaller per PR. Stay inside the approved slice; record
    anything else as an issue or ADR draft.
-5. **Traceability.** Cite § numbers in code comments (`// SPEC §8.5`), test names, commits and PRs.
+5. **Traceability.** Cite § numbers in code comments (`// SPEC §8.5`), test names, commits and PRs;
+   commits and PRs also cite the intent ID (`INT-NNN`) they serve.
 6. **Follow `docs/coding-guidelines.md`.** Cite rule IDs (G-A1…) when explaining a design choice.
 7. **Verify locally before every push** (commands below). Never push red.
+8. **Intents.** A plan cites the intent ID it serves. Agents never set an intent's status to
+   `accepted`; a human does.
 
 ## Guardrails
 
