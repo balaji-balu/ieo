@@ -18,6 +18,7 @@ require (
 	github.com/looplab/fsm v1.0.3
 	github.com/nats-io/nats.go v1.47.0
 	github.com/prometheus/client_golang v1.19.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.11.1
 	github.com/tetratelabs/wazero v1.10.1

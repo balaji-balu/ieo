@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Command (LO → EN, SPEC §11.2)",
+  "type": "object",
+  "required": ["commandId", "action", "deploymentId", "digest"],
+  "properties": {
+    "commandId": { "$ref": "defs.schema.json#/$defs/uuid" },
+    "action": { "enum": ["apply", "remove"] },
+    "deploymentId": { "$ref": "defs.schema.json#/$defs/uuid" },
+    "digest": { "$ref": "defs.schema.json#/$defs/digest" },
+    "deployment": {
+      "description": "The ApplicationDeployment (SPEC §4.1.5); validated against the Margo schema by its consumer.",
+      "type": "object"
+    }
+  },
+  "if": { "properties": { "action": { "const": "apply" } } },
+  "then": { "required": ["deployment"] },
+  "else": { "properties": { "deployment": false } }
+}

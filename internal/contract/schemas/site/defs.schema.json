@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IEO site messages: shared definitions (SPEC §4.2, §11.2)",
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "hostId": { "type": "string", "pattern": "^[A-Za-z0-9._~-]+$" },
+    "deviceId": {
+      "description": "<site> or <site>/<host>; the site may not be `any`.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)?$",
+      "not": { "pattern": "^any(/|$)" }
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "componentState": {
+      "enum": ["pending", "installing", "installed", "removing", "removed", "failed"]
+    },
+    "statusError": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "source": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "componentStatus": {
+      "type": "object",
+      "required": ["name", "state"],
+      "properties": {
+        "name": { "type": "string" },
+        "state": { "$ref": "#/$defs/componentState" },
+        "error": { "$ref": "#/$defs/statusError" }
+      }
+    }
+  }
+}

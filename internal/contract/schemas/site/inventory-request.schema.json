@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Inventory request (LO → all ENs, SPEC §11.2); every EN answers with its Inventory",
+  "type": "object"
+}

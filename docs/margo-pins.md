@@ -10,7 +10,10 @@ ADR 0010). The pinned OpenAPI file lives in `api/margo/<commit>/`.
   `system-design/specification/margo-management-interface/workload-management-api-1.0.0-rc.3.yaml`
 - Prior pin: none (first recorded pin)
 - Compatibility: n/a
-- Vendored file: added in roadmap slice A
+- Vendored file: `api/margo/f209a7f/workload-management-api-1.0.0-rc.3.yaml` (roadmap slice A)
+- Known upstream defect: `UnsignedAppStateManifest.required` names `bundle.mediaType`,
+  `bundle.digest` and `bundle.url`, which no valid manifest can satisfy. The §17.1 tests drop those
+  entries in memory; see `api/margo/f209a7f/README.md`.
 
 | Method | Path | Status | Note |
 | --- | --- | --- | --- |

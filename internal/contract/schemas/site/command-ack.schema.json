@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CommandAck (EN → LO, SPEC §11.2)",
+  "type": "object",
+  "required": ["commandId", "accepted"],
+  "properties": {
+    "commandId": { "$ref": "defs.schema.json#/$defs/uuid" },
+    "accepted": { "type": "boolean" },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  },
+  "if": { "properties": { "accepted": { "const": false } } },
+  "then": { "required": ["error"] },
+  "else": { "properties": { "error": false } }
+}

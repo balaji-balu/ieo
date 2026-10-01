@@ -228,7 +228,7 @@ Fields used by IEO:
 - `deploymentProfiles` (list) — IEO phase 1 uses profiles with `type: compose` only. Each has:
   - `id` (string)
   - `components` (list), each with `name` and `properties.repository` (`oci://…`),
-    `properties.revision` (SemVer), and OPTIONAL `wait` (default `true`) and `timeout`.
+    `properties.revision` (SemVer, build metadata after `_`; §4.2), and OPTIONAL `wait` (default `true`) and `timeout`.
   - `deviceConstraints` (object, OPTIONAL) — `capacityRequirements` and `eligibilityRules`.
   - vendor extensions `x-…-extensions` (opaque).
 - `parameters` (map) — parameter name → `targets` (list of `{pointer, components}`).
@@ -334,8 +334,9 @@ Single authoritative state owned by the LO. Durable fields MUST survive restart.
   - `<deployment_id>-<component_name>`, lowercased; characters outside `[a-z0-9_-]` replaced with
     `-`.
 - `Component Revision` `[Margo]`
-  - OCI tags cannot contain `+`. When comparing a tag with a SemVer `revision`, convert `_` in the
-    tag back to `+`.
+  - `revision` is the OCI tag. OCI tags cannot contain `+`, so SemVer build metadata is written
+    after `_` (`1.2.3_build.5`). A tag and a revision compare as exact strings.
+  - To read a revision as SemVer (precedence, display), convert `_` to `+`.
 - `SPIFFE IDs` `[Margo]`
   - CO: `spiffe://<trust-domain>/margo/wfm/<wfm-id>`
   - LO: `spiffe://<trust-domain>/margo/wfm/<wfm-id>/client/<site_id>`
@@ -371,7 +372,7 @@ The CO MUST reject an Application Description that:
 - fails schema validation against the pinned Margo schema;
 - has no deployment profile of a supported type (`compose` in phase 1);
 - has a component whose `repository` is not an `oci://` reference or whose `revision` is not
-  SemVer;
+  SemVer in the §4.2 form;
 - has a parameter target naming a component that does not exist in that profile;
 - duplicates an already imported `(metadata.id, metadata.version)` with different content.
 
@@ -882,6 +883,17 @@ Messages:
 { "hostId": "host-03", "capabilities": { /* §4.1.3 */ }, "labels": { "line": "2" } }
 ```
 
+The normative schemas for these messages are the JSON Schemas (draft 2020-12) in
+`internal/contract/schemas/site/`, one per message. In every message:
+
+- All fields shown above are REQUIRED except where marked OPTIONAL or conditional.
+- `commandId` and `deploymentId` are UUIDs; `digest` matches `^sha256:[0-9a-f]{64}$`; `at` is an
+  RFC 3339 date-time; `hostId` follows §4.2; `uptimeSeconds` is an integer ≥ 0; `state` is a
+  `ComponentState` (§4.1.9).
+- `Command.deployment` is REQUIRED when `action` is `apply` and MUST be absent when it is `remove`.
+- `CommandAck.error` is REQUIRED when `accepted` is `false` and MUST be absent when it is `true`.
+- `Inventory.deployments` and `Capabilities.labels` are present even when empty.
+
 Receivers MUST ignore unknown fields. A message that fails schema validation MUST be logged and
 dropped; it MUST NOT change state.
 
@@ -1204,7 +1216,7 @@ function on_command(cmd):
 function apply_deployment(cmd):
   for c in cmd.deployment.spec.deploymentProfile.components:
     publish_status(cmd, c.name, installing)
-    layer = oci_pull(c.repository, tag_for(c.revision))
+    layer = oci_pull(c.repository, c.revision)   # revision is the tag (§4.2)
     if layer failed:                          return fail(cmd, c, "IEO-PULL-FAILED")
     if sha256(layer.bytes) != layer.digest:   return fail(cmd, c, "IEO-DIGEST-MISMATCH")
     dir = safe_extract(layer, component_dir(cmd, c))
@@ -1277,7 +1289,7 @@ endpoints (§11.3 holds IEO-specific operations).
   as a site ID.
 - Device ID parsing splits on the first `/` only.
 - Compose project names follow §4.2 for component names with mixed case and symbols.
-- Tag-to-SemVer comparison converts `_` to `+`.
+- Tag-to-SemVer conversion turns `_` into `+`; tag and revision compare as exact strings.
 
 ### 17.2 CO: Catalog, Deployments, Manifest
 
