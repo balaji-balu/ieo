@@ -7,8 +7,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/balaji-balu/ieo/pkg/en/edgeruntime"
 	"github.com/balaji-balu/ieo/internal/en/plugins"
+	"github.com/balaji-balu/ieo/pkg/en/edgeruntime"
 	"github.com/balaji-balu/ieo/pkg/logx"
 )
 
@@ -16,8 +16,10 @@ func init() {
 	plugins.Register(&MockContainerd{})
 }
 
+// mockState is the in-memory lifecycle state of a mock component.
 type mockState string
 
+// Mock component states.
 const (
 	StateNone    mockState = "None"
 	StatePulled  mockState = "Pulled"
@@ -29,16 +31,19 @@ type container struct {
 	state mockState
 }
 
+// MockContainerd is an in-memory runtime plugin that simulates containerd for development and tests.
 type MockContainerd struct {
 	mu     sync.Mutex
 	items  map[string]*container
 	logger *zap.SugaredLogger
 }
 
+// Name returns the plugin name used to select it in the registry.
 func (m *MockContainerd) Name() string {
 	return "mock-containerd"
 }
 
+// Capabilities lists the workload types this plugin claims to run.
 func (m *MockContainerd) Capabilities() []string {
 	return []string{"oci", "mock"}
 }
@@ -52,9 +57,7 @@ func (m *MockContainerd) ensure() {
 	}
 }
 
-/* ================
-   INSTALL (fake pull)
-================ */
+// Install records the component as pulled without pulling an image.
 func (m *MockContainerd) Install(spec edgeruntime.ComponentSpec) error {
 	m.ensure()
 	m.mu.Lock()
@@ -73,9 +76,7 @@ func (m *MockContainerd) Install(spec edgeruntime.ComponentSpec) error {
 	return nil
 }
 
-/* ================
-   START (fake start)
-================ */
+// Start marks the component as started.
 func (m *MockContainerd) Start(spec edgeruntime.ComponentSpec) error {
 	m.ensure()
 	m.mu.Lock()
@@ -92,9 +93,7 @@ func (m *MockContainerd) Start(spec edgeruntime.ComponentSpec) error {
 	return nil
 }
 
-/* ================
-   STOP (fake stop)
-================ */
+// Stop marks a started component as pulled (stopped but installed).
 func (m *MockContainerd) Stop(name string) error {
 	m.ensure()
 	m.mu.Lock()
@@ -108,9 +107,7 @@ func (m *MockContainerd) Stop(name string) error {
 	return nil
 }
 
-/* ================
-   DELETE (remove from memory)
-================ */
+// Delete removes the component from memory.
 func (m *MockContainerd) Delete(name string) error {
 	m.ensure()
 	m.mu.Lock()
@@ -122,9 +119,7 @@ func (m *MockContainerd) Delete(name string) error {
 	return nil
 }
 
-/* ================
-   STATUS (simple mapping)
-================ */
+// Status maps the in-memory state to a ComponentStatus.
 func (m *MockContainerd) Status(name string) (edgeruntime.ComponentStatus, error) {
 	m.ensure()
 	m.mu.Lock()

@@ -2,16 +2,18 @@ package lo
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"log"
 	"time"
+
+	"go.uber.org/zap"
+
 	//"errors"
 
 	//. "github.com/balaji-balu/ieo/internal/config"
 	"github.com/balaji-balu/ieo/internal/gitobserver"
-	"github.com/balaji-balu/ieo/internal/natsbroker"
-	"github.com/balaji-balu/ieo/internal/lo/watcher"
 	"github.com/balaji-balu/ieo/internal/lo/logger"
+	"github.com/balaji-balu/ieo/internal/lo/watcher"
+	"github.com/balaji-balu/ieo/internal/natsbroker"
 	//"github.com/balaji-balu/ieo/internal/lo/nwadapt"
 	//"github.com/balaji-balu/ieo/internal/lo"
 )

@@ -5,30 +5,30 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path/filepath"
-	"strings"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
-	"runtime"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 
-	"github.com/balaji-balu/ieo/pkg/logx"
 	"github.com/balaji-balu/ieo/internal/lo"
-	//"github.com/balaji-balu/ieo/internal/config"
-	"github.com/balaji-balu/ieo/internal/natsbroker"
-	"github.com/balaji-balu/ieo/internal/gitmanager"
+	"github.com/balaji-balu/ieo/pkg/logx"
 
+	//"github.com/balaji-balu/ieo/internal/config"
+	"github.com/balaji-balu/ieo/internal/gitmanager"
+	"github.com/balaji-balu/ieo/internal/natsbroker"
 )
 
 type LOStorage struct {
-    BaseDir   string
-    SiteID    string
-    BoltPath  string
+	BaseDir  string
+	SiteID   string
+	BoltPath string
 }
 
 func init() {
@@ -37,14 +37,14 @@ func init() {
 	}
 }
 
-type LoConfig struct{
-	Port 		string
+type LoConfig struct {
+	Port        string
 	MetricsPort string
-    NATS struct {
-        URL      string `koanf:"url"`
+	NATS        struct {
+		URL string `koanf:"url"`
 	}
 	CO struct {
-		URL		string `koanf:"url"`
+		URL string `koanf:"url"`
 	}
 }
 
@@ -56,12 +56,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-    logx.Init(logx.Options{
-        Env:     os.Getenv("APP_ENV"),     // dev / prod
-        //Version: "0.1.0",
-    })    
-    log := logx.New("lo")
-    log.Infow("LO starting", "pid", os.Getpid())
+	if err := logx.Init(logx.Options{
+		Env: os.Getenv("APP_ENV"), // dev / prod
+		//Version: "0.1.0",
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "logger init failed:", err)
+		os.Exit(1)
+	}
+	log := logx.New("lo")
+	log.Infow("LO starting", "pid", os.Getpid())
 
 	loStorage, err := InitLOStorage() //(getBaseDir("LO"), "site_id")
 	if err != nil {
@@ -71,12 +74,12 @@ func main() {
 	log.Infow("lostorage", "", loStorage)
 
 	// loader := config.New()
-    // var cfg LoConfig
-    // if err := loader.Load(&cfg); err != nil {
-    //     log.Errorw("config load err", "err", err)
-    // } 	
+	// var cfg LoConfig
+	// if err := loader.Load(&cfg); err != nil {
+	//     log.Errorw("config load err", "err", err)
+	// }
 	// log.Infow("Loaded LO config:", "config", cfg)
-    cfg := LoConfig{}
+	cfg := LoConfig{}
 	cfg.Port = os.Getenv("LO_PORT")
 	cfg.NATS.URL = os.Getenv("LO_NATS_URL")
 	cfg.MetricsPort = os.Getenv("LO_METRICS_PORT")
@@ -95,12 +98,12 @@ func main() {
 
 	gitmgr := gitmanager.NewManager()
 	gitmgr.Register(gitmanager.RepoConfig{
-		Name: "deployments",
-		Mode: gitmanager.GitRemote, //, GitLocal
+		Name:      "deployments",
+		Mode:      gitmanager.GitRemote, //, GitLocal
 		RemoteURL: "https://github.com/edge-orchestration-platform/deployments.git",
 		//LocalPath: "/home/balaji/local-deployments",
-		Branch: "main",
-		Token: os.Getenv("GITHUB_TOKEN"),
+		Branch:      "main",
+		Token:       os.Getenv("GITHUB_TOKEN"),
 		WorkingPath: "/tmp/deployments-lo",
 	})
 
@@ -108,11 +111,11 @@ func main() {
 	// 2️⃣ Setup orchestrator + FSM loader
 	// ------------------------------------------------------------
 
-	localorch := lo.NewLO(ctx, 
+	localorch := lo.NewLO(ctx,
 		loStorage.SiteID,
-		boltdbpath, //loStorage.BoltPath, 
-		cfg.NATS.URL, 
-		cfg.CO.URL, 
+		boltdbpath, //loStorage.BoltPath,
+		cfg.NATS.URL,
+		cfg.CO.URL,
 		"deployments", nc, gitmgr, cfg.MetricsPort, log)
 	if localorch == nil {
 		log.Errorw("localorch is nil")
@@ -183,50 +186,54 @@ func main() {
 }
 
 func InitLOStorage() (*LOStorage, error) {
-    baseDir := LOBaseDir("lo") // cross-platform base dir (linux/macos/windows)
+	baseDir := LOBaseDir("lo") // cross-platform base dir (linux/macos/windows)
 
-    // 1. Ensure base directory exists
-    if err := os.MkdirAll(baseDir, 0755); err != nil {
-        return nil, err
-    }
+	// 1. Ensure base directory exists
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return nil, err
+	}
 
-    // 2. Load or create site_id
-    siteID, err := loadOrCreateID(baseDir, "site_id")
-    if err != nil {
-        return nil, err
-    }
+	// 2. Load or create site_id
+	siteID, err := loadOrCreateID(baseDir, "site_id")
+	if err != nil {
+		return nil, err
+	}
 
-    // 3. Setup BoltDB directory
-    dbDir := filepath.Join(baseDir, "db")
-    if err := os.MkdirAll(dbDir, 0755); err != nil {
-        return nil, err
-    }
+	// 3. Setup BoltDB directory
+	dbDir := filepath.Join(baseDir, "db")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return nil, err
+	}
 
-    boltPath := filepath.Join(dbDir, "bolt.db")
+	boltPath := filepath.Join(dbDir, "bolt.db")
 
-    return &LOStorage{
-        BaseDir:  baseDir,
-        SiteID:   siteID,
-        BoltPath: boltPath,
-    }, nil
+	return &LOStorage{
+		BaseDir:  baseDir,
+		SiteID:   siteID,
+		BoltPath: boltPath,
+	}, nil
 }
 
 func loadOrCreateID(baseDir, name string) (string, error) {
-    idPath := filepath.Join(baseDir, name)
+	idPath := filepath.Join(baseDir, name)
 
-    if data, err := os.ReadFile(idPath); err == nil {
-        id := strings.TrimSpace(string(data))
-        if id != "" {
-            return id, nil
-        }
-    }
+	if data, err := os.ReadFile(idPath); err == nil {
+		id := strings.TrimSpace(string(data))
+		if id != "" {
+			return id, nil
+		}
+	}
 
-    id := uuid.New().String()
+	id := uuid.New().String()
 
-    os.MkdirAll(baseDir, 0755)
-    os.WriteFile(idPath, []byte(id), 0644)
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return "", fmt.Errorf("create %s: %w", baseDir, err)
+	}
+	if err := os.WriteFile(idPath, []byte(id), 0644); err != nil {
+		return "", fmt.Errorf("write %s: %w", idPath, err)
+	}
 
-    return id, nil
+	return id, nil
 }
 
 func LOBaseDir(app string) string {
@@ -235,12 +242,12 @@ func LOBaseDir(app string) string {
 		return filepath.Join(home, ".lo")
 	}
 
-    switch runtime.GOOS {
-    case "windows":
-        return filepath.Join(os.Getenv("ProgramData"), app)
-    case "darwin":
-        return filepath.Join("/Library/Application Support", app)
-    default: // linux, unix, others
-        return filepath.Join("/var/lib", strings.ToLower(app))
-    }
+	switch runtime.GOOS {
+	case "windows":
+		return filepath.Join(os.Getenv("ProgramData"), app)
+	case "darwin":
+		return filepath.Join("/Library/Application Support", app)
+	default: // linux, unix, others
+		return filepath.Join("/var/lib", strings.ToLower(app))
+	}
 }

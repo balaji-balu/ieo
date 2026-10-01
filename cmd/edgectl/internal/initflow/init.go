@@ -1,5 +1,6 @@
 package initflow
 
+// Run executes the init steps in order and stops at the first error.
 func Run(ctx *Context) error {
 	steps := []Step{
 		DiscoverEnvironment,
@@ -20,6 +21,7 @@ func Run(ctx *Context) error {
 
 	return nil
 }
+
 /*
 $ edgectl status
 

@@ -2,10 +2,11 @@ package natsbroker
 
 import (
 	"encoding/json"
+
 	"github.com/balaji-balu/ieo/internal/gitobserver"
 	"github.com/balaji-balu/ieo/pkg/model"
+
 	//"github.com/balaji-balu/ieo/pkg/model/reconciler"
-	
 
 	//"github.com/balaji-balu/ieo/pkg/deployment"
 	"github.com/nats-io/nats.go"

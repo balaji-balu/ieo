@@ -23,10 +23,12 @@ node_id: {{ .NodeID }}
 component: EN
 `
 
+// NodeConfig is the template data for an EN config file.
 type NodeConfig struct {
 	NodeID string
 }
 
+// GenerateDirs creates the /etc/ieo config directories for each component.
 func GenerateDirs() error {
 	paths := []string{
 		"/etc/ieo/co",
@@ -42,17 +44,23 @@ func GenerateDirs() error {
 	return nil
 }
 
-func GenerateConfigFile(path, tmplStr string, data interface{}) error {
+// GenerateConfigFile renders tmplStr with data into the file at path.
+func GenerateConfigFile(path, tmplStr string, data interface{}) (err error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", path, err)
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close file %s: %w", path, cerr)
+		}
+	}()
 
 	tpl := template.Must(template.New("config").Parse(tmplStr))
 	return tpl.Execute(file, data)
 }
 
+// GenerateAllConfigs writes the CO, LO and EN config files.
 func GenerateAllConfigs(ctx *Context) error {
 	if err := GenerateDirs(); err != nil {
 		return err

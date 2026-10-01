@@ -139,7 +139,7 @@ func writerToWriteSyncer(w io.Writer) zapcore.WriteSyncer {
 type nopSyncWriter struct{ w io.Writer }
 
 func (n *nopSyncWriter) Write(p []byte) (int, error) { return n.w.Write(p) }
-func (n *nopSyncWriter) Sync() error                       { return nil }
+func (n *nopSyncWriter) Sync() error                 { return nil }
 
 // New returns a SugaredLogger with the `service` field attached.
 // Example: log := logx.New("co")
@@ -243,10 +243,16 @@ func NewCLI(service string) *zap.SugaredLogger {
 	return logger.Sugar()
 }
 
-// Convenience helpers that mirror common patterns
+// Infow logs at info level with key/value pairs through the global logger.
 func Infow(msg string, kv ...interface{}) { ensureInit(); sugar.Infow(msg, kv...) }
+
+// Debugw logs at debug level with key/value pairs through the global logger.
 func Debugw(msg string, kv ...interface{}) { ensureInit(); sugar.Debugw(msg, kv...) }
+
+// Errorw logs at error level with key/value pairs through the global logger.
 func Errorw(msg string, kv ...interface{}) { ensureInit(); sugar.Errorw(msg, kv...) }
+
+// Fatalw logs at fatal level with key/value pairs through the global logger, then exits.
 func Fatalw(msg string, kv ...interface{}) { ensureInit(); sugar.Fatalw(msg, kv...) }
 
 // Sync flushes any buffered loggers.
@@ -259,7 +265,8 @@ func Sync() error {
 	return nil
 }
 
-// Small helper: create request ID (simple). Replace with fx/rand or uuid in production.
+// DefaultReqID returns a request ID made from prefix (default "rid") and the current time in
+// nanoseconds. It is not unique enough for production use.
 func DefaultReqID(prefix string) string {
 	if prefix == "" {
 		prefix = "rid"
@@ -267,7 +274,7 @@ func DefaultReqID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
-// Helper: parse key/value pairs into map for pretty printing or tests
+// KVToMap turns alternating key/value arguments into a map, skipping non-string keys.
 func KVToMap(kv ...interface{}) map[string]interface{} {
 	m := map[string]interface{}{}
 	for i := 0; i < len(kv)-1; i += 2 {

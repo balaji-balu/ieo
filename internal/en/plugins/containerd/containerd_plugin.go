@@ -8,43 +8,46 @@ import (
 	"syscall"
 	"time"
 
-    "go.uber.org/zap"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
+	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
+	"go.uber.org/zap"
 
-	"github.com/balaji-balu/ieo/pkg/en/edgeruntime"
 	"github.com/balaji-balu/ieo/internal/en/plugins"
-    "github.com/balaji-balu/ieo/pkg/logx"
+	"github.com/balaji-balu/ieo/pkg/en/edgeruntime"
+	"github.com/balaji-balu/ieo/pkg/logx"
 )
 
-// 
 func init() {
-	plugins.Register(&ContainerdPlugin{})
+	plugins.Register(&Plugin{})
 }
 
-type ContainerdPlugin struct {
+// Plugin runs components as containerd containers in the "ieo-en" namespace.
+type Plugin struct {
 	client     *containerd.Client
 	socketPath string
 	containers map[string]containerd.Container
-    log        *zap.SugaredLogger
+	log        *zap.SugaredLogger
 }
 
-func (c *ContainerdPlugin) Name() string {
+// Name returns the plugin name used to select it in the registry.
+func (c *Plugin) Name() string {
 	return "containerd"
 }
 
-func (c *ContainerdPlugin) Capabilities() []string {
+// Capabilities lists the workload types this plugin can run.
+func (c *Plugin) Capabilities() []string {
 	return []string{"oci", "containerd"}
 }
 
 // detectContainerdSocket tries common socket locations (standalone containerd, k3s, etc.)
 func detectContainerdSocket() string {
 	candidates := []string{
-		"/run/containerd/containerd.sock",        // normal
-		"/var/run/containerd/containerd.sock",    // alternate
-		"/run/k3s/containerd/containerd.sock",    // k3s
+		"/run/containerd/containerd.sock",     // normal
+		"/var/run/containerd/containerd.sock", // alternate
+		"/run/k3s/containerd/containerd.sock", // k3s
 		"/var/run/k3s/containerd/containerd.sock",
 	}
 
@@ -57,7 +60,7 @@ func detectContainerdSocket() string {
 }
 
 // ensureClient initializes the containerd client once and stores detected socket
-func (c *ContainerdPlugin) ensureClient() error {
+func (c *Plugin) ensureClient() error {
 	if c.client != nil {
 		return nil
 	}
@@ -78,15 +81,12 @@ func (c *ContainerdPlugin) ensureClient() error {
 	return nil
 }
 
-/* ====================
-        INSTALL
-   Pull and unpack OCI image
-==================== */
-func (c *ContainerdPlugin) Install(spec edgeruntime.ComponentSpec) error {
-    c.log = logx.New("en.containerd")
+// Install is meant to pull and unpack the OCI image; it currently only logs and returns nil.
+func (c *Plugin) Install(spec edgeruntime.ComponentSpec) error {
+	c.log = logx.New("en.containerd")
 	c.log.Infow("Install: enter")
-    
-    // spec.Artifact is expected to be an OCI image reference: docker.io/library/nginx:latest etc.
+
+	// spec.Artifact is expected to be an OCI image reference: docker.io/library/nginx:latest etc.
 	if err := c.ensureClient(); err != nil {
 		return err
 	}
@@ -106,11 +106,8 @@ func (c *ContainerdPlugin) Install(spec edgeruntime.ComponentSpec) error {
 	return nil
 }
 
-/* ====================
-        START
-   Create container + task and start it
-==================== */
-func (c *ContainerdPlugin) Start(spec edgeruntime.ComponentSpec) error {
+// Start creates the container and its task, then starts the task.
+func (c *Plugin) Start(spec edgeruntime.ComponentSpec) error {
 	c.log.Infow("Start: enter")
 	if err := c.ensureClient(); err != nil {
 		return err
@@ -169,11 +166,8 @@ func (c *ContainerdPlugin) Start(spec edgeruntime.ComponentSpec) error {
 	return nil
 }
 
-/* ====================
-        STOP
-   Kill task then delete task (keeps snapshot/container for possible restart)
-==================== */
-func (c *ContainerdPlugin) Stop(name string) error {
+// Stop kills and deletes the task, keeping the container and snapshot for a restart.
+func (c *Plugin) Stop(name string) error {
 	c.log.Infow("Stop: enter")
 	if err := c.ensureClient(); err != nil {
 		return err
@@ -227,7 +221,7 @@ func (c *ContainerdPlugin) Stop(name string) error {
         DELETE
    Full cleanup including container and snapshot
 ==================== */
-/*func (c *ContainerdPlugin) Delete(name string) error {
+/*func (c *Plugin) Delete(name string) error {
 	c.log.Infow("Delete: enter")
 	if err := c.ensureClient(); err != nil {
 		return err
@@ -255,58 +249,61 @@ func (c *ContainerdPlugin) Stop(name string) error {
 	return nil
 }
 */
-func (c *ContainerdPlugin) Delete(name string) error {
-    c.log.Infow("Delete: enter", "name", name)
 
-    if err := c.ensureClient(); err != nil {
-        return err
-    }
+// Delete kills the task and removes the container and its snapshot. A missing container counts as
+// already deleted.
+func (c *Plugin) Delete(name string) error {
+	c.log.Infow("Delete: enter", "name", name)
 
-    ctx := namespaces.WithNamespace(context.Background(), "ieo-en")
+	if err := c.ensureClient(); err != nil {
+		return err
+	}
 
-    // 1. Load container (if missing, nothing to do)
-    container, err := c.client.LoadContainer(ctx, name)
-    if err != nil {
-        c.log.Infow("Delete: container not found; treating as deleted", "name", name)
-        return nil
-    }
+	ctx := namespaces.WithNamespace(context.Background(), "ieo-en")
 
-    // 2. Load task (if exists)
-    task, err := container.Task(ctx, nil)
-    if err == nil {
-        // 3. Kill task hard
-        if killErr := task.Kill(ctx, syscall.SIGKILL); killErr != nil {
-            c.log.Warnw("Delete: kill failed", "error", killErr)
-        }
+	// 1. Load container (if missing, nothing to do)
+	container, err := c.client.LoadContainer(ctx, name)
+	if errdefs.IsNotFound(err) {
+		c.log.Infow("Delete: container not found; treating as deleted", "name", name)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load container %s: %w", name, err)
+	}
 
-        // 4. Wait for exit
-        statusC, waitErr := task.Wait(ctx)
-        if waitErr == nil {
-            <-statusC
-        }
+	// 2. Load task (if exists)
+	task, err := container.Task(ctx, nil)
+	if err == nil {
+		// 3. Kill task hard
+		if killErr := task.Kill(ctx, syscall.SIGKILL); killErr != nil {
+			c.log.Warnw("Delete: kill failed", "error", killErr)
+		}
 
-        // 5. Delete task
-        if _, delErr := task.Delete(ctx); delErr != nil {
-            c.log.Warnw("Delete: task delete failed", "error", delErr)
-        }
-    }
+		// 4. Wait for exit
+		statusC, waitErr := task.Wait(ctx)
+		if waitErr == nil {
+			<-statusC
+		}
 
-    // 6. Now delete container + snapshot cleanup
-    if err := container.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
-        return fmt.Errorf("failed to delete container %s: %w", name, err)
-    }
+		// 5. Delete task
+		if _, delErr := task.Delete(ctx); delErr != nil {
+			c.log.Warnw("Delete: task delete failed", "error", delErr)
+		}
+	}
 
-    delete(c.containers, name)
+	// 6. Now delete container + snapshot cleanup
+	if err := container.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
+		return fmt.Errorf("failed to delete container %s: %w", name, err)
+	}
 
-    c.log.Infow("Delete: exit", "name", name)
-    return nil
+	delete(c.containers, name)
+
+	c.log.Infow("Delete: exit", "name", name)
+	return nil
 }
 
-
-/* ====================
-        STATUS
-==================== */
-func (c *ContainerdPlugin) Status(name string) (edgeruntime.ComponentStatus, error) {
+// Status reports the component state from its container and task.
+func (c *Plugin) Status(name string) (edgeruntime.ComponentStatus, error) {
 	c.log.Infow("Status: Enter")
 	if err := c.ensureClient(); err != nil {
 		return edgeruntime.ComponentStatus{}, err
@@ -316,7 +313,7 @@ func (c *ContainerdPlugin) Status(name string) (edgeruntime.ComponentStatus, err
 
 	// Try to load container
 	container, err := c.client.LoadContainer(ctx, name)
-	if err != nil {
+	if errdefs.IsNotFound(err) {
 		return edgeruntime.ComponentStatus{
 			Name:      name,
 			State:     "NotFound",
@@ -324,9 +321,12 @@ func (c *ContainerdPlugin) Status(name string) (edgeruntime.ComponentStatus, err
 			Timestamp: time.Now().Unix(),
 		}, nil
 	}
+	if err != nil {
+		return edgeruntime.ComponentStatus{}, fmt.Errorf("load container %s: %w", name, err)
+	}
 
 	task, err := container.Task(ctx, nil)
-	if err != nil {
+	if errdefs.IsNotFound(err) {
 		// no task → stopped
 		return edgeruntime.ComponentStatus{
 			Name:      name,
@@ -334,6 +334,9 @@ func (c *ContainerdPlugin) Status(name string) (edgeruntime.ComponentStatus, err
 			Message:   "task not running",
 			Timestamp: time.Now().Unix(),
 		}, nil
+	}
+	if err != nil {
+		return edgeruntime.ComponentStatus{}, fmt.Errorf("load task %s: %w", name, err)
 	}
 
 	ti, err := task.Status(ctx)
@@ -343,7 +346,7 @@ func (c *ContainerdPlugin) Status(name string) (edgeruntime.ComponentStatus, err
 			State:     "Unknown",
 			Message:   err.Error(),
 			Timestamp: time.Now().Unix(),
-		}, nil
+		}, fmt.Errorf("task status %s: %w", name, err)
 	}
 
 	// Map ProcessStatus to string

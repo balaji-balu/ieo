@@ -1,6 +1,7 @@
 package initflow
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -12,6 +13,7 @@ var requiredBinaries = []string{
 	"ieo-en",
 }
 
+// EnsureBinaries checks that the component binaries are on PATH and their versions are compatible.
 func EnsureBinaries(ctx *Context) error {
 	fmt.Println("✔ Ensuring required components")
 
@@ -43,7 +45,7 @@ func EnsureBinaries(ctx *Context) error {
 }
 
 func getVersion(bin string) (string, error) {
-	out, err := exec.Command(bin, "--version").Output()
+	out, err := exec.CommandContext(context.Background(), bin, "--version").Output()
 	if err != nil {
 		return "", err
 	}
