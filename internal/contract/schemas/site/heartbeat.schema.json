@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heartbeat (EN → LO, SPEC §11.2)",
+  "type": "object",
+  "required": ["hostId", "at", "uptimeSeconds"],
+  "properties": {
+    "hostId": { "$ref": "defs.schema.json#/$defs/hostId" },
+    "at": { "$ref": "defs.schema.json#/$defs/timestamp" },
+    "uptimeSeconds": { "type": "integer", "minimum": 0 }
+  }
+}

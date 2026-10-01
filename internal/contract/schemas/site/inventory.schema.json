@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Inventory (EN → LO, SPEC §11.2): the EN's complete actual state",
+  "type": "object",
+  "required": ["hostId", "at", "deployments"],
+  "properties": {
+    "hostId": { "$ref": "defs.schema.json#/$defs/hostId" },
+    "at": { "$ref": "defs.schema.json#/$defs/timestamp" },
+    "deployments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["deploymentId", "digest", "components"],
+        "properties": {
+          "deploymentId": { "$ref": "defs.schema.json#/$defs/uuid" },
+          "digest": { "$ref": "defs.schema.json#/$defs/digest" },
+          "components": {
+            "type": "array",
+            "items": { "$ref": "defs.schema.json#/$defs/componentStatus" }
+          }
+        }
+      }
+    }
+  }
+}
