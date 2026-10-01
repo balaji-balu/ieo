@@ -16,6 +16,7 @@ one, write a new ADR that supersedes it.
 | [0008](0008-rename-era-to-en.md) | Rename ERA to EN in code | Accepted |
 | [0009](0009-laptop-test-environment.md) | Laptop test environment (Windows 11, simulated hosts) | Accepted |
 | [0010](0010-margo-wm-api-pin-and-conformance.md) | Margo client API: stay on pinned rc.3, adopt a pin-change procedure | Accepted |
+| [0011](0011-spec-test-traceability.md) | How a `TestSpec_` test names the §17 bullet it covers | Proposed |
 
 Older design notes in `docs/adr/era/` are superseded by 0002 and 0003 and kept for history.
 

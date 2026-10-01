@@ -65,6 +65,7 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 | `configs/` | Component configs and FSM definitions |
 | `deploy/` | Compose and Helm deployment |
 | `tests/` | e2e tests, fixtures, seeds |
+| `tools/` | Go helper programs (ADR 0009): `conformance` (§17 gap list), `sessionstart` (cloud SessionStart hook) |
 
 ## Commands
 
@@ -76,7 +77,11 @@ go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
 # gofmt, goimports, govet, … on changed lines only:
 golangci-lint run --new-from-merge-base=origin/main $(scripts/go-packages.sh test)
 golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-packages.sh no-test)
+# §17 bullets without a TestSpec_ test (report only; -strict fails on gaps, ADR 0011):
+go run ./tools/conformance
 ```
+
+Cloud sessions install `golangci-lint` through the SessionStart hook in `.claude/settings.json`.
 
 Local stack: `docker-compose -f docker-compose.dev.yaml up -d` (NATS, Postgres), then
 `go run ./cmd/co`, `./cmd/lo`, `./cmd/en`. Schema changes: see `docs/contributing.md`.
