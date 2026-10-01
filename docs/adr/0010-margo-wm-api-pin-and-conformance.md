@@ -1,6 +1,6 @@
 # 0010. Margo client API: stay on the pinned rc.3 shape, adopt a pin-change procedure
 
-Status: Proposed · Date: 2026-10-01 · Spec: §3.2, §11.1, §15.2, §15.6, §17.1
+Status: Accepted · Date: 2026-10-01 · Spec: §3.2, §11.1, §15.2, §15.6, §17.1
 
 ## Context
 `edge-orchestration-platform/eos-platform` (a sibling prototype) implements a Margo client API on its
