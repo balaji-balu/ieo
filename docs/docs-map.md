@@ -23,6 +23,8 @@ mindmap
         How it works and why
       docs/adr/
         Implementation-defined choices
+      docs/proposals/
+        Designs for later phases
     Process
       docs/process.md
         Sources of truth and authority
@@ -57,6 +59,7 @@ flowchart LR
   spec["SPEC.md<br/><i>implementation contract</i>"]
   overview["docs/system-overview.md<br/><i>design and reasons</i>"]
   adr["docs/adr/<br/><i>decisions</i>"]
+  proposals["docs/proposals/<br/><i>later-phase designs</i>"]
   process["docs/process.md<br/><i>the loop</i>"]
   claude["CLAUDE.md<br/><i>agent rules</i>"]
   guide["docs/coding-guidelines.md<br/><i>G-A1…G-F5</i>"]
@@ -70,6 +73,8 @@ flowchart LR
   margo -- "authoritative over [Margo] rules" --> spec
   spec <-- "explains / implements" --> overview
   adr -- "fills gaps in" --> spec
+  proposals -- "becomes [IEO] sections of" --> spec
+  adr -- "moves designs to" --> proposals
 
   process -- "sources of truth, §17/§18, App. B" --> spec
   process -- "lists" --> overview
@@ -111,6 +116,7 @@ flowchart LR
 - [SPEC.md](../SPEC.md)
 - [docs/system-overview.md](system-overview.md)
 - [docs/adr/](adr/)
+- [docs/proposals/](proposals/)
 - [docs/process.md](process.md)
 - [CLAUDE.md](../CLAUDE.md)
 - [docs/coding-guidelines.md](coding-guidelines.md)

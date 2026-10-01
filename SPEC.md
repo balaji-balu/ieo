@@ -53,8 +53,8 @@ The system solves five operational problems:
 Important boundaries:
 
 - IEO decides and reports *what runs where*. It does not read or alter the applications' own
-  data (see Appendix A for the OPTIONAL data plane, which carries workload traffic but still does
-  not inspect it).
+  data (see `docs/proposals/data-plane.md` for the proposed data plane, which carries workload
+  traffic but still does not inspect it).
 - The central orchestrator never talks to hosts. Hosts never talk to the central orchestrator.
 - Only the local orchestrator writes a host's desired state. The host agent never decides what
   should run.
@@ -436,8 +436,8 @@ LO:
 - `lo.poll.max_backoff`: duration, default `10m`
 - `lo.nats.listen_addr`: string, default `:4222`
 - `lo.nats.tls.cert_file`, `lo.nats.tls.key_file`: paths, REQUIRED
-- `lo.nats.operator_key_file`: path, REQUIRED (signs per-host and, with Appendix A, per-workload
-  credentials)
+- `lo.nats.operator_key_file`: path, REQUIRED (signs per-host and, with the data-plane proposal
+  `docs/proposals/data-plane.md`, per-workload credentials)
 - `lo.heartbeat.interval`: duration, default `10s` (MUST equal the ENs' `en.heartbeat.interval`)
 - `lo.heartbeat.offline_after_missed`: integer, default `3`
 - `lo.metrics_listen_addr`: string, default `:9091`
@@ -1458,7 +1458,7 @@ Gaps: none.
 
 ### 18.2 RECOMMENDED Extensions (Not REQUIRED for Conformance)
 
-- Data plane (Appendix A)
+- Data plane (`docs/proposals/data-plane.md`, ADR 0006)
 - Dynamic configuration reload (§6.2)
 - `edgectl deployment status --watch` over server-sent events
 - TODO: Helm deployment type on k3s
@@ -1474,63 +1474,7 @@ Gaps: none.
 
 ## Appendix A. Data Plane Extension (OPTIONAL)
 
-The data plane lets workloads call each other and share data within a site and across sites.
-Implementations that ship it MUST follow this appendix; `docs/system-overview.md` §11 has the full
-design.
-
-### A.1 Topology
-
-- The site NATS server runs a second account, `DATA`, isolated from `CONTROL`.
-- A central NATS cluster (the hub) accepts outbound leaf-node links from each site's `DATA` account.
-- Traffic between workloads at one site never leaves the site.
-
-### A.2 Naming
-
-| What | Subject / name |
-| --- | --- |
-| Service at a named site | `svc.<site>.<service>.<endpoint>` |
-| Service, nearest copy | `svc.any.<service>.<endpoint>` |
-| Topic | `data.<site>.<app>.<topic>` |
-| Site stream | `DATA_<site>` capturing `data.<site>.>` |
-| Hub aggregated stream | `DATA_ALL` sourcing every `DATA_<site>` |
-| Object store | bucket `obj-<site>`, object `<app>/<key>` |
-
-### A.3 Declaration and Approval
-
-- An application declares `provides`, `consumes`, `publishes`, `subscribes` and `objectStore`
-  under `x-ieo-extensions.dataPlane` on its deployment profile.
-- `discovery: nearest` is valid only with `exposure: global`.
-- Any cross-site use MUST be approved by the operator when the deployment is created; the CO stores
-  the approval with the deployment.
-- A service name is unique across the fleet: the CO rejects a second application ID that provides
-  the same service name.
-- A workload with no declaration gets no data-plane access.
-
-### A.4 Credentials
-
-- On Apply for a deployment that declares data-plane use, the LO issues a `DATA` account credential
-  whose permissions are exactly those implied by the declaration and approval, and adds
-  `dataPlane: {url, creds}` to the Command.
-- The EN mounts the credential read-only and sets `IEO_NATS_URL`, `IEO_NATS_CREDS`, `IEO_SITE_ID`,
-  `IEO_HOST_ID`, `IEO_DEPLOYMENT_ID`, `IEO_APP_ID`.
-- The credential rotates when the deployment's digest changes and is revoked on Remove.
-
-### A.5 Behavior
-
-- Services answer `svc.<site>.<service>.$health` and set reply header `IEO-Served-By: <site>/<host>`;
-  errors use reply header `IEO-Error`.
-- Topic data is buffered in the site stream (default 24 h or 10 GiB) while the hub link is down.
-- Cross-site service calls fail fast when the hub is unreachable. The platform never retries a call
-  at another copy.
-
-### A.6 Extension Conformance
-
-- CONTROL and DATA accounts are isolated; a workload credential cannot reach `site.>` subjects.
-- A credential allows exactly the declared and approved subjects.
-- Site-local calls and topics keep working with the hub down; topic data reaches `DATA_ALL` after
-  reconnect.
-- Nearest-copy calls prefer a local copy when one runs (verify with the NATS version in use).
-- Credentials rotate on digest change and are revoked on Remove.
+Moved to `docs/proposals/data-plane.md` §2 (ADR 0006).
 
 ## Appendix B. Migration Notes for This Repository
 
@@ -1545,6 +1489,6 @@ from `edgectl` through CO, LO and EN, in this order (details in `docs/roadmap.md
 2. Golden path complete: update, delete, autonomous placement, host liveness.
 3. Site autonomy and recovery: status outbox, retries, restart recovery, observability.
 4. Mutual TLS and scoped NATS credentials, replacing the interim token rules (ADR 0005).
-5. Appendix A (moving to a proposal; see ADR 0006).
+5. Data plane: see `docs/proposals/data-plane.md` (ADR 0006).
 
 After each slice, the parts of the §17.8 golden path it covers MUST stay green.

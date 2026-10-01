@@ -33,7 +33,7 @@ and shows it on a small dashboard.
 - No data loss across five consecutive version updates on the testbed.
 
 ## Non-goals
-- Long-term retention or central aggregation (a later Appendix A use case).
+- Long-term retention or central aggregation (a later data-plane use case, `docs/proposals/data-plane.md`).
 - High availability of the database.
 
 ## Open questions
