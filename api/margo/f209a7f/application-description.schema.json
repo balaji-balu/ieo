@@ -1,0 +1,1384 @@
+{
+    "$defs": {
+        "ApplicationDescription": {
+            "additionalProperties": false,
+            "description": "Root class for an application description.",
+            "properties": {
+                "apiVersion": {
+                    "description": "Identifier of the version of the API the object definition follows. Must be \"v1\".",
+                    "type": "string"
+                },
+                "configuration": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/Configuration"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Configuration element specifying how parameters should be displayed to the user for setting the value  as well as the rules to use to validate the user's input.  See the [Configuration](#configuration-attributes) section below."
+                },
+                "deploymentProfiles": {
+                    "description": "Deployment profiles element specifying the types of deployments the application supports.  See the [Deployment](#deploymentprofile-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/DeploymentProfile"
+                    },
+                    "type": "array"
+                },
+                "id": {
+                    "description": "An identifier for the application. The id is used to help create unique identifiers where required,  such as namespaces. The id must be lower case letters and numbers and MAY contain dashes.  Uppercase letters, underscores and periods MUST NOT be used. The id MUST NOT be more than 200 characters.",
+                    "pattern": "^[a-z0-9-]{1,200}$",
+                    "type": "string"
+                },
+                "metadata": {
+                    "$ref": "#/$defs/Metadata",
+                    "description": "Metadata element specifying characteristics about the application deployment. See the [Metadata Attributes](#metadata-attributes) section below."
+                },
+                "parameters": {
+                    "additionalProperties": {
+                        "anyOf": [
+                            {
+                                "$ref": "#/$defs/Parameter__identifier_optional"
+                            },
+                            {
+                                "description": "Used to indicate which component the value should be applied to when installing, or updating, the application.  See the [Target](#target-attributes) section below.",
+                                "items": {
+                                    "$ref": "#/$defs/Target"
+                                },
+                                "type": "array"
+                            }
+                        ]
+                    },
+                    "description": "Parameters element specifying the configurable parameters to use when installing, or updating, the application. Defined as a map where each key is the user-defined parameter name (e.g. `mysqlDatabase:`, `greeting:`, `idpName:`, `myAppEndpoint:`), and value would be Parameter object, i.e. map[string]Parameter. See the [Parameter](#parameter-attributes) section below.",
+                    "type": [
+                        "object",
+                        "null"
+                    ]
+                },
+                "x_placeholder_extensions": {
+                    "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "apiVersion",
+                "id",
+                "metadata",
+                "deploymentProfiles"
+            ],
+            "title": "ApplicationDescription",
+            "type": "object"
+        },
+        "ApplicationMetadata": {
+            "additionalProperties": false,
+            "description": "Metadata specific to the application.",
+            "properties": {
+                "descriptionFile": {
+                    "description": "Link to the file containing the application's full description. The file should be a markdown file.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "icon": {
+                    "description": "Link to the icon file (e.g., in PNG format).",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "licenseFile": {
+                    "description": "Link to the file that details the application's license. The file should either be a plain text, markdown or PDF file.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "releaseNotes": {
+                    "description": "Statement about the changes for this application's release. The file should either be a markdown or PDF file.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "site": {
+                    "description": "Link to the application's website.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "tagline": {
+                    "description": "The application's slogan.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "tags": {
+                    "description": "An array of strings that can be used to provide additional context for the application in a user interface to assist with task such as categorizing, searching, etc.",
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "title": "ApplicationMetadata",
+            "type": "object"
+        },
+        "Author": {
+            "additionalProperties": false,
+            "description": "Information about the application's author.",
+            "properties": {
+                "email": {
+                    "description": "Email address of the application's creator.",
+                    "pattern": ".*@[a-z0-9.-]*",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "name": {
+                    "description": "The name of the application's creator.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                }
+            },
+            "title": "Author",
+            "type": "object"
+        },
+        "BooleanValidationSchema": {
+            "additionalProperties": false,
+            "description": "Extends schema to define a boolean-specific set of validation rules that can be used.",
+            "properties": {
+                "allowEmpty": {
+                    "description": "If true, an empty value is permitted. Default is false if not provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "dataType": {
+                    "description": "Indicates the expected data type for the user provided value.  Accepted values are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean].  At a minimum, the provided parameter value MUST match the schema's data type if no other validation rules are provided.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "The name of the schema rule. This used in the [setting](#setting-attributes) to link the setting to the schema rule.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name",
+                "dataType"
+            ],
+            "title": "BooleanValidationSchema",
+            "type": "object"
+        },
+        "CPU": {
+            "additionalProperties": false,
+            "description": "CPU element specifying the CPU requirements for the application.",
+            "properties": {
+                "architectures": {
+                    "description": "The CPU architectures supported by the application. This can be e.g. amd64, arm64, arm. See the [CpuArchitectureType](#cpuarchitecturetype) definition for all permissible values. Multiple architecture types can be specified, as the deployment profile may support multiple CPU architectures.",
+                    "items": {
+                        "$ref": "#/$defs/CpuArchitectureType"
+                    },
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                },
+                "cores": {
+                    "description": "The required amount of CPU cores the application must use to run in its full functionality. Specified as decimal units of CPU cores (e.g., `0.5` is half a core). This is defined by the application developer. After deployment of the application, the device MUST provide this number of CPU cores for the application.",
+                    "type": "number"
+                }
+            },
+            "required": [
+                "cores"
+            ],
+            "title": "CPU",
+            "type": "object"
+        },
+        "CapacityRequirements": {
+            "additionalProperties": false,
+            "description": "Minimum device capacity required by the deployment profile.",
+            "properties": {
+                "cpu": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/CPU"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "CPU element specifying the CPU requirements for the application.  See the [CPU](#cpu-attributes) section below."
+                },
+                "memory": {
+                    "description": "The minimum amount of memory required. The value is given in binary units (`Ki` = Kibibytes, `Mi` = Mebibytes, `Gi` = Gibibytes). This is defined by the application developer. After deployment of the application, the device MUST provide this amount of memory for the application.",
+                    "pattern": "^[0-9]+(Mi|Gi|Ki)$",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "storage": {
+                    "description": "The amount of storage required for the application to run. This encompasses the installed application and the data it needs to store. The value is given in binary units (`Ki` = Kibibytes, `Mi` = Mebibytes, `Gi` = Gibibytes, `Ti` Tebibytes, `Pi` = Pebibytes, `Ei` = Exbibytes). This is defined by the application developer. After deployment of the application, the device MUST provide this amount of storage for the application",
+                    "pattern": "^[0-9]+(Mi|Gi|Ki|Ti|Pi|Ei)$",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                }
+            },
+            "title": "CapacityRequirements",
+            "type": "object"
+        },
+        "Catalog": {
+            "additionalProperties": false,
+            "description": "Catalog metadata for displaying the application.",
+            "properties": {
+                "application": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/ApplicationMetadata"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Application element specifying the application specific metadata.  See the [Application Metadata](#applicationmetadata-attributes) section below."
+                },
+                "author": {
+                    "description": "Author element specifying metadata about the application's author.  See the [Author Metadata](#author-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Author"
+                    },
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                },
+                "organization": {
+                    "description": "Organization element specifying metadata about the organization/company providing the application.  See the [Organization Metadata](#organization-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Organization"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "organization"
+            ],
+            "title": "Catalog",
+            "type": "object"
+        },
+        "Component": {
+            "additionalProperties": false,
+            "description": "A class representing a component of a deployment profile.",
+            "properties": {
+                "name": {
+                    "description": "A unique name used to identify the component package. For helm installations the name will be used as the chart name. The name must be lower case letters and numbers and MAY contain dashes.  Uppercase letters, underscores and periods MUST NOT be used.",
+                    "type": "string"
+                },
+                "properties": {
+                    "$ref": "#/$defs/ComponentProperties",
+                    "description": "A dictionary element specifying the component packages's deployment details.  See the [Component Properties](#componentproperties-attributes) section below."
+                },
+                "x_placeholder_extensions": {
+                    "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "name",
+                "properties"
+            ],
+            "title": "Component",
+            "type": "object"
+        },
+        "ComponentProperties": {
+            "additionalProperties": false,
+            "description": "Typed component properties providing OCI coordinates and optional deployment behavior settings. Used by both Helm and Compose deployment types.",
+            "properties": {
+                "repository": {
+                    "description": "OCI repository URI for the component package (e.g., oci://registry.example.com/org/component-name). MUST be a valid OCI reference using the oci:// scheme.",
+                    "pattern": "^oci://.+",
+                    "type": "string"
+                },
+                "revision": {
+                    "description": "OCI tag identifying the component version within the repository (e.g., \"1.0.0\", \"2.3.1\", \"1.0.0-rc1\", \"1.0.0_build.123\"). MUST be a valid SemVer 2.0 string without a leading `v`. SemVer build metadata separator `+` MUST be stored as `_` because `+` is not a valid OCI tag character. Implementations comparing this value against a SemVer string MUST convert `_` back to `+` before comparison.",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:_([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+                    "type": "string"
+                },
+                "timeout": {
+                    "description": "Maximum time to wait for component installation to complete. Format is \"##m##s\" (e.g., \"5m0s\", \"8m30s\"). If installation does not complete before timeout, deployment fails.",
+                    "pattern": "^\\d+m\\d+s$",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "wait": {
+                    "description": "Whether to wait for component installation to complete before proceeding. For Helm: waits until the release is deployed. For Compose: waits until all containers reach running state. Default is true. Only applies when multiple components are provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "repository",
+                "revision"
+            ],
+            "title": "ComponentProperties",
+            "type": "object"
+        },
+        "ComposeComponent": {
+            "additionalProperties": false,
+            "description": "",
+            "properties": {
+                "name": {
+                    "description": "A unique name used to identify the component package. For helm installations the name will be used as the chart name. The name must be lower case letters and numbers and MAY contain dashes.  Uppercase letters, underscores and periods MUST NOT be used.",
+                    "type": "string"
+                },
+                "properties": {
+                    "$ref": "#/$defs/ComponentProperties",
+                    "description": "A dictionary element specifying the component packages's deployment details.  See the [Component Properties](#componentproperties-attributes) section below."
+                },
+                "x_placeholder_extensions": {
+                    "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "name",
+                "properties"
+            ],
+            "title": "ComposeComponent",
+            "type": "object"
+        },
+        "ComposeDeploymentProfile": {
+            "additionalProperties": false,
+            "description": "",
+            "properties": {
+                "components": {
+                    "description": "Component element indicating the components to deploy when installing the application.  See the [Component](#component-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/ComposeComponent"
+                    },
+                    "type": "array"
+                },
+                "description": {
+                    "description": "This human-readable description of a deployment profile allows for providing additional context about the deployment profile. E.g., the application developer can use this to describe the deployment profile's purpose, such as the intended use case. Additionally, the application developer can use this to provide further details about the resources, peripherals, and interfaces required to run the application.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "deviceConstraints": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/DeviceConstraints"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Device constraints specifying the minimum device capabilities and eligibility rules required for the application. See the [Device Constraints](#deviceconstraints-attributes) section below."
+                },
+                "id": {
+                    "description": "An identifier for the deployment profile, given by the application developer, used to uniquely identify this deployment profile from others within this application description's scope.",
+                    "type": "string"
+                },
+                "type": {
+                    "const": "compose",
+                    "description": "Defines the type of this deployment configuration for the application.  The allowed values are `helm`, to indicate the deployment profile's format is Helm version 3 or Version 4 using Chart APIVersion v2 (see [special exceptions below](#helm-exceptions)),  `compose` to indicate the deployment profile's format is a Compose file, and `custom` to indicate the deployment profile's format is custom and not defined in the Margo specification.  When installing the application on a device supporting the Kubernetes platform, all `helm` components,  and only `helm` components, will be provided to the device in same order they are listed in the application description file.  When installing the application on a device supporting Compose, all `compose` components,  and only `compose` components, will be provided to the device in the same order they are listed in the application description file.  The device will install the components in the same order they are listed in the application description file. When installing the application on a device supporting a matched custom deployment format, all `custom` components, and only `custom` components, will be provided to the device in the same order they are listed in the application description file.  Since custom deployment types are beyond the scope of the Margo specification, application and device suppliers should collaborate to understand how the application will be deployed. See the [custom runtimes and deployments](#custom-runtimes-and-deployments) section below for more details.",
+                    "pattern": "^(helm|compose|custom)$",
+                    "type": "string"
+                },
+                "x_placeholder_extensions": {
+                    "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "type",
+                "components",
+                "id"
+            ],
+            "title": "ComposeDeploymentProfile",
+            "type": "object"
+        },
+        "Configuration": {
+            "additionalProperties": false,
+            "description": "Configuration layout and validation rules.",
+            "properties": {
+                "schema": {
+                    "description": "Schema is used to provide details about how to validate each parameter value.  At a minimum, the parameter value must be validated to match the schema's data type.  The schema indicates additional rules the provided value must satisfy to be considered valid input.  See the [Schema](#schema-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Schema"
+                    },
+                    "type": "array"
+                },
+                "sections": {
+                    "description": "Sections are used to group related parameters together,  so it is possible to present a user interface with a logical grouping of the parameters in each section.  See the [Section](#section-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Section"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "sections",
+                "schema"
+            ],
+            "title": "Configuration",
+            "type": "object"
+        },
+        "CpuArchitectureType": {
+            "description": "",
+            "enum": [
+                "amd64",
+                "arm64",
+                "arm",
+                "riscv64",
+                "other"
+            ],
+            "title": "CpuArchitectureType",
+            "type": "string"
+        },
+        "DeploymentProfile": {
+            "additionalProperties": false,
+            "description": "Represents a deployment configuration for the application.",
+            "properties": {
+                "components": {
+                    "description": "Component element indicating the components to deploy when installing the application.  See the [Component](#component-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Component"
+                    },
+                    "type": "array"
+                },
+                "description": {
+                    "description": "This human-readable description of a deployment profile allows for providing additional context about the deployment profile. E.g., the application developer can use this to describe the deployment profile's purpose, such as the intended use case. Additionally, the application developer can use this to provide further details about the resources, peripherals, and interfaces required to run the application.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "deviceConstraints": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/DeviceConstraints"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Device constraints specifying the minimum device capabilities and eligibility rules required for the application. See the [Device Constraints](#deviceconstraints-attributes) section below."
+                },
+                "id": {
+                    "description": "An identifier for the deployment profile, given by the application developer, used to uniquely identify this deployment profile from others within this application description's scope.",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "Defines the type of this deployment configuration for the application.  The allowed values are `helm`, to indicate the deployment profile's format is Helm version 3 or Version 4 using Chart APIVersion v2 (see [special exceptions below](#helm-exceptions)),  `compose` to indicate the deployment profile's format is a Compose file, and `custom` to indicate the deployment profile's format is custom and not defined in the Margo specification.  When installing the application on a device supporting the Kubernetes platform, all `helm` components,  and only `helm` components, will be provided to the device in same order they are listed in the application description file.  When installing the application on a device supporting Compose, all `compose` components,  and only `compose` components, will be provided to the device in the same order they are listed in the application description file.  The device will install the components in the same order they are listed in the application description file. When installing the application on a device supporting a matched custom deployment format, all `custom` components, and only `custom` components, will be provided to the device in the same order they are listed in the application description file.  Since custom deployment types are beyond the scope of the Margo specification, application and device suppliers should collaborate to understand how the application will be deployed. See the [custom runtimes and deployments](#custom-runtimes-and-deployments) section below for more details.",
+                    "pattern": "^(helm|compose|custom)$",
+                    "type": "string"
+                },
+                "x_placeholder_extensions": {
+                    "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "type",
+                "components",
+                "id"
+            ],
+            "title": "DeploymentProfile",
+            "type": "object"
+        },
+        "DeviceConstraints": {
+            "additionalProperties": false,
+            "description": "Device constraints specifying the minimum device capabilities and eligibility rules required for the application.",
+            "properties": {
+                "capacityRequirements": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/CapacityRequirements"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Minimum CPU, memory, and storage requirements for the deployment profile. See the [Capacity Requirements](#capacityrequirements-attributes) section below."
+                },
+                "eligibilityRules": {
+                    "description": "Optional rules used to match the application with device properties and supplier-defined labels reported in the device capabilities. See the [Eligibility Rules](#eligibilityrule-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/EligibilityRule"
+                    },
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "title": "DeviceConstraints",
+            "type": "object"
+        },
+        "EligibilityRule": {
+            "additionalProperties": false,
+            "description": "A rule matching properties and supplier-defined labels reported through the device capabilities.",
+            "properties": {
+                "labelSelector": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/Selector"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Selector evaluated against the labels reported in the [device capabilities labels](../margo-management-interface/device-capabilities#request-body-attributes) dictionary."
+                },
+                "propertySelector": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/Selector"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Selector evaluated against the properties reported in the [device capabilities properties](../margo-management-interface/device-capabilities#properties-attributes) object."
+                }
+            },
+            "title": "EligibilityRule",
+            "type": "object"
+        },
+        "HelmComponent": {
+            "additionalProperties": false,
+            "description": "",
+            "properties": {
+                "name": {
+                    "description": "A unique name used to identify the component package. For helm installations the name will be used as the chart name. The name must be lower case letters and numbers and MAY contain dashes.  Uppercase letters, underscores and periods MUST NOT be used.",
+                    "type": "string"
+                },
+                "properties": {
+                    "$ref": "#/$defs/ComponentProperties",
+                    "description": "A dictionary element specifying the component packages's deployment details.  See the [Component Properties](#componentproperties-attributes) section below."
+                },
+                "x_placeholder_extensions": {
+                    "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "name",
+                "properties"
+            ],
+            "title": "HelmComponent",
+            "type": "object"
+        },
+        "HelmDeploymentProfile": {
+            "additionalProperties": false,
+            "description": "",
+            "properties": {
+                "components": {
+                    "description": "Component element indicating the components to deploy when installing the application.  See the [Component](#component-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/HelmComponent"
+                    },
+                    "type": "array"
+                },
+                "description": {
+                    "description": "This human-readable description of a deployment profile allows for providing additional context about the deployment profile. E.g., the application developer can use this to describe the deployment profile's purpose, such as the intended use case. Additionally, the application developer can use this to provide further details about the resources, peripherals, and interfaces required to run the application.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "deviceConstraints": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/DeviceConstraints"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Device constraints specifying the minimum device capabilities and eligibility rules required for the application. See the [Device Constraints](#deviceconstraints-attributes) section below."
+                },
+                "id": {
+                    "description": "An identifier for the deployment profile, given by the application developer, used to uniquely identify this deployment profile from others within this application description's scope.",
+                    "type": "string"
+                },
+                "type": {
+                    "const": "helm",
+                    "description": "Defines the type of this deployment configuration for the application.  The allowed values are `helm`, to indicate the deployment profile's format is Helm version 3 or Version 4 using Chart APIVersion v2 (see [special exceptions below](#helm-exceptions)),  `compose` to indicate the deployment profile's format is a Compose file, and `custom` to indicate the deployment profile's format is custom and not defined in the Margo specification.  When installing the application on a device supporting the Kubernetes platform, all `helm` components,  and only `helm` components, will be provided to the device in same order they are listed in the application description file.  When installing the application on a device supporting Compose, all `compose` components,  and only `compose` components, will be provided to the device in the same order they are listed in the application description file.  The device will install the components in the same order they are listed in the application description file. When installing the application on a device supporting a matched custom deployment format, all `custom` components, and only `custom` components, will be provided to the device in the same order they are listed in the application description file.  Since custom deployment types are beyond the scope of the Margo specification, application and device suppliers should collaborate to understand how the application will be deployed. See the [custom runtimes and deployments](#custom-runtimes-and-deployments) section below for more details.",
+                    "pattern": "^(helm|compose|custom)$",
+                    "type": "string"
+                },
+                "x_placeholder_extensions": {
+                    "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "type",
+                "components",
+                "id"
+            ],
+            "title": "HelmDeploymentProfile",
+            "type": "object"
+        },
+        "MatchExpression": {
+            "additionalProperties": false,
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {
+                            "operator": {
+                                "const": "In"
+                            }
+                        },
+                        "required": [
+                            "operator"
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "values": {
+                                "items": {},
+                                "type": "array"
+                            }
+                        },
+                        "required": [
+                            "values"
+                        ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "operator": {
+                                "const": "NotIn"
+                            }
+                        },
+                        "required": [
+                            "operator"
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "values": {
+                                "items": {},
+                                "type": "array"
+                            }
+                        },
+                        "required": [
+                            "values"
+                        ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "operator": {
+                                "const": "Gt"
+                            }
+                        },
+                        "required": [
+                            "operator"
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "values": {
+                                "items": {},
+                                "type": "array"
+                            }
+                        },
+                        "required": [
+                            "values"
+                        ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "operator": {
+                                "const": "Lt"
+                            }
+                        },
+                        "required": [
+                            "operator"
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "values": {
+                                "items": {},
+                                "type": "array"
+                            }
+                        },
+                        "required": [
+                            "values"
+                        ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "operator": {
+                                "const": "ContainsAll"
+                            }
+                        },
+                        "required": [
+                            "operator"
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "itemSelector": {}
+                        },
+                        "required": [
+                            "itemSelector"
+                        ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "operator": {
+                                "const": "ContainsAny"
+                            }
+                        },
+                        "required": [
+                            "operator"
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "itemSelector": {}
+                        },
+                        "required": [
+                            "itemSelector"
+                        ]
+                    }
+                }
+            ],
+            "description": "An expression used to match a device's reported capabilities properties or labels.",
+            "properties": {
+                "itemSelector": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/Selector"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Selector evaluated against array elements. Required for the `ContainsAll` or `ContainsAny` operator."
+                },
+                "key": {
+                    "description": "The key used to match the device's reported capabilities. For property selectors, this MUST be a JSON Pointer, as defined by [RFC 6901](https://datatracker.ietf.org/doc/html/rfc6901), mapping to a specific property. For label selectors, this MUST be the exact label key.",
+                    "type": "string"
+                },
+                "operator": {
+                    "$ref": "#/$defs/SelectorOperator",
+                    "description": "Operator used to evaluate the referenced value. See [SelectorOperator](#selectoroperator) for all permissible values."
+                },
+                "values": {
+                    "description": "Values used by the operator when required for matching expressions. Required for the `In`, `NotIn`, `Gt`, or `Lt` operator.",
+                    "items": {},
+                    "type": [
+                        "array",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "key",
+                "operator"
+            ],
+            "title": "MatchExpression",
+            "type": "object"
+        },
+        "Metadata": {
+            "additionalProperties": false,
+            "description": "Metadata about the application.",
+            "properties": {
+                "catalog": {
+                    "$ref": "#/$defs/Catalog",
+                    "description": "Catalog element specifying the application's metadata for enabling its discovery. See the [Catalog](#catalog-attributes) section below."
+                },
+                "description": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "name": {
+                    "description": "The application's official name.  This name is for display purposes only and can container whitespace and special characters.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "The application's version.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name",
+                "version",
+                "catalog"
+            ],
+            "title": "Metadata",
+            "type": "object"
+        },
+        "NumericDoubleValidationSchema": {
+            "additionalProperties": false,
+            "description": "Extends schema to define a double-specific set of validation rules that can be used.",
+            "properties": {
+                "allowEmpty": {
+                    "description": "If true, an empty value is permitted. Default is false if not provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "dataType": {
+                    "description": "Indicates the expected data type for the user provided value.  Accepted values are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean].  At a minimum, the provided parameter value MUST match the schema's data type if no other validation rules are provided.",
+                    "type": "string"
+                },
+                "maxPrecision": {
+                    "description": "If set, indicates the maximum level of precision the value must have to be considered valid.",
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "maxValue": {
+                    "description": "If set, indicates the maximum value to be considered valid.",
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "minPrecision": {
+                    "description": "If set, indicates the minimum level of precision the value must have to be considered valid.",
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "minValue": {
+                    "description": "If set, indicates the minimum value to be considered valid.",
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "name": {
+                    "description": "The name of the schema rule. This used in the [setting](#setting-attributes) to link the setting to the schema rule.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name",
+                "dataType"
+            ],
+            "title": "NumericDoubleValidationSchema",
+            "type": "object"
+        },
+        "NumericIntegerValidationSchema": {
+            "additionalProperties": false,
+            "description": "Extends schema to define a integer-specific set of validation rules that can be used.",
+            "properties": {
+                "allowEmpty": {
+                    "description": "If true, an empty value is permitted. Default is false if not provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "dataType": {
+                    "description": "Indicates the expected data type for the user provided value.  Accepted values are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean].  At a minimum, the provided parameter value MUST match the schema's data type if no other validation rules are provided.",
+                    "type": "string"
+                },
+                "maxValue": {
+                    "description": "If set, indicates the maximum allowed integer value the value must have to be considered valid.",
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "minValue": {
+                    "description": "If set, indicates the minimum allowed integer value the value must have to be considered valid.",
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "name": {
+                    "description": "The name of the schema rule. This used in the [setting](#setting-attributes) to link the setting to the schema rule.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name",
+                "dataType"
+            ],
+            "title": "NumericIntegerValidationSchema",
+            "type": "object"
+        },
+        "Organization": {
+            "additionalProperties": false,
+            "description": "Information about the providing organization.",
+            "properties": {
+                "name": {
+                    "description": "Organization responsible for the application's development and distribution.",
+                    "type": "string"
+                },
+                "site": {
+                    "description": "Link to the organization's website.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "title": "Organization",
+            "type": "object"
+        },
+        "Parameter": {
+            "additionalProperties": false,
+            "description": "Defines a configurable parameter for the application. This object is used to build a property bag, i.e. `parameters`, defined in application description. See `parameters` attribute under [ApplicationDescription Attributes](#top-level-attributes) section for better understanding.",
+            "properties": {
+                "name": {
+                    "description": "Name of the parameter.",
+                    "type": "string"
+                },
+                "targets": {
+                    "description": "Used to indicate which component the value should be applied to when installing, or updating, the application.  See the [Target](#target-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Target"
+                    },
+                    "type": "array"
+                },
+                "value": {
+                    "anyOf": [
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "type": "integer"
+                        },
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "The parameter's default value.  Accepted data types are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean]."
+                }
+            },
+            "required": [
+                "name",
+                "targets"
+            ],
+            "title": "Parameter",
+            "type": "object"
+        },
+        "Parameter__identifier_optional": {
+            "additionalProperties": false,
+            "description": "Defines a configurable parameter for the application. This object is used to build a property bag, i.e. `parameters`, defined in application description. See `parameters` attribute under [ApplicationDescription Attributes](#top-level-attributes) section for better understanding.",
+            "properties": {
+                "name": {
+                    "description": "Name of the parameter.",
+                    "type": "string"
+                },
+                "targets": {
+                    "description": "Used to indicate which component the value should be applied to when installing, or updating, the application.  See the [Target](#target-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Target"
+                    },
+                    "type": "array"
+                },
+                "value": {
+                    "anyOf": [
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "type": "integer"
+                        },
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "The parameter's default value.  Accepted data types are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean]."
+                }
+            },
+            "required": [
+                "targets"
+            ],
+            "title": "Parameter",
+            "type": "object"
+        },
+        "Schema": {
+            "additionalProperties": false,
+            "description": "Defines data type and rules for validating user provided parameter values. Subclasses (see below) define for each data type their own set of validation rules that can be used. The value MUST be validated against all rules defined in the schema.",
+            "properties": {
+                "dataType": {
+                    "description": "Indicates the expected data type for the user provided value.  Accepted values are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean].  At a minimum, the provided parameter value MUST match the schema's data type if no other validation rules are provided.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "The name of the schema rule. This used in the [setting](#setting-attributes) to link the setting to the schema rule.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name",
+                "dataType"
+            ],
+            "title": "Schema",
+            "type": "object"
+        },
+        "Section": {
+            "additionalProperties": false,
+            "description": "Named sections within the configuration layout.",
+            "properties": {
+                "name": {
+                    "description": "The name of the section. This may be used in the user interface to show the grouping of the associated parameters within the section.",
+                    "type": "string"
+                },
+                "settings": {
+                    "description": "Settings are used to provide instructions to the workload orchestration software vendor for displaying parameters to the user.  A user MUST be able to provide values for all settings.  See the [Setting](#setting-attributes) section below.",
+                    "items": {
+                        "$ref": "#/$defs/Setting"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "name",
+                "settings"
+            ],
+            "title": "Section",
+            "type": "object"
+        },
+        "SelectValidationSchema": {
+            "additionalProperties": false,
+            "description": "Extends schema to define a specific set of validation rules that can be used for select options.",
+            "properties": {
+                "allowEmpty": {
+                    "description": "If true, an empty value is permitted. Default is false if not provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "dataType": {
+                    "description": "Indicates the expected data type for the user provided value.  Accepted values are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean].  At a minimum, the provided parameter value MUST match the schema's data type if no other validation rules are provided.",
+                    "type": "string"
+                },
+                "multiselect": {
+                    "description": "If true, indicates multiple values can be selected. If multiple values can be selected the resulting value is an array of the selected values. The default is false if not provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "name": {
+                    "description": "The name of the schema rule. This used in the [setting](#setting-attributes) to link the setting to the schema rule.",
+                    "type": "string"
+                },
+                "options": {
+                    "description": "This provides the list of acceptable options the user can select from. The data type for each option must match the parameter setting\u2019s data type.",
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "options",
+                "name",
+                "dataType"
+            ],
+            "title": "SelectValidationSchema",
+            "type": "object"
+        },
+        "Selector": {
+            "additionalProperties": false,
+            "description": "A set of match expressions evaluated with AND semantics.",
+            "properties": {
+                "matchExpressions": {
+                    "description": "Match expressions evaluated against the device's reported capabilities.",
+                    "items": {
+                        "$ref": "#/$defs/MatchExpression"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "matchExpressions"
+            ],
+            "title": "Selector",
+            "type": "object"
+        },
+        "SelectorOperator": {
+            "description": "",
+            "enum": [
+                "In",
+                "NotIn",
+                "Exists",
+                "DoesNotExist",
+                "Gt",
+                "Lt",
+                "ContainsAll",
+                "ContainsAny"
+            ],
+            "title": "SelectorOperator",
+            "type": "string"
+        },
+        "Setting": {
+            "additionalProperties": false,
+            "description": "Individual configuration settings.",
+            "properties": {
+                "description": {
+                    "description": "The parameters's short description to provide additional context to the user in the user interface about what the parameter is for.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "immutable": {
+                    "description": "If true, indicates the parameter value MUST not be changed once it has been set and used to install the application. Default is false if not provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "name": {
+                    "description": "The parameter's display name to show in the user interface.",
+                    "type": "string"
+                },
+                "parameter": {
+                    "description": "The name of the [parameter](#parameter-attributes) the setting is associated with.",
+                    "type": "string"
+                },
+                "schema": {
+                    "description": "The name of the schema definition to use to validate the parameter's value. See the [Schema](#schema-attributes) section below.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "parameter",
+                "name",
+                "schema"
+            ],
+            "title": "Setting",
+            "type": "object"
+        },
+        "Target": {
+            "additionalProperties": false,
+            "description": "Specifies where the parameter applies in the deployment.",
+            "properties": {
+                "components": {
+                    "description": "Indicates which deployment profile [component](#component-attributes the parameter target applies to.  The component name specified here MUST match a component name in the [deployment profiles](#deploymentprofile-attributes) section.",
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "pointer": {
+                    "description": "The name of the parameter in the deployment configuration.  For Helm deployments, this is the dot notation for the matching element in the `values.yaml` file. This follows the same naming convention you would use with the `--set` command line argument with the `helm install` command.  For compose deployments, this is the name of the environment variable to set.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "pointer",
+                "components"
+            ],
+            "title": "Target",
+            "type": "object"
+        },
+        "TextValidationSchema": {
+            "additionalProperties": false,
+            "description": "Extends schema to define a string/text-specific set of validation rules that can be used.",
+            "properties": {
+                "allowEmpty": {
+                    "description": "If true, an empty value is permitted. Default is false if not provided.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "dataType": {
+                    "description": "Indicates the expected data type for the user provided value.  Accepted values are string, integer, double, boolean, array[string], array[integer], array[double], array[boolean].  At a minimum, the provided parameter value MUST match the schema's data type if no other validation rules are provided.",
+                    "type": "string"
+                },
+                "maxLength": {
+                    "description": "If set, indicates the maximum number of characters the value must have to be considered valid.",
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "minLength": {
+                    "description": "If set, indicates the minimum number of characters the value must have to be considered valid.",
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "name": {
+                    "description": "The name of the schema rule. This used in the [setting](#setting-attributes) to link the setting to the schema rule.",
+                    "type": "string"
+                },
+                "regexMatch": {
+                    "description": "If set, indicates a regular expression to use to validate the value.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "name",
+                "dataType"
+            ],
+            "title": "TextValidationSchema",
+            "type": "object"
+        }
+    },
+    "$id": "http://specification.margo.org/application-schema",
+    "$schema": "https://json-schema.org/draft/2019-09/schema",
+    "additionalProperties": true,
+    "description": "Root class for an application description.",
+    "metamodel_version": "1.11.0",
+    "properties": {
+        "apiVersion": {
+            "description": "Identifier of the version of the API the object definition follows. Must be \"v1\".",
+            "type": "string"
+        },
+        "configuration": {
+            "anyOf": [
+                {
+                    "$ref": "#/$defs/Configuration"
+                },
+                {
+                    "type": "null"
+                }
+            ],
+            "description": "Configuration element specifying how parameters should be displayed to the user for setting the value  as well as the rules to use to validate the user's input.  See the [Configuration](#configuration-attributes) section below."
+        },
+        "deploymentProfiles": {
+            "description": "Deployment profiles element specifying the types of deployments the application supports.  See the [Deployment](#deploymentprofile-attributes) section below.",
+            "items": {
+                "$ref": "#/$defs/DeploymentProfile"
+            },
+            "type": "array"
+        },
+        "id": {
+            "description": "An identifier for the application. The id is used to help create unique identifiers where required,  such as namespaces. The id must be lower case letters and numbers and MAY contain dashes.  Uppercase letters, underscores and periods MUST NOT be used. The id MUST NOT be more than 200 characters.",
+            "pattern": "^[a-z0-9-]{1,200}$",
+            "type": "string"
+        },
+        "metadata": {
+            "$ref": "#/$defs/Metadata",
+            "description": "Metadata element specifying characteristics about the application deployment. See the [Metadata Attributes](#metadata-attributes) section below."
+        },
+        "parameters": {
+            "additionalProperties": {
+                "anyOf": [
+                    {
+                        "$ref": "#/$defs/Parameter__identifier_optional"
+                    },
+                    {
+                        "description": "Used to indicate which component the value should be applied to when installing, or updating, the application.  See the [Target](#target-attributes) section below.",
+                        "items": {
+                            "$ref": "#/$defs/Target"
+                        },
+                        "type": "array"
+                    }
+                ]
+            },
+            "description": "Parameters element specifying the configurable parameters to use when installing, or updating, the application. Defined as a map where each key is the user-defined parameter name (e.g. `mysqlDatabase:`, `greeting:`, `idpName:`, `myAppEndpoint:`), and value would be Parameter object, i.e. map[string]Parameter. See the [Parameter](#parameter-attributes) section below.",
+            "type": [
+                "object",
+                "null"
+            ]
+        },
+        "x_placeholder_extensions": {
+            "description": "Allows addition of arbitrary object (mapping) whose contents  suppliers use to provide vendor-specific functionality beyond what is defined in the Margo specification. See the [Specification Extensions](#specification-extensions) section below for more details.",
+            "items": {},
+            "type": [
+                "array",
+                "null"
+            ]
+        }
+    },
+    "required": [
+        "apiVersion",
+        "id",
+        "metadata",
+        "deploymentProfiles"
+    ],
+    "title": "ApplicationDescription",
+    "type": "object",
+    "version": "1.0"
+}
+

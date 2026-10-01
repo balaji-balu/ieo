@@ -1,5 +1,6 @@
-// Package platform holds the seams between IEO code and its host: time today; the OCI registry
-// and container runtime join in the slices that first use them (roadmap B and D).
+// Package platform holds the seams between IEO code and its host: time today; the container
+// runtime joins in roadmap slice D. The OCI registry seam is defined by its consumer
+// (catalog.OpenRepository, G-E4).
 package platform
 
 import "time"
