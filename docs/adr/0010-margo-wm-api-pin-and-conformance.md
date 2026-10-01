@@ -56,8 +56,9 @@ about where that file lives or how a pin changes.
 - IEO stays on the newest Margo shape, and there is one CO ↔ LO surface to test.
 - eos-platform code under `/api/v1/clients/…` cannot be ported as is; only its ideas (diff table,
   upgrade record) carry over.
-- Follow-up `SPEC.md` change, once this is accepted: §17.1 names the vendored file location and a
-  new bullet requires the item 4 contents for a pin change. Roadmap slice A vendors the file.
+- `SPEC.md` names the vendored file location in its header, and §17.1 states the item 4 rule as
+  prose rather than a bullet, so the conformance tool does not expect a `TestSpec_` test for it.
+  `docs/margo-pins.md` records the `f209a7f` baseline. Roadmap slice A vendors the file.
 - Margo is still pre-draft, so pin changes will be frequent; item 4 makes each one reviewable in
   about the 15 minutes a roadmap PR is meant to take.
 - Watch: if hand-written types and the vendored file drift often, revisit generation (option C).
