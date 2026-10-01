@@ -26,7 +26,6 @@ of truth.
 5. **Traceability.** Cite § numbers in code comments (`// SPEC §8.5`), test names, commits and PRs.
 6. **Follow `docs/coding-guidelines.md`.** Cite rule IDs (G-A1…) when explaining a design choice.
 7. **Verify locally before every push** (commands below). Never push red.
-
 8. **Build new, don't patch old (ADR 0002).** New code never imports the Git-based packages; delete
    old code in the PR that replaces it.
 9. **Windows-friendly (ADR 0009).** The maintainer tests on Windows 11: no shell scripts (helpers are

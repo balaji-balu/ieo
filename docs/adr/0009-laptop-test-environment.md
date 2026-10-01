@@ -1,6 +1,6 @@
 # 0009. Laptop test environment (Windows 11, simulated hosts)
 
-Status: Proposed · Date: 2026-09-30 · Spec: §17.8
+Status: Accepted · Date: 2026-09-30 · Spec: §17.8
 
 ## Context
 All Phase 1 testing runs on the maintainer's Windows 11 laptop: 1 CO, 1 LO and 2 ENs (§17.8).

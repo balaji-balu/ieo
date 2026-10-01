@@ -20,7 +20,8 @@ behavior.
 
 `[Margo]` marks a rule this document repeats from the Margo specification. Where the two disagree,
 Margo is authoritative and this document is a bug. `[IEO]` marks a rule Margo leaves open; for those
-rules this document is authoritative.
+rules this document is authoritative. `[IEO, interim]` marks an `[IEO]` rule that holds only until
+a named Appendix B step replaces it.
 
 Relationship to other documents:
 
@@ -1027,6 +1028,19 @@ host's collector `[Margo]`.
 - Run EN with the least privilege the container runtime allows (e.g. rootless Podman).
 - Restrict the operator API to a management network.
 - Rotate the phase 1 operator token manually until OAuth2 is added.
+
+### 15.6 Interim Authentication `[IEO, interim]`
+
+These rules apply from the first slice that adds each interface until Appendix B step 4 (mutual TLS
+and scoped NATS credentials) replaces them (ADR 0005):
+
+- CO ↔ LO: each LO MUST present a per-site bearer token issued at site registration. The CO MUST map
+  the token to its site, reject unknown tokens, and serve only that site's resources.
+- LO ↔ EN: ENs MUST authenticate to NATS with per-site username and password. Until scoped
+  credentials land, these credentials are shared by the hosts of one site.
+- `edgectl` → CO: requests MUST carry the static operator token from configuration.
+- Tokens and passwords come from configuration or the environment and follow §15.4; they MUST NOT
+  appear in code or test fixtures.
 
 ## 16. Reference Algorithms (Language-Agnostic)
 

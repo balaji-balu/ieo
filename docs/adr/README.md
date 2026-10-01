@@ -14,7 +14,7 @@ one, write a new ADR that supersedes it.
 | [0006](0006-data-plane-out-of-phase-1.md) | Data plane moves out of Phase 1 docs | Accepted |
 | [0007](0007-lighter-loop-for-specified-work.md) | Lighter SDLC loop for already-specified work | Accepted |
 | [0008](0008-rename-era-to-en.md) | Rename ERA to EN in code | Accepted |
-| [0009](0009-laptop-test-environment.md) | Laptop test environment (Windows 11, simulated hosts) | Proposed |
+| [0009](0009-laptop-test-environment.md) | Laptop test environment (Windows 11, simulated hosts) | Accepted |
 
 Older design notes in `docs/adr/era/` are superseded by 0002 and 0003 and kept for history.
 

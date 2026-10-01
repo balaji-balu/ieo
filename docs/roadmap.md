@@ -59,7 +59,7 @@ After E, delete the Git-based code paths still left (ADR 0002).
 | L | Recovery: LO restart with store intact and deleted; EN restart; container crash | §14, §17.6 restart, §17.8 bullets 3–6 |
 | M | Observability: §13.1 log fields, §13.2 metrics, OpenTelemetry collector on hosts | §9.3, §13, §17.7 metrics |
 
-## Milestone 4 — Security (Appendix B step 5)
+## Milestone 4 — Security (Appendix B step 4)
 
 | PR | Slice | Spec |
 | --- | --- | --- |
