@@ -14,6 +14,11 @@ ADR 0010). The pinned OpenAPI file lives in `api/margo/<commit>/`.
 - Known upstream defect: `UnsignedAppStateManifest.required` names `bundle.mediaType`,
   `bundle.digest` and `bundle.url`, which no valid manifest can satisfy. The §17.1 tests drop those
   entries in memory; see `api/margo/f209a7f/README.md`.
+- Known upstream inconsistency (roadmap slice B3a): `margo-management-interface/api-requirements-and-security.md`
+  says a retired client gets the `wfm-client-relationship-retired` problem type, but
+  `problem-types.md` has no such entry and requires responses to use its registry; the same page's
+  example sends `#not-authorized` with title `Client Relationship Retired`. IEO follows the registry
+  and the example (SPEC §11.1).
 - Added files, same commit (roadmap slice B1): `application-description.linkml.yaml`, copied from
   `src/specification/applications/`, and `application-description.schema.json`, generated from it
   with `linkml` 1.11.1. The CO validates Application Descriptions against the generated schema

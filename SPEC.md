@@ -588,7 +588,9 @@ backoff and security handling differ.
 4. `AbortedDigestMismatch` — any fetched artifact failed digest verification. Security event.
 5. `Unreachable` — transport error, or `5xx` without `Retry-After`. Backoff.
 6. `Throttled` — `429`, or any response carrying `Retry-After`. Wait as instructed.
-7. `Retired` — `403` with problem type `wfm-client-relationship-retired`. Stop polling.
+7. `Retired` — `403` with problem type `#not-authorized` on `GET /api/v1/deployments`: the CO
+   refuses this client by local policy, of which retirement is the case Margo names (§11.1). Margo
+   clients key on the type, never the title. Stop polling.
 8. `SkippedWindow` — outside polling hours or inside a planned downtime window.
 
 ### 7.5 Transition Triggers (LO)
@@ -893,11 +895,25 @@ CO obligations:
 
 - Identify the caller **only** from its client certificate's SPIFFE ID, never from the path or
   body. Expose only that caller's resources.
-- Return `403` with problem type `wfm-client-relationship-retired` to a retired site.
+- Return `403` to a retired site, with problem type
+  `https://docs.margo.org/specification/problem-types#not-authorized` and title `Client
+  Relationship Retired`. Margo's prose names this type `wfm-client-relationship-retired`, but its
+  problem-type registry, which responses MUST use, has only `#not-authorized` (see
+  `docs/margo-pins.md`).
+- Serve a deployment YAML only if its digest is one that deployment had in a manifest of the
+  caller's site, and a bundle only if a manifest of the caller's site named it. Everything else,
+  including another site's content and a malformed ID or digest, gets `404` with problem type
+  `#deployment-not-found` or `#invalid-bundle`, so a caller can't learn what other sites hold.
+  Earlier digests stay available, so an LO that fetched an older manifest can finish its sync.
+- Answer `If-None-Match` matching the current ETag (weak comparison, `*` included) with `304` on
+  `GET /api/v1/deployments` and `GET /api/v1/bundles/{digest}`.
+- Answer `GET /api/v1/deployments` with `406` and problem type `#server-cannot-generate-response`
+  when `Accept` admits neither `application/vnd.margo.manifest.v1+json` nor a matching wildcard.
 - Serve deployment YAML and bundles byte-for-byte identical to their digests, with
   `Cache-Control: private, max-age=31536000, immutable`.
 - Serve the manifest with `Cache-Control: private` only.
-- Return errors as RFC 9457 `application/problem+json` with Margo problem types.
+- Return errors as RFC 9457 `application/problem+json` with Margo problem types; a condition with
+  no Margo type uses `about:blank` (Margo problem-type registry).
 - Include `bundle: null` when the site has no deployments.
 
 ### 11.2 LO ↔ EN: Site Messages `[IEO]`
@@ -1118,8 +1134,13 @@ host's collector `[Margo]`.
 These rules apply from the first slice that adds each interface until Appendix B step 4 (mutual TLS
 and scoped NATS credentials) replaces them (ADR 0005):
 
-- CO ↔ LO: each LO MUST present a per-site bearer token issued at site registration. The CO MUST map
-  the token to its site, reject unknown tokens, and serve only that site's resources.
+- CO ↔ LO: each LO MUST present a per-site bearer token issued at site registration
+  (`Authorization: Bearer <token>`). The CO MUST map the token to its site, reject unknown tokens,
+  and serve only that site's resources.
+  - The CO generates the token from 256 random bits, returns it once, and stores only its SHA-256.
+    Issuing a new token for a site replaces the old one.
+  - A missing or unknown token gets `401` with problem type `about:blank` and
+    `WWW-Authenticate: Bearer`; the LO treats it like `Unreachable` (§7.4).
 - LO ↔ EN: ENs MUST authenticate to NATS with per-site username and password. Until scoped
   credentials land, these credentials are shared by the hosts of one site.
 - `edgectl` → CO: requests MUST carry the static operator token from configuration.
@@ -1374,7 +1395,7 @@ endpoints (§11.3 holds IEO-specific operations).
 - Deployment YAML and bundles are served byte-identical to their digests with immutable cache
   headers; the manifest has `Cache-Control: private`.
 - A caller sees only its own site's resources; the path cannot be used to read another site.
-- A retired site gets `403 wfm-client-relationship-retired`.
+- A retired site gets `403` with problem type `#not-authorized` on every endpoint.
 - A host capability report before the gateway report returns `404 gateway-not-found`.
 - Vendor extensions are copied byte-for-byte; `deviceConstraints` are copied unmodified.
 - A deleted deployment reported `removed` is marked removed; status history keeps every report.

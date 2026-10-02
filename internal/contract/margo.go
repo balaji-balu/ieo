@@ -8,8 +8,20 @@ import (
 
 // Media types of the Margo Workload Management API bodies (SPEC §11.1).
 const (
-	ManifestMediaType = "application/vnd.margo.manifest.v1+json"
-	BundleMediaType   = "application/vnd.margo.bundle.v1+tar+gzip"
+	ManifestMediaType   = "application/vnd.margo.manifest.v1+json"
+	BundleMediaType     = "application/vnd.margo.bundle.v1+tar+gzip"
+	DeploymentMediaType = "application/yaml"
+	ProblemMediaType    = "application/problem+json"
+)
+
+// Problem types (SPEC §11.1): the Margo problem-type registry, and about:blank for a condition it
+// has no type for.
+const (
+	ProblemNotAuthorized      = "https://docs.margo.org/specification/problem-types#not-authorized"
+	ProblemDeploymentNotFound = "https://docs.margo.org/specification/problem-types#deployment-not-found"
+	ProblemInvalidBundle      = "https://docs.margo.org/specification/problem-types#invalid-bundle"
+	ProblemCannotGenerate     = "https://docs.margo.org/specification/problem-types#server-cannot-generate-response"
+	ProblemAboutBlank         = "about:blank"
 )
 
 // ManifestVersion orders the State Manifests of one site: it starts at 1 and strictly increases on

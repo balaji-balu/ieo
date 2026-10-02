@@ -126,7 +126,7 @@ Per the Margo Identity and Authorization Framework:
 - The CO holds an X.509-SVID with SPIFFE ID `spiffe://<trust-domain>/margo/wfm/<wfm-id>`.
 - Each LO holds an X.509-SVID with SPIFFE ID `spiffe://<trust-domain>/margo/wfm/<wfm-id>/client/<site-id>`.
 - Every Margo API call uses mutual TLS (TLS 1.3 by default). The CO identifies the caller **only** from the SVID, never from the path or body, and only exposes that caller's own resources.
-- The CO keeps an accepted-client policy; a site that is retired gets `403` with the `wfm-client-relationship-retired` problem type.
+- The CO keeps an accepted-client policy; a site that is retired gets `403` with the Margo `#not-authorized` problem type, titled "Client Relationship Retired". Until mTLS (Appendix B step 4) the caller is identified by a per-site bearer token whose SHA-256 the CO keeps (§15.6).
 - **[IEO]** Enrollment is operator-driven: `edgectl site add` registers the site and issues the LO's SVID from a CA managed by the CO deployment. Automated renewal is future work (Margo has not specified it yet).
 
 ### 4.3 Site-internal identity (LO ↔ EN) [IEO]
@@ -243,7 +243,7 @@ On **Remove**, the EN brings down the deployment's Compose projects, reporting `
 
 - **Deployment removed** by the operator → absent from the next manifest → LO sends Remove to the host → `removing` → `removed` reported → the CO marks the deployment removed.
 - **Host decommissioned** → the LO sends `DELETE` capabilities for it. Autonomous deployments placed there are re-placed; directed deployments to it report `failed` with error `101`.
-- **Site retired** → the CO returns `403 wfm-client-relationship-retired`; the LO stops polling and keeps running its current workloads until an operator intervenes.
+- **Site retired** → the CO returns `403 #not-authorized` ("Client Relationship Retired"); the LO stops polling and keeps running its current workloads until an operator intervenes.
 
 ## 6. Interfaces
 
@@ -279,6 +279,7 @@ CO obligations beyond the endpoint list:
 - The manifest is serialized deterministically (RFC 8785) so identical content yields an identical ETag; the ETag is the quoted `sha256:<hex>` of the response bytes.
 - Deployment YAML and bundles are served byte-for-byte identical to their digests, with `Cache-Control: private, max-age=31536000, immutable`; the manifest with `Cache-Control: private` only.
 - If there are no deployments, `bundle` is present and `null`.
+- A site sees only its own content: another site's deployment YAML or bundle gets the same `404` as one that doesn't exist.
 
 ### 6.3 LO ↔ EN (NATS, [IEO])
 

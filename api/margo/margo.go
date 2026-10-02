@@ -11,3 +11,9 @@ import _ "embed"
 //
 //go:embed f209a7f/application-description.schema.json
 var ApplicationDescriptionSchema []byte
+
+// WorkloadManagementAPI is Margo's Workload Management API OpenAPI file (SPEC §11.1), unchanged.
+// Its known defects are listed in f209a7f/README.md.
+//
+//go:embed f209a7f/workload-management-api-1.0.0-rc.3.yaml
+var WorkloadManagementAPI []byte

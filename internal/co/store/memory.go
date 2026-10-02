@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/balaji-balu/ieo/internal/co/auth"
 	"github.com/balaji-balu/ieo/internal/co/catalog"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
 	"github.com/balaji-balu/ieo/internal/contract"
@@ -24,9 +25,22 @@ type Memory struct {
 	devices     map[contract.DeviceID]contract.DeviceCapabilitiesManifest
 	deployments map[uuid.UUID]siteDeployment
 	blobs       map[contract.Digest][]byte
+	tokens      map[auth.TokenHash]contract.SiteID
+	siteTokens  map[contract.SiteID]auth.TokenHash
+	// published records every digest a deployment had in a manifest, and every bundle of each
+	// site's manifests, so the API serves a site only its own content (SPEC §11.1).
+	published map[publication]bool
 }
 
 type appKey struct{ id, version string }
+
+// publication is a digest a site published in a manifest: a deployment's YAML, or a bundle.
+type publication struct {
+	site       contract.SiteID
+	bundle     bool
+	deployment uuid.UUID // zero for a bundle
+	digest     contract.Digest
+}
 
 type siteDeployment struct {
 	site contract.SiteID
@@ -42,6 +56,9 @@ func NewMemory() *Memory {
 		devices:     map[contract.DeviceID]contract.DeviceCapabilitiesManifest{},
 		deployments: map[uuid.UUID]siteDeployment{},
 		blobs:       map[contract.Digest][]byte{},
+		tokens:      map[auth.TokenHash]contract.SiteID{},
+		published:   map[publication]bool{},
+		siteTokens:  map[contract.SiteID]auth.TokenHash{},
 	}
 }
 
@@ -143,6 +160,9 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 	}
 	if c.Deployment != nil {
 		m.deployments[c.Deployment.ID] = siteDeployment{site, cloneDeployment(*c.Deployment)}
+		if c.Manifest != nil && !c.Deployment.Deleted { // the new manifest holds its digest
+			m.published[publication{site, false, c.Deployment.ID, c.Deployment.Digest}] = true
+		}
 	}
 	for d, b := range c.Blobs {
 		if _, ok := m.blobs[d]; !ok {
@@ -151,6 +171,9 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 	}
 	if c.Manifest != nil {
 		m.manifests[site] = cloneManifest(*c.Manifest)
+		if c.Manifest.Bundle != "" {
+			m.published[publication{site, true, uuid.Nil, c.Manifest.Bundle}] = true
+		}
 	}
 	return nil
 }
@@ -170,4 +193,56 @@ func cloneDeployment(d deploy.Deployment) deploy.Deployment {
 func cloneManifest(mf deploy.Manifest) deploy.Manifest {
 	mf.Body = bytes.Clone(mf.Body)
 	return mf
+}
+
+// Site returns a site, and whether it exists.
+func (m *Memory) Site(_ context.Context, id contract.SiteID) (deploy.Site, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	site, ok := m.sites[id]
+	return site, ok, nil
+}
+
+// DeploymentYAML returns the YAML of deployment id under digest, and whether site published it:
+// the deployment is at site and had digest in one of its manifests.
+func (m *Memory) DeploymentYAML(_ context.Context, site contract.SiteID, id uuid.UUID, digest contract.Digest) ([]byte, bool, error) {
+	return m.publishedBlob(publication{site, false, id, digest})
+}
+
+// Bundle returns the bundle under digest, and whether one of site's manifests named it.
+func (m *Memory) Bundle(_ context.Context, site contract.SiteID, digest contract.Digest) ([]byte, bool, error) {
+	return m.publishedBlob(publication{site, true, uuid.Nil, digest})
+}
+
+func (m *Memory) publishedBlob(p publication) ([]byte, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p.digest == "" || !m.published[p] {
+		return nil, false, nil
+	}
+	b, ok := m.blobs[p.digest]
+	return bytes.Clone(b), ok, nil
+}
+
+// PutSiteToken replaces the token hash of site, and reports false if there is no such site.
+func (m *Memory) PutSiteToken(_ context.Context, site contract.SiteID, hash auth.TokenHash) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.sites[site]; !ok {
+		return false, nil
+	}
+	if old, ok := m.siteTokens[site]; ok {
+		delete(m.tokens, old)
+	}
+	m.siteTokens[site] = hash
+	m.tokens[hash] = site
+	return true, nil
+}
+
+// SiteByToken returns the site whose token has hash, and whether there is one.
+func (m *Memory) SiteByToken(_ context.Context, hash auth.TokenHash) (contract.SiteID, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	site, ok := m.tokens[hash]
+	return site, ok, nil
 }
