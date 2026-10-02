@@ -13,7 +13,7 @@ import (
 
 	"github.com/balaji-balu/ieo/internal/co/catalog"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
-	"github.com/balaji-balu/ieo/internal/co/store"
+	"github.com/balaji-balu/ieo/internal/co/store/storetest"
 	"github.com/balaji-balu/ieo/internal/contract"
 	"github.com/balaji-balu/ieo/internal/ocitest"
 )
@@ -73,17 +73,17 @@ var (
 type fixture struct {
 	t      *testing.T
 	ctx    context.Context
-	store  *store.Memory
+	store  storetest.Store
 	deploy *deploy.Service
 }
 
 // newFixture imports the application and adds site-1 with host-1 and site-2 with no hosts.
-func newFixture(t *testing.T) fixture {
+func newFixture(t *testing.T, newStore storetest.New) fixture {
 	t.Helper()
 	ctx := context.Background()
 	reg := ocitest.NewRegistry()
 	reg.PushApp(t, repo, version, []byte(description))
-	s := store.NewMemory()
+	s := newStore(t)
 	if _, err := catalog.New(reg.Open, s).Import(ctx, repo, version); err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -164,36 +164,38 @@ func (f fixture) blob(d contract.Digest) []byte {
 
 // SPEC §17.2: "Creating a deployment stores YAML under the SHA-256 of its exact bytes."
 func TestSpec_17_2_CreateStoresYAMLUnderDigestOfExactBytes(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(request())
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(request())
 
-	b := f.blob(d.Digest)
-	if got := contract.DigestOf(b); got != d.Digest {
-		t.Fatalf("stored YAML has digest %s, deployment says %s", got, d.Digest)
-	}
-	js, err := yaml.YAMLToJSON(b)
-	if err != nil {
-		t.Fatalf("stored YAML: %v\n%s", err, b)
-	}
-	var doc contract.ApplicationDeployment
-	if err := json.Unmarshal(js, &doc); err != nil {
-		t.Fatalf("decode stored YAML: %v\n%s", err, js)
-	}
-	if doc.ID != d.ID || doc.Metadata.DeviceID != host1 || doc.Spec.ApplicationID != appID {
-		t.Errorf("stored YAML: id %s, deviceId %s, applicationId %q; want %s, %s, %q",
-			doc.ID, doc.Metadata.DeviceID, doc.Spec.ApplicationID, d.ID, host1, appID)
-	}
+		b := f.blob(d.Digest)
+		if got := contract.DigestOf(b); got != d.Digest {
+			t.Fatalf("stored YAML has digest %s, deployment says %s", got, d.Digest)
+		}
+		js, err := yaml.YAMLToJSON(b)
+		if err != nil {
+			t.Fatalf("stored YAML: %v\n%s", err, b)
+		}
+		var doc contract.ApplicationDeployment
+		if err := json.Unmarshal(js, &doc); err != nil {
+			t.Fatalf("decode stored YAML: %v\n%s", err, js)
+		}
+		if doc.ID != d.ID || doc.Metadata.DeviceID != host1 || doc.Spec.ApplicationID != appID {
+			t.Errorf("stored YAML: id %s, deviceId %s, applicationId %q; want %s, %s, %q",
+				doc.ID, doc.Metadata.DeviceID, doc.Spec.ApplicationID, d.ID, host1, appID)
+		}
 
-	m, body := f.manifest(site1)
-	want := []contract.DeploymentRef{{
-		DeploymentID: d.ID, Digest: d.Digest, SizeBytes: uint64(len(b)), URL: contract.DeploymentURL(d.ID, d.Digest),
-	}}
-	if !reflect.DeepEqual(body.Deployments, want) {
-		t.Errorf("manifest deployments = %+v, want %+v", body.Deployments, want)
-	}
-	if body.Bundle == nil || body.Bundle.Digest != m.Bundle || contract.DigestOf(f.blob(m.Bundle)) != m.Bundle {
-		t.Errorf("manifest bundle = %+v, store bundle %s: want the digest of a stored bundle", body.Bundle, m.Bundle)
-	}
+		m, body := f.manifest(site1)
+		want := []contract.DeploymentRef{{
+			DeploymentID: d.ID, Digest: d.Digest, SizeBytes: uint64(len(b)), URL: contract.DeploymentURL(d.ID, d.Digest),
+		}}
+		if !reflect.DeepEqual(body.Deployments, want) {
+			t.Errorf("manifest deployments = %+v, want %+v", body.Deployments, want)
+		}
+		if body.Bundle == nil || body.Bundle.Digest != m.Bundle || contract.DigestOf(f.blob(m.Bundle)) != m.Bundle {
+			t.Errorf("manifest bundle = %+v, store bundle %s: want the digest of a stored bundle", body.Bundle, m.Bundle)
+		}
+	})
 }
 
 // SPEC §17.2: "Updating a deployment keeps its ID, changes its digest, and increments
@@ -202,42 +204,44 @@ func TestSpec_17_2_CreateStoresYAMLUnderDigestOfExactBytes(t *testing.T) {
 // An update that rebuilds identical bytes changes no manifest (SPEC §8.1), and an update can't move
 // a deployment to another site.
 func TestSpec_17_2_UpdateKeepsIDChangesDigestIncrementsManifestVersion(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(request())
-	before, _ := f.manifest(site1)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(request())
+		before, _ := f.manifest(site1)
 
-	req := request()
-	req.Parameters["greeting"] = "Hi"
-	u, err := f.deploy.Update(f.ctx, d.ID, req)
-	if err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	if u.ID != d.ID || u.Digest == d.Digest {
-		t.Fatalf("update: ID %s digest %s; want ID %s and a digest other than %s", u.ID, u.Digest, d.ID, d.Digest)
-	}
-	after, body := f.manifest(site1)
-	if after.Version != before.Version+1 {
-		t.Errorf("manifestVersion %d after update, want %d", after.Version, before.Version+1)
-	}
-	if len(body.Deployments) != 1 || body.Deployments[0].Digest != u.Digest {
-		t.Errorf("manifest deployments = %+v, want only %s at %s", body.Deployments, u.ID, u.Digest)
-	}
+		req := request()
+		req.Parameters["greeting"] = "Hi"
+		u, err := f.deploy.Update(f.ctx, d.ID, req)
+		if err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if u.ID != d.ID || u.Digest == d.Digest {
+			t.Fatalf("update: ID %s digest %s; want ID %s and a digest other than %s", u.ID, u.Digest, d.ID, d.Digest)
+		}
+		after, body := f.manifest(site1)
+		if after.Version != before.Version+1 {
+			t.Errorf("manifestVersion %d after update, want %d", after.Version, before.Version+1)
+		}
+		if len(body.Deployments) != 1 || body.Deployments[0].Digest != u.Digest {
+			t.Errorf("manifest deployments = %+v, want only %s at %s", body.Deployments, u.ID, u.Digest)
+		}
 
-	same, err := f.deploy.Update(f.ctx, d.ID, req)
-	if err != nil {
-		t.Fatalf("identical update: %v", err)
-	}
-	unchanged, _ := f.manifest(site1)
-	if same.Digest != u.Digest || unchanged.Version != after.Version || !bytes.Equal(unchanged.Body, after.Body) {
-		t.Errorf("identical update: digest %s, manifestVersion %d; want %s and %d with the same body",
-			same.Digest, unchanged.Version, u.Digest, after.Version)
-	}
+		same, err := f.deploy.Update(f.ctx, d.ID, req)
+		if err != nil {
+			t.Fatalf("identical update: %v", err)
+		}
+		unchanged, _ := f.manifest(site1)
+		if same.Digest != u.Digest || unchanged.Version != after.Version || !bytes.Equal(unchanged.Body, after.Body) {
+			t.Errorf("identical update: digest %s, manifestVersion %d; want %s and %d with the same body",
+				same.Digest, unchanged.Version, u.Digest, after.Version)
+		}
 
-	moved := request()
-	moved.Target = contract.DeviceID{Site: site2, Autonomous: true}
-	if _, err := f.deploy.Update(f.ctx, d.ID, moved); !errors.Is(err, deploy.ErrInvalidRequest) {
-		t.Errorf("update to another site: err = %v, want ErrInvalidRequest", err)
-	}
+		moved := request()
+		moved.Target = contract.DeviceID{Site: site2, Autonomous: true}
+		if _, err := f.deploy.Update(f.ctx, d.ID, moved); !errors.Is(err, deploy.ErrInvalidRequest) {
+			t.Errorf("update to another site: err = %v, want ErrInvalidRequest", err)
+		}
+	})
 }
 
 // SPEC §17.2: "Deleting a deployment removes it from the manifest and increments
@@ -245,31 +249,33 @@ func TestSpec_17_2_UpdateKeepsIDChangesDigestIncrementsManifestVersion(t *testin
 //
 // Deleting it again changes nothing; an unknown deployment is not found.
 func TestSpec_17_2_DeleteRemovesFromManifestIncrementsManifestVersion(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(request())
-	before, _ := f.manifest(site1)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(request())
+		before, _ := f.manifest(site1)
 
-	if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	after, body := f.manifest(site1)
-	if after.Version != before.Version+1 || len(body.Deployments) != 0 || body.Bundle != nil {
-		t.Errorf("after delete: manifestVersion %d, deployments %+v, bundle %+v; want %d, none, null",
-			after.Version, body.Deployments, body.Bundle, before.Version+1)
-	}
+		if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		after, body := f.manifest(site1)
+		if after.Version != before.Version+1 || len(body.Deployments) != 0 || body.Bundle != nil {
+			t.Errorf("after delete: manifestVersion %d, deployments %+v, bundle %+v; want %d, none, null",
+				after.Version, body.Deployments, body.Bundle, before.Version+1)
+		}
 
-	if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
-		t.Fatalf("delete again: %v", err)
-	}
-	if again, _ := f.manifest(site1); again.Version != after.Version {
-		t.Errorf("delete again: manifestVersion %d, want %d", again.Version, after.Version)
-	}
-	if err := f.deploy.Delete(f.ctx, uuid.New()); !errors.Is(err, deploy.ErrNotFound) {
-		t.Errorf("delete unknown: err = %v, want ErrNotFound", err)
-	}
-	if _, err := f.deploy.Update(f.ctx, d.ID, request()); !errors.Is(err, deploy.ErrNotFound) {
-		t.Errorf("update deleted: err = %v, want ErrNotFound", err)
-	}
+		if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
+			t.Fatalf("delete again: %v", err)
+		}
+		if again, _ := f.manifest(site1); again.Version != after.Version {
+			t.Errorf("delete again: manifestVersion %d, want %d", again.Version, after.Version)
+		}
+		if err := f.deploy.Delete(f.ctx, uuid.New()); !errors.Is(err, deploy.ErrNotFound) {
+			t.Errorf("delete unknown: err = %v, want ErrNotFound", err)
+		}
+		if _, err := f.deploy.Update(f.ctx, d.ID, request()); !errors.Is(err, deploy.ErrNotFound) {
+			t.Errorf("update deleted: err = %v, want ErrNotFound", err)
+		}
+	})
 }
 
 // SPEC §17.2: "Preliminary checks reject: unknown site, retired site, unknown directed host, host
@@ -278,110 +284,116 @@ func TestSpec_17_2_DeleteRemovesFromManifestIncrementsManifestVersion(t *testing
 // The required-parameter checks of SPEC §8.1.1 are here too. The description's profile asks for
 // 512Mi of memory and the label line=2 (SPEC §5.5).
 func TestSpec_17_2_PreliminaryChecksRejectAndCreateNothing(t *testing.T) {
-	tests := []struct {
-		name   string
-		modify func(f fixture, req *deploy.Request)
-	}{
-		{"unknown site", func(_ fixture, req *deploy.Request) {
-			req.Target = contract.DeviceID{Site: "site-9", Host: "host-1"}
-		}},
-		{"retired site", func(f fixture, _ *deploy.Request) {
-			if err := f.deploy.RetireSite(f.ctx, site1); err != nil {
-				f.t.Fatalf("retire: %v", err)
-			}
-		}},
-		{"unknown directed host", func(_ fixture, req *deploy.Request) {
-			req.Target = contract.DeviceID{Site: site1, Host: "host-9"}
-		}},
-		{"host failing eligibility rules", func(f fixture, req *deploy.Request) {
-			req.Target = contract.DeviceID{Site: site1, Host: "host-2"}
-			f.putHost(req.Target, "8Gi", "3")
-		}},
-		{"host failing capacity requirements", func(f fixture, req *deploy.Request) {
-			req.Target = contract.DeviceID{Site: site1, Host: "host-2"}
-			f.putHost(req.Target, "256Mi", "2")
-		}},
-		{"autonomous target with no eligible host", func(f fixture, req *deploy.Request) {
-			req.Target = contract.DeviceID{Site: site2, Autonomous: true}
-			f.putHost(contract.DeviceID{Site: site2, Host: "host-2"}, "8Gi", "3")
-			f.putHost(contract.DeviceID{Site: site2, Host: "host-3"}, "256Mi", "2")
-		}},
-		{"autonomous target with no host", func(_ fixture, req *deploy.Request) {
-			req.Target = contract.DeviceID{Site: site2, Autonomous: true}
-		}},
-		{"required parameter without value", func(_ fixture, req *deploy.Request) {
-			delete(req.Parameters, "token")
-		}},
-		{"unknown parameter", func(_ fixture, req *deploy.Request) {
-			req.Parameters["colour"] = "red"
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t)
-			req := request()
-			tt.modify(f, &req)
-			site := req.Target.Site
-			before, hadManifest, _ := f.store.Manifest(f.ctx, site)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		tests := []struct {
+			name   string
+			modify func(f fixture, req *deploy.Request)
+		}{
+			{"unknown site", func(_ fixture, req *deploy.Request) {
+				req.Target = contract.DeviceID{Site: "site-9", Host: "host-1"}
+			}},
+			{"retired site", func(f fixture, _ *deploy.Request) {
+				if err := f.deploy.RetireSite(f.ctx, site1); err != nil {
+					f.t.Fatalf("retire: %v", err)
+				}
+			}},
+			{"unknown directed host", func(_ fixture, req *deploy.Request) {
+				req.Target = contract.DeviceID{Site: site1, Host: "host-9"}
+			}},
+			{"host failing eligibility rules", func(f fixture, req *deploy.Request) {
+				req.Target = contract.DeviceID{Site: site1, Host: "host-2"}
+				f.putHost(req.Target, "8Gi", "3")
+			}},
+			{"host failing capacity requirements", func(f fixture, req *deploy.Request) {
+				req.Target = contract.DeviceID{Site: site1, Host: "host-2"}
+				f.putHost(req.Target, "256Mi", "2")
+			}},
+			{"autonomous target with no eligible host", func(f fixture, req *deploy.Request) {
+				req.Target = contract.DeviceID{Site: site2, Autonomous: true}
+				f.putHost(contract.DeviceID{Site: site2, Host: "host-2"}, "8Gi", "3")
+				f.putHost(contract.DeviceID{Site: site2, Host: "host-3"}, "256Mi", "2")
+			}},
+			{"autonomous target with no host", func(_ fixture, req *deploy.Request) {
+				req.Target = contract.DeviceID{Site: site2, Autonomous: true}
+			}},
+			{"required parameter without value", func(_ fixture, req *deploy.Request) {
+				delete(req.Parameters, "token")
+			}},
+			{"unknown parameter", func(_ fixture, req *deploy.Request) {
+				req.Parameters["colour"] = "red"
+			}},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				f := newFixture(t, newStore)
+				req := request()
+				tt.modify(f, &req)
+				site := req.Target.Site
+				before, hadManifest, _ := f.store.Manifest(f.ctx, site)
 
-			if _, err := f.deploy.Create(f.ctx, req); !errors.Is(err, deploy.ErrCheckFailed) {
-				t.Fatalf("create: err = %v, want ErrCheckFailed", err)
-			}
-			if n := f.deploymentCount(site); n != 0 {
-				t.Errorf("%d deployments stored at %s, want 0", n, site)
-			}
-			after, hasManifest, _ := f.store.Manifest(f.ctx, site)
-			if hasManifest != hadManifest || after.Version != before.Version || !bytes.Equal(after.Body, before.Body) {
-				t.Errorf("manifest of %s changed: version %d → %d", site, before.Version, after.Version)
+				if _, err := f.deploy.Create(f.ctx, req); !errors.Is(err, deploy.ErrCheckFailed) {
+					t.Fatalf("create: err = %v, want ErrCheckFailed", err)
+				}
+				if n := f.deploymentCount(site); n != 0 {
+					t.Errorf("%d deployments stored at %s, want 0", n, site)
+				}
+				after, hasManifest, _ := f.store.Manifest(f.ctx, site)
+				if hasManifest != hadManifest || after.Version != before.Version || !bytes.Equal(after.Body, before.Body) {
+					t.Errorf("manifest of %s changed: version %d → %d", site, before.Version, after.Version)
+				}
+			})
+		}
+
+		t.Run("autonomous target with one eligible host is accepted", func(t *testing.T) {
+			f := newFixture(t, newStore)
+			f.putHost(contract.DeviceID{Site: site1, Host: "host-2"}, "8Gi", "3")
+			req := request()
+			req.Target = contract.DeviceID{Site: site1, Autonomous: true}
+			if _, err := f.deploy.Create(f.ctx, req); err != nil {
+				t.Errorf("create: %v", err)
 			}
 		})
-	}
-
-	t.Run("autonomous target with one eligible host is accepted", func(t *testing.T) {
-		f := newFixture(t)
-		f.putHost(contract.DeviceID{Site: site1, Host: "host-2"}, "8Gi", "3")
-		req := request()
-		req.Target = contract.DeviceID{Site: site1, Autonomous: true}
-		if _, err := f.deploy.Create(f.ctx, req); err != nil {
-			t.Errorf("create: %v", err)
-		}
 	})
 }
 
 // SPEC §17.2: "`manifestVersion` starts at 1 per site and is independent across sites."
 func TestSpec_17_2_ManifestVersionStartsAtOnePerSite(t *testing.T) {
-	f := newFixture(t)
-	for _, site := range []contract.SiteID{site1, site2} {
-		if m, _ := f.manifest(site); m.Version != 1 {
-			t.Errorf("%s: manifestVersion %d after adding the site, want 1", site, m.Version)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		for _, site := range []contract.SiteID{site1, site2} {
+			if m, _ := f.manifest(site); m.Version != 1 {
+				t.Errorf("%s: manifestVersion %d after adding the site, want 1", site, m.Version)
+			}
 		}
-	}
-	f.create(request())
-	f.create(request())
-	if m, _ := f.manifest(site1); m.Version != 3 {
-		t.Errorf("%s: manifestVersion %d after two creates, want 3", site1, m.Version)
-	}
-	if m, _ := f.manifest(site2); m.Version != 1 {
-		t.Errorf("%s: manifestVersion %d, want 1: another site's changes must not count", site2, m.Version)
-	}
-	if err := f.deploy.AddSite(f.ctx, site1); err != nil {
-		t.Fatalf("add site again: %v", err)
-	}
-	if m, _ := f.manifest(site1); m.Version != 3 {
-		t.Errorf("%s: manifestVersion %d after adding the site again, want 3", site1, m.Version)
-	}
+		f.create(request())
+		f.create(request())
+		if m, _ := f.manifest(site1); m.Version != 3 {
+			t.Errorf("%s: manifestVersion %d after two creates, want 3", site1, m.Version)
+		}
+		if m, _ := f.manifest(site2); m.Version != 1 {
+			t.Errorf("%s: manifestVersion %d, want 1: another site's changes must not count", site2, m.Version)
+		}
+		if err := f.deploy.AddSite(f.ctx, site1); err != nil {
+			t.Fatalf("add site again: %v", err)
+		}
+		if m, _ := f.manifest(site1); m.Version != 3 {
+			t.Errorf("%s: manifestVersion %d after adding the site again, want 3", site1, m.Version)
+		}
+	})
 }
 
 // SPEC §17.2: "A site with no deployments gets `bundle: null`."
 func TestSpec_17_2_SiteWithNoDeploymentsGetsNullBundle(t *testing.T) {
-	f := newFixture(t)
-	m, _ := f.manifest(site2)
-	if want := `{"bundle":null,"deployments":[],"manifestVersion":1}`; string(m.Body) != want {
-		t.Errorf("manifest of a new site = %s, want %s", m.Body, want)
-	}
-	if m.Bundle != "" {
-		t.Errorf("manifest of a new site has bundle %s, want none", m.Bundle)
-	}
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		m, _ := f.manifest(site2)
+		if want := `{"bundle":null,"deployments":[],"manifestVersion":1}`; string(m.Body) != want {
+			t.Errorf("manifest of a new site = %s, want %s", m.Body, want)
+		}
+		if m.Bundle != "" {
+			t.Errorf("manifest of a new site has bundle %s, want none", m.Bundle)
+		}
+	})
 }
 
 // SPEC §17.2: "Vendor extensions are copied byte-for-byte; `deviceConstraints` are copied
@@ -389,30 +401,32 @@ func TestSpec_17_2_SiteWithNoDeploymentsGetsNullBundle(t *testing.T) {
 //
 // "Copied" means the same keys in the same order with the same values (SPEC §4.1.5).
 func TestSpec_17_2_VendorExtensionsAndDeviceConstraintsCopiedUnmodified(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(request())
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(request())
 
-	src := ordered(t, []byte(description))
-	got := ordered(t, f.blob(d.Digest))
-	srcProfile := lookup(t, src, "deploymentProfiles").([]any)[0].(yaml.MapSlice)
-	spec := lookup(t, got, "spec").(yaml.MapSlice)
-	gotProfile := lookup(t, spec, "deploymentProfile").(yaml.MapSlice)
+		src := ordered(t, []byte(description))
+		got := ordered(t, f.blob(d.Digest))
+		srcProfile := lookup(t, src, "deploymentProfiles").([]any)[0].(yaml.MapSlice)
+		spec := lookup(t, got, "spec").(yaml.MapSlice)
+		gotProfile := lookup(t, spec, "deploymentProfile").(yaml.MapSlice)
 
-	for _, c := range []struct {
-		name      string
-		from, to  yaml.MapSlice
-		key, into string
-	}{
-		{"top-level extensions → spec", src, spec, "x-acme-extensions", "x-acme-extensions"},
-		{"profile extensions", srcProfile, gotProfile, "x-acme-extensions", "x-acme-extensions"},
-		{"deviceConstraints", srcProfile, gotProfile, "deviceConstraints", "deviceConstraints"},
-		{"components with their extensions", srcProfile, gotProfile, "components", "components"},
-	} {
-		want, gotV := lookup(t, c.from, c.key), lookup(t, c.to, c.into)
-		if !reflect.DeepEqual(gotV, want) {
-			t.Errorf("%s: got %#v, want %#v", c.name, gotV, want)
+		for _, c := range []struct {
+			name      string
+			from, to  yaml.MapSlice
+			key, into string
+		}{
+			{"top-level extensions → spec", src, spec, "x-acme-extensions", "x-acme-extensions"},
+			{"profile extensions", srcProfile, gotProfile, "x-acme-extensions", "x-acme-extensions"},
+			{"deviceConstraints", srcProfile, gotProfile, "deviceConstraints", "deviceConstraints"},
+			{"components with their extensions", srcProfile, gotProfile, "components", "components"},
+		} {
+			want, gotV := lookup(t, c.from, c.key), lookup(t, c.to, c.into)
+			if !reflect.DeepEqual(gotV, want) {
+				t.Errorf("%s: got %#v, want %#v", c.name, gotV, want)
+			}
 		}
-	}
+	})
 }
 
 func ordered(t *testing.T, b []byte) yaml.MapSlice {
@@ -433,4 +447,49 @@ func lookup(t *testing.T, m yaml.MapSlice, key string) any {
 	}
 	t.Fatalf("no key %q in %#v", key, m)
 	return nil
+}
+
+// SPEC §11.1: a report from a site that no longer exists wraps ErrUnknownSite, and one from a
+// retired site wraps ErrSiteRetired, whatever the API's earlier check saw. Nothing is written.
+func TestReportsFromUnknownOrRetiredSite(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(request())
+		gone := contract.SiteID("site-gone")
+		if err := f.deploy.RetireSite(f.ctx, site1); err != nil {
+			t.Fatal(err)
+		}
+		caps := func(id contract.DeviceID) contract.DeviceCapabilitiesManifest {
+			return contract.DeviceCapabilitiesManifest{Properties: contract.DeviceCapabilities{ID: id}}
+		}
+		reports := func(site contract.SiteID, id uuid.UUID) map[string]error {
+			gateway := contract.DeviceID{Site: site}
+			host := contract.DeviceID{Site: site, Host: "host-1"}
+			_, capsErr := f.deploy.ReportCapabilities(f.ctx, site, gateway, caps(gateway))
+			_, statusErr := f.deploy.ReportStatus(f.ctx, site, id, contract.DeploymentStatus{
+				DeploymentID: id, AdoptedManifestVersion: 1, Status: contract.DeploymentState{State: contract.StateInstalled},
+			})
+			return map[string]error{
+				"ReportCapabilities": capsErr,
+				"RemoveDevice":       f.deploy.RemoveDevice(f.ctx, site, host),
+				"ReportStatus":       statusErr,
+			}
+		}
+		for name, err := range reports(gone, uuid.New()) {
+			if !errors.Is(err, deploy.ErrUnknownSite) {
+				t.Errorf("%s from an unknown site: %v, want ErrUnknownSite", name, err)
+			}
+		}
+		for name, err := range reports(site1, d.ID) {
+			if !errors.Is(err, deploy.ErrSiteRetired) {
+				t.Errorf("%s from a retired site: %v, want ErrSiteRetired", name, err)
+			}
+		}
+		if h, _ := f.store.StatusHistory(f.ctx, d.ID); len(h) != 0 {
+			t.Errorf("retired site's report stored: %+v", h)
+		}
+		if f.deploymentCount(gone) != 0 {
+			t.Error("unknown site got deployments")
+		}
+	})
 }

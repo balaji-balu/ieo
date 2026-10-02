@@ -32,6 +32,7 @@ func (s *server) putCapabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.reporter.ReportCapabilities(r.Context(), site, id, caps)
 	switch {
+	case siteChanged(w, r, err):
 	case errors.Is(err, deploy.ErrNotAuthorized):
 		notAuthorized(w, r)
 	case errors.Is(err, deploy.ErrGatewayNotFound):
@@ -57,6 +58,7 @@ func (s *server) deleteCapabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.reporter.RemoveDevice(r.Context(), site, id)
 	switch {
+	case siteChanged(w, r, err):
 	case errors.Is(err, deploy.ErrNotAuthorized):
 		notAuthorized(w, r)
 	case errors.Is(err, deploy.ErrInvalidRequest):
@@ -90,6 +92,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.reporter.ReportStatus(r.Context(), site, id, st)
 	switch {
+	case siteChanged(w, r, err):
 	case errors.Is(err, deploy.ErrInvalidRequest):
 		invalidField(w, r, err)
 	case err != nil:
@@ -99,6 +102,20 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+// siteChanged answers a report from a site removed or retired since ServeHTTP checked it, as
+// ServeHTTP would have, and reports whether it did (SPEC §11.1).
+func siteChanged(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, deploy.ErrUnknownSite):
+		unauthorized(w, r)
+	case errors.Is(err, deploy.ErrSiteRetired):
+		retired(w, r)
+	default:
+		return false
+	}
+	return true
 }
 
 // deviceID parses the path's device ID, or answers 422.

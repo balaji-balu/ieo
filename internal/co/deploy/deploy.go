@@ -32,6 +32,10 @@ var (
 	ErrNotAuthorized = errors.New("not authorized")
 	// ErrGatewayNotFound: a host reported before its site's gateway (SPEC §8.3).
 	ErrGatewayNotFound = errors.New("gateway not found")
+	// ErrUnknownSite: the reporting site does not exist (SPEC §11.1, §15.6).
+	ErrUnknownSite = errors.New("unknown site")
+	// ErrSiteRetired: the reporting site is retired (SPEC §11.1).
+	ErrSiteRetired = errors.New("site retired")
 )
 
 // InvalidField is an error, wrapping ErrInvalidRequest, about one field of an LO's report: Field
@@ -63,6 +67,7 @@ type Deployment struct {
 	Profile    string
 	Name       string
 	Namespace  string
+	// Parameters hold JSON values: string, float64, bool, nil, []any and map[string]any.
 	Parameters map[string]any
 	Digest     contract.Digest
 	// DigestVersion is the manifest version that first carried Digest (SPEC §8.1.2).
@@ -93,11 +98,26 @@ type SiteState struct {
 	// YAML holds the current YAML of each deployment that is not deleted.
 	YAML     map[uuid.UUID][]byte
 	Manifest Manifest
-	// Gateway reports whether the site's gateway (the LO) has reported its capabilities (SPEC
-	// §8.3).
+}
+
+// DeploymentState is what a status report reads: one deployment of a site (SPEC §8.1.2).
+type DeploymentState struct {
+	Site            Site
+	ManifestVersion contract.ManifestVersion
+	// Deployment is the deployment, if Found: it exists at this site.
+	Deployment Deployment
+	Found      bool
+	// Reported: the deployment has at least one status report.
+	Reported bool
+}
+
+// DeviceState is what a capability report reads: one device of a site (SPEC §8.3).
+type DeviceState struct {
+	Site Site
+	// Gateway: the site's gateway has reported its capabilities.
 	Gateway bool
-	// Reports counts the status reports received for each deployment (SPEC §8.1.2).
-	Reports map[uuid.UUID]int
+	// Device: the device has reported its capabilities.
+	Device bool
 }
 
 // SiteChange is what a change writes to one site. Nil fields are left as they are.
@@ -136,6 +156,12 @@ type Store interface {
 	// writes the change it returns, all atomically: no other change to site runs in between. If
 	// change returns an error, nothing is written and ChangeSite returns that error.
 	ChangeSite(ctx context.Context, site contract.SiteID, change func(state SiteState, exists bool) (SiteChange, error)) error
+	// ChangeDeployment is ChangeSite for a change that reads only deployment id of site.
+	ChangeDeployment(ctx context.Context, site contract.SiteID, id uuid.UUID,
+		change func(state DeploymentState, exists bool) (SiteChange, error)) error
+	// ChangeDevice is ChangeSite for a change that reads only device id of site.
+	ChangeDevice(ctx context.Context, site contract.SiteID, id contract.DeviceID,
+		change func(state DeviceState, exists bool) (SiteChange, error)) error
 }
 
 // Request asks for a deployment of one application version (SPEC §11.3).

@@ -40,7 +40,8 @@ of truth.
 ## Guardrails
 
 - Never push to `main`, merge, skip/disable tests, or weaken a test to make it pass.
-- Never edit generated code by hand (`ent/` is generated; see `docs/contributing.md`).
+- Never edit generated code by hand (`ent/` and `internal/co/store/postgres/ent/` are generated; see
+  `docs/contributing.md`).
 - No secrets in prompts, code, logs, tests or fixtures.
 - §15 areas (TLS, credentials, enrollment, archive extraction, §9.2 safety invariants) always get
   `/security-review` and human review.
@@ -53,13 +54,13 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 
 | Path | Contents |
 | --- | --- |
-| `cmd/co`, `internal/co`, `pkg/co` | Central Orchestrator (CO) |
+| `cmd/co`, `internal/co`, `pkg/co` | Central Orchestrator (CO); `internal/co/store/postgres` is its Postgres store (own ent schema, `co_*` tables, embedded migrations) |
 | `cmd/lo`, `internal/lo` | Local Orchestrator (LO): reconciler, boltstore, watcher, actuators |
 | `cmd/en`, `internal/en`, `pkg/en` | Edge Node agent (EN): runtime plugins, lifecycle, heartbeat |
 | `cmd/edgectl` | Operator CLI |
 | `internal/natsbroker`, `internal/streammanager` | NATS messaging |
 | `internal/git*`, `internal/ocifetch` | Git-based delivery (being replaced, Appendix B step 2) and OCI fetch |
-| `ent/`, `db/`, `atlas.hcl` | ent schema (generated), migrations |
+| `ent/`, `db/`, `atlas.hcl` | ent schema (generated) and migrations of the Git-based code |
 | `pkg/model`, `pkg/deployment`, `pkg/application` | Shared domain types |
 | `proto/` | Protobuf definitions |
 | `configs/` | Component configs and FSM definitions |
@@ -74,6 +75,8 @@ Same checks as CI (`.github/workflows/ci.yaml`):
 ```sh
 go build $(scripts/go-packages.sh)
 go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
+# CO store tests also run against Postgres when this is set (CI sets it; see docs/contributing.md):
+#   IEO_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
 # gofmt, goimports, govet, … on changed lines only:
 golangci-lint run --new-from-merge-base=origin/main $(scripts/go-packages.sh test)
 golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-packages.sh no-test)

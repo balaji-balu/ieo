@@ -98,7 +98,7 @@ The site NATS server carries two isolated accounts: **CONTROL** (LO ↔ EN orche
 | Concern | Choice |
 | --- | --- |
 | Language | Go |
-| CO API server | Gin; Postgres via ent, Atlas migrations |
+| CO API server | `net/http` (Margo API); Postgres via ent, with versioned SQL migrations the store applies when it opens (`internal/co/store/postgres`) |
 | LO / EN local store | BoltDB (embedded) |
 | CO ↔ LO | Margo Workload Management API over HTTPS with mutual TLS |
 | LO ↔ EN | NATS (core NATS; see §6.3) |

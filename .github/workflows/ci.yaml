@@ -24,6 +24,21 @@ jobs:
   build-test:
     name: Build and test
     runs-on: ubuntu-latest
+    # The CO store tests run against Postgres too (internal/co/store/storetest).
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ieo_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ieo_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      IEO_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/ieo_test?sslmode=disable
+      IEO_REQUIRE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@v4
 

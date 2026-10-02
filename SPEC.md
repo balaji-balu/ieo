@@ -901,7 +901,9 @@ CO obligations:
   `https://docs.margo.org/specification/problem-types#not-authorized` and title `Client
   Relationship Retired`. Margo's prose names this type `wfm-client-relationship-retired`, but its
   problem-type registry, which responses MUST use, has only `#not-authorized` (see
-  `docs/margo-pins.md`).
+  `docs/margo-pins.md`). The site is checked again when a report is written: a site retired
+  while its request was in flight gets the same `403`, and a site that no longer exists gets
+  `401`, as an unknown token does (§15.6).
 - Serve a deployment YAML only if its digest is one that deployment had in a manifest of the
   caller's site, and a bundle only if a manifest of the caller's site named it. Everything else,
   including another site's content and a malformed ID or digest, gets `404` with problem type
@@ -1042,6 +1044,8 @@ Rules:
   The version it then reports is the one it re-synced against.
 - `manifestVersion` at the CO MUST never decrease, including across database restore. A restore
   procedure MUST set each site's version above its last published value.
+- `[IEO]` The CO's database itself refuses any update that lowers a site's `manifestVersion`,
+  whichever code or manual fix issues it.
 
 ## 13. Logging and Observability
 
