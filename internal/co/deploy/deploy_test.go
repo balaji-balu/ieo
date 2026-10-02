@@ -93,13 +93,20 @@ func newFixture(t *testing.T) fixture {
 			t.Fatalf("add site %s: %v", site, err)
 		}
 	}
-	if err := s.PutDevice(ctx, host1, contract.DeviceCapabilitiesManifest{
-		Properties: contract.DeviceCapabilities{ID: host1, Memory: "8Gi"},
-		Labels:     map[string]string{"line": "2"},
-	}); err != nil {
-		t.Fatalf("put device: %v", err)
-	}
+	f.putHost(host1, "8Gi", "2")
 	return f
+}
+
+// putHost reports a host with memory and a `line` label. The description asks for 512Mi and
+// line 2.
+func (f fixture) putHost(id contract.DeviceID, memory, line string) {
+	f.t.Helper()
+	if err := f.store.PutDevice(f.ctx, id, contract.DeviceCapabilitiesManifest{
+		Properties: contract.DeviceCapabilities{ID: id, Memory: memory},
+		Labels:     map[string]string{"line": line},
+	}); err != nil {
+		f.t.Fatalf("put device %s: %v", id, err)
+	}
 }
 
 // request is a valid directed request to host-1.
@@ -268,8 +275,8 @@ func TestSpec_17_2_DeleteRemovesFromManifestIncrementsManifestVersion(t *testing
 // SPEC §17.2: "Preliminary checks reject: unknown site, retired site, unknown directed host, host
 // failing constraints, autonomous target with no eligible host. No deployment is created."
 //
-// The required-parameter checks of SPEC §8.1.1 are here too. Hosts failing eligibilityRules and
-// capacityRequirements arrive with the constraint evaluator (roadmap B2b).
+// The required-parameter checks of SPEC §8.1.1 are here too. The description's profile asks for
+// 512Mi of memory and the label line=2 (SPEC §5.5).
 func TestSpec_17_2_PreliminaryChecksRejectAndCreateNothing(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -285,6 +292,19 @@ func TestSpec_17_2_PreliminaryChecksRejectAndCreateNothing(t *testing.T) {
 		}},
 		{"unknown directed host", func(_ fixture, req *deploy.Request) {
 			req.Target = contract.DeviceID{Site: site1, Host: "host-9"}
+		}},
+		{"host failing eligibility rules", func(f fixture, req *deploy.Request) {
+			req.Target = contract.DeviceID{Site: site1, Host: "host-2"}
+			f.putHost(req.Target, "8Gi", "3")
+		}},
+		{"host failing capacity requirements", func(f fixture, req *deploy.Request) {
+			req.Target = contract.DeviceID{Site: site1, Host: "host-2"}
+			f.putHost(req.Target, "256Mi", "2")
+		}},
+		{"autonomous target with no eligible host", func(f fixture, req *deploy.Request) {
+			req.Target = contract.DeviceID{Site: site2, Autonomous: true}
+			f.putHost(contract.DeviceID{Site: site2, Host: "host-2"}, "8Gi", "3")
+			f.putHost(contract.DeviceID{Site: site2, Host: "host-3"}, "256Mi", "2")
 		}},
 		{"autonomous target with no host", func(_ fixture, req *deploy.Request) {
 			req.Target = contract.DeviceID{Site: site2, Autonomous: true}
@@ -316,6 +336,16 @@ func TestSpec_17_2_PreliminaryChecksRejectAndCreateNothing(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("autonomous target with one eligible host is accepted", func(t *testing.T) {
+		f := newFixture(t)
+		f.putHost(contract.DeviceID{Site: site1, Host: "host-2"}, "8Gi", "3")
+		req := request()
+		req.Target = contract.DeviceID{Site: site1, Autonomous: true}
+		if _, err := f.deploy.Create(f.ctx, req); err != nil {
+			t.Errorf("create: %v", err)
+		}
+	})
 }
 
 // SPEC §17.2: "`manifestVersion` starts at 1 per site and is independent across sites."

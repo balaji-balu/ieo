@@ -77,7 +77,7 @@ func TestParseApplicationDescription(t *testing.T) {
 					Repository: "oci://registry.test/example/hello-web", Revision: "1.2.3_build.5",
 					Wait: &no, Timeout: "5m0s",
 				},
-			}}},
+			}}, DeviceConstraints: &DeviceConstraints{CapacityRequirements: &CapacityRequirements{Memory: "512Mi"}}},
 			{ID: "hello-helm", Type: "helm", Components: []Component{{
 				Name: "web-chart",
 				Properties: ComponentProperties{
