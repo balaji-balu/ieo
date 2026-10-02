@@ -1,10 +1,11 @@
 // Package store keeps the CO's state (SPEC §12). Memory is the in-memory backend used by Core
-// Conformance tests; the Postgres backend follows with the same operations (roadmap B4).
+// Conformance tests; package postgres is the Postgres backend, with the same operations and rules.
 package store
 
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -90,11 +91,15 @@ func (m *Memory) App(_ context.Context, id, version string) (catalog.App, bool, 
 	return cloneApp(app), ok, nil
 }
 
-// PutDevice replaces the latest capabilities reported for a device (SPEC §8.3).
+// PutDevice replaces the latest capabilities reported for a device of an existing site (SPEC
+// §8.3).
 func (m *Memory) PutDevice(_ context.Context, id contract.DeviceID, caps contract.DeviceCapabilitiesManifest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.devices[id] = caps
+	if _, ok := m.sites[id.Site]; !ok {
+		return fmt.Errorf("put device %s: no site %s", id, id.Site)
+	}
+	m.devices[id] = cloneCapabilities(caps)
 	return nil
 }
 
@@ -143,12 +148,10 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 		Deployments: map[uuid.UUID]deploy.Deployment{},
 		YAML:        map[uuid.UUID][]byte{},
 		Manifest:    cloneManifest(m.manifests[site]),
-		Reports:     map[uuid.UUID]int{},
 	}
-	_, state.Gateway = m.devices[contract.DeviceID{Site: site}]
 	for id, caps := range m.devices {
 		if id.Site == site && id.Host != "" {
-			state.Hosts[id.Host] = caps
+			state.Hosts[id.Host] = cloneCapabilities(caps)
 		}
 	}
 	for id, sd := range m.deployments {
@@ -156,7 +159,6 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 			continue
 		}
 		state.Deployments[id] = cloneDeployment(sd.d)
-		state.Reports[id] = len(m.history[id])
 		if !sd.d.Deleted {
 			state.YAML[id] = bytes.Clone(m.blobs[sd.d.Digest])
 		}
@@ -164,6 +166,56 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 	c, err := change(state, exists)
 	if err != nil {
 		return err
+	}
+	return m.write(site, c)
+}
+
+// ChangeDeployment is ChangeSite for a change that reads only deployment id of site.
+func (m *Memory) ChangeDeployment(_ context.Context, site contract.SiteID, id uuid.UUID,
+	change func(state deploy.DeploymentState, exists bool) (deploy.SiteChange, error)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, exists := m.sites[site]
+	state := deploy.DeploymentState{Site: s, ManifestVersion: m.manifests[site].Version}
+	if sd, ok := m.deployments[id]; ok && sd.site == site {
+		state.Deployment, state.Found = cloneDeployment(sd.d), true
+		state.Reported = len(m.history[id]) > 0
+	}
+	c, err := change(state, exists)
+	if err != nil {
+		return err
+	}
+	return m.write(site, c)
+}
+
+// ChangeDevice is ChangeSite for a change that reads only device id of site.
+func (m *Memory) ChangeDevice(_ context.Context, site contract.SiteID, id contract.DeviceID,
+	change func(state deploy.DeviceState, exists bool) (deploy.SiteChange, error)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, exists := m.sites[site]
+	state := deploy.DeviceState{Site: s}
+	_, state.Gateway = m.devices[contract.DeviceID{Site: site}]
+	_, state.Device = m.devices[id]
+	state.Device = state.Device && id.Site == site
+	c, err := change(state, exists)
+	if err != nil {
+		return err
+	}
+	return m.write(site, c)
+}
+
+// write writes c to site. Before writing anything, it refuses a manifest version below the
+// site's current one (SPEC §12) and a deployment of another site.
+func (m *Memory) write(site contract.SiteID, c deploy.SiteChange) error {
+	if c.Manifest != nil && c.Manifest.Version < m.manifests[site].Version {
+		return fmt.Errorf("site %s: manifestVersion %d is below the current %d",
+			site, c.Manifest.Version, m.manifests[site].Version)
+	}
+	if c.Deployment != nil {
+		if sd, ok := m.deployments[c.Deployment.ID]; ok && sd.site != site {
+			return fmt.Errorf("site %s: deployment %s is at site %s", site, c.Deployment.ID, sd.site)
+		}
 	}
 	if c.Site != nil {
 		m.sites[site] = *c.Site
@@ -210,8 +262,30 @@ func cloneApp(app catalog.App) catalog.App {
 }
 
 func cloneDeployment(d deploy.Deployment) deploy.Deployment {
-	d.Parameters = maps.Clone(d.Parameters)
+	if d.Parameters != nil {
+		d.Parameters = cloneJSON(d.Parameters).(map[string]any)
+	}
 	return d
+}
+
+// cloneJSON deep-copies a JSON value: maps and slices are copied at every level.
+func cloneJSON(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = cloneJSON(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = cloneJSON(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func cloneManifest(mf deploy.Manifest) deploy.Manifest {

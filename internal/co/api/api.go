@@ -108,18 +108,28 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case errors.Is(err, auth.ErrUnknownToken) || err == nil && !ok:
-		w.Header().Set("WWW-Authenticate", "Bearer")
-		problem(w, r, http.StatusUnauthorized, contract.ProblemAboutBlank, "", "missing or unknown bearer token")
+		unauthorized(w, r)
 		return
 	case err != nil:
 		s.internalError(w, r, "", err)
 		return
 	case site.Retired:
-		problem(w, r, http.StatusForbidden, contract.ProblemNotAuthorized, "Client Relationship Retired",
-			"The WFM Client relationship has been retired by local policy.")
+		retired(w, r)
 		return
 	}
 	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), siteKey{}, site.ID)))
+}
+
+// unauthorized answers a missing or unknown token, or a site that no longer exists (SPEC §15.6).
+func unauthorized(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("WWW-Authenticate", "Bearer")
+	problem(w, r, http.StatusUnauthorized, contract.ProblemAboutBlank, "", "missing or unknown bearer token")
+}
+
+// retired answers a retired site (SPEC §11.1).
+func retired(w http.ResponseWriter, r *http.Request) {
+	problem(w, r, http.StatusForbidden, contract.ProblemNotAuthorized, "Client Relationship Retired",
+		"The WFM Client relationship has been retired by local policy.")
 }
 
 func siteOf(r *http.Request) contract.SiteID {

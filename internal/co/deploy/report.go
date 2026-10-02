@@ -22,18 +22,14 @@ func (s *Service) ReportCapabilities(ctx context.Context, site contract.SiteID, 
 			&InvalidField{"properties.id", "differs from the path deviceId " + id.String()})
 	}
 	created := false
-	err := s.store.ChangeSite(ctx, site, func(state SiteState, exists bool) (SiteChange, error) {
-		switch {
-		case !exists:
-			return SiteChange{}, ErrNotFound
-		case id.Host == "":
-			created = !state.Gateway
-		case !state.Gateway:
-			return SiteChange{}, ErrGatewayNotFound // SPEC §8.3
-		default:
-			_, known := state.Hosts[id.Host]
-			created = !known
+	err := s.store.ChangeDevice(ctx, site, id, func(state DeviceState, exists bool) (SiteChange, error) {
+		if err := checkSite(state.Site, exists); err != nil {
+			return SiteChange{}, err
 		}
+		if id.Host != "" && !state.Gateway {
+			return SiteChange{}, ErrGatewayNotFound // SPEC §8.3
+		}
+		created = !state.Device
 		return SiteChange{Device: &DeviceChange{ID: id, Capabilities: &caps}}, nil
 	})
 	if err != nil {
@@ -51,14 +47,29 @@ func (s *Service) RemoveDevice(ctx context.Context, site contract.SiteID, id con
 	if id.Host == "" {
 		return fmt.Errorf("remove device %s: %w", id, &InvalidField{"deviceId", "the gateway can't be removed; retire the site"})
 	}
-	err := s.store.ChangeSite(ctx, site, func(state SiteState, _ bool) (SiteChange, error) {
-		if _, ok := state.Hosts[id.Host]; !ok {
+	err := s.store.ChangeDevice(ctx, site, id, func(state DeviceState, exists bool) (SiteChange, error) {
+		if err := checkSite(state.Site, exists); err != nil {
+			return SiteChange{}, err
+		}
+		if !state.Device {
 			return SiteChange{}, ErrNotFound
 		}
 		return SiteChange{Device: &DeviceChange{ID: id}}, nil
 	})
 	if err != nil {
 		return fmt.Errorf("remove device %s: %w", id, err)
+	}
+	return nil
+}
+
+// checkSite checks that a reporting site exists and is active. The API checked this before, but
+// the site may have changed since (SPEC §11.1).
+func checkSite(site Site, exists bool) error {
+	switch {
+	case !exists:
+		return ErrUnknownSite
+	case site.Retired:
+		return ErrSiteRetired
 	}
 	return nil
 }
@@ -88,16 +99,19 @@ func (s *Service) ReportStatus(ctx context.Context, site contract.SiteID, id uui
 		return false, fmt.Errorf("report status of %s: %w", id, &InvalidField{"adoptedManifestVersion", "must be at least 1"})
 	}
 	created := false
-	err := s.store.ChangeSite(ctx, site, func(state SiteState, _ bool) (SiteChange, error) {
-		d, ok := state.Deployments[id]
-		if !ok {
+	err := s.store.ChangeDeployment(ctx, site, id, func(state DeploymentState, exists bool) (SiteChange, error) {
+		if err := checkSite(state.Site, exists); err != nil {
+			return SiteChange{}, err
+		}
+		d := state.Deployment
+		if !state.Found {
 			return SiteChange{}, &InvalidField{"deploymentId", "no such deployment"} // the Margo file lists no 404
 		}
-		if status.AdoptedManifestVersion > state.Manifest.Version {
+		if status.AdoptedManifestVersion > state.ManifestVersion {
 			return SiteChange{}, &InvalidField{"adoptedManifestVersion",
-				fmt.Sprintf("is above the site's manifestVersion %d", state.Manifest.Version)}
+				fmt.Sprintf("is above the site's manifestVersion %d", state.ManifestVersion)}
 		}
-		created = state.Reports[id] == 0
+		created = !state.Reported
 		// A report about an older digest is history only (SPEC §8.1.2).
 		current := status.AdoptedManifestVersion >= d.DigestVersion
 		c := SiteChange{Status: &StatusReport{Status: status, Current: current}}

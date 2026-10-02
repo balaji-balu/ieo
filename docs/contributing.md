@@ -140,6 +140,35 @@ cp deploy/helm/ieo-co/schemas/init.sql db/init.sql
 | `deploy/compose/db/init.sql` | `deploy/compose/docker-compose.yaml` |
 | `db/init.sql` | `docker-compose-demo.yaml` |
 
+### CO store schema (`internal/co/store/postgres`)
+
+The CO's new store (roadmap B4) has its own ent schema in
+`internal/co/store/postgres/ent/schema`, with `co_*` tables kept apart from the Git-based code's
+(ADR 0002). Its versioned SQL migrations live in `internal/co/store/postgres/migrations/` and are
+embedded in the binary: the store applies the ones a database lacks when it opens, so no
+`init.sql` is involved. To change the schema:
+
+1. Edit `internal/co/store/postgres/ent/schema` and run `go generate ./internal/co/store/postgres/ent`.
+2. Add the next migration, e.g. `0002_<change>.sql`, with the SQL that takes the current schema to
+   the new one. `go run entgo.io/ent/cmd/ent schema ./internal/co/store/postgres/ent/schema
+   --dialect postgres --version 16` prints the full target DDL to start from. Never edit a
+   released migration.
+3. Run the tests against Postgres: `TestMigrationsMatchSchema` fails, naming the missing SQL, if
+   the migrations and the schema disagree.
+
+The store tests run on every backend; set `IEO_TEST_DATABASE_URL` to include Postgres. Each test
+creates and drops a schema of its own in that database:
+
+```sh
+docker compose -f deploy/dev/compose.yaml up -d --wait postgres
+# PowerShell: $env:IEO_TEST_DATABASE_URL = "postgres://..."
+export IEO_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable"
+go test ./internal/co/...
+```
+
+Without it the Postgres subtests skip; CI sets `IEO_REQUIRE_POSTGRES=1`, which makes them fail
+instead.
+
 ### Inspect the databases
 
 ```sh

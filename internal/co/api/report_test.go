@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/balaji-balu/ieo/internal/co/api"
+	"github.com/balaji-balu/ieo/internal/co/auth"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
+	"github.com/balaji-balu/ieo/internal/co/store/storetest"
 	"github.com/balaji-balu/ieo/internal/contract"
 )
 
@@ -84,230 +88,306 @@ func (f fixture) siteVersion(site contract.SiteID) contract.ManifestVersion {
 // SPEC §17.2: "A host capability report before the gateway report returns `404
 // gateway-not-found`."
 func TestSpec_17_2_HostCapabilityReportBeforeGatewayReturns404(t *testing.T) {
-	f := newFixture(t)
-	host := "/api/v1/capabilities/site-1/host-2"
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		host := "/api/v1/capabilities/site-1/host-2"
 
-	f.wantProblem(f.send(site1, http.MethodPut, host, capabilities("site-1/host-2", "")),
-		http.StatusNotFound, contract.ProblemGatewayNotFound, "put", capabilitiesPath)
-	if _, err := f.deploy.Create(f.ctx, deploy.Request{AppID: appID, Version: version,
-		Target: contract.DeviceID{Site: site1, Host: "host-2"}}); !errors.Is(err, deploy.ErrCheckFailed) {
-		t.Fatalf("deploy to a rejected host: err %v, want ErrCheckFailed", err)
-	}
+		f.wantProblem(f.send(site1, http.MethodPut, host, capabilities("site-1/host-2", "")),
+			http.StatusNotFound, contract.ProblemGatewayNotFound, "put", capabilitiesPath)
+		if _, err := f.deploy.Create(f.ctx, deploy.Request{AppID: appID, Version: version,
+			Target: contract.DeviceID{Site: site1, Host: "host-2"}}); !errors.Is(err, deploy.ErrCheckFailed) {
+			t.Fatalf("deploy to a rejected host: err %v, want ErrCheckFailed", err)
+		}
 
-	f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1", capabilities("site-1", "")), http.StatusCreated)
-	f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1", capabilities("site-1", "")), http.StatusOK)
-	f.wantStatus(f.send(site1, http.MethodPut, host, capabilities("site-1/host-2", `{"line":"2"}`)), http.StatusCreated)
-	f.wantStatus(f.send(site1, http.MethodPut, host, capabilities("site-1/host-2", `{"line":"3"}`)), http.StatusOK)
+		f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1", capabilities("site-1", "")), http.StatusCreated)
+		f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1", capabilities("site-1", "")), http.StatusOK)
+		f.wantStatus(f.send(site1, http.MethodPut, host, capabilities("site-1/host-2", `{"line":"2"}`)), http.StatusCreated)
+		f.wantStatus(f.send(site1, http.MethodPut, host, capabilities("site-1/host-2", `{"line":"3"}`)), http.StatusOK)
 
-	// The reported host is what preliminary checks see (SPEC §8.1.1).
-	if _, err := f.deploy.Create(f.ctx, deploy.Request{AppID: appID, Version: version,
-		Target: contract.DeviceID{Site: site1, Host: "host-2"}}); err != nil {
-		t.Errorf("deploy to the reported host: %v", err)
-	}
-	// Another site's gateway report doesn't count.
-	f.wantProblem(f.send(site2, http.MethodPut, "/api/v1/capabilities/site-2/host-2", capabilities("site-2/host-2", "")),
-		http.StatusNotFound, contract.ProblemGatewayNotFound, "put", capabilitiesPath)
+		// The reported host is what preliminary checks see (SPEC §8.1.1).
+		if _, err := f.deploy.Create(f.ctx, deploy.Request{AppID: appID, Version: version,
+			Target: contract.DeviceID{Site: site1, Host: "host-2"}}); err != nil {
+			t.Errorf("deploy to the reported host: %v", err)
+		}
+		// Another site's gateway report doesn't count.
+		f.wantProblem(f.send(site2, http.MethodPut, "/api/v1/capabilities/site-2/host-2", capabilities("site-2/host-2", "")),
+			http.StatusNotFound, contract.ProblemGatewayNotFound, "put", capabilitiesPath)
+	})
 }
 
 // SPEC §11.1: capability report rules.
 func TestCapabilityReportRules(t *testing.T) {
-	f := newFixture(t)
-	f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1", capabilities("site-1", "")), http.StatusCreated)
-	put := http.MethodPut
-	for _, tt := range []struct {
-		name, method, path, body string
-		status                   int
-		typ                      string
-	}{
-		{"another site's gateway", put, "/api/v1/capabilities/site-2", capabilities("site-2", ""),
-			http.StatusForbidden, contract.ProblemNotAuthorized},
-		{"another site's host", put, "/api/v1/capabilities/site-2/host-1", capabilities("site-2/host-1", ""),
-			http.StatusForbidden, contract.ProblemNotAuthorized},
-		{"autonomous target", put, "/api/v1/capabilities/site-1/*", capabilities("site-1/host-1", ""),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"child of a host", put, "/api/v1/capabilities/site-1/host-1/cam", capabilities("site-1/host-1/cam", ""),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"id differs from path", put, "/api/v1/capabilities/site-1/host-3", capabilities("site-1/host-4", ""),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"schema: no vendor", put, "/api/v1/capabilities/site-1/host-3",
-			`{"properties":{"id":"site-1/host-3","modelNumber":"m","serialNumber":"1"}}`,
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"label that is not a string", put, "/api/v1/capabilities/site-1/host-3", capabilities("site-1/host-3", `{"line":2}`),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"not JSON", put, "/api/v1/capabilities/site-1/host-3", `{"properties":`,
-			http.StatusBadRequest, contract.ProblemInvalidRequest},
-		{"delete another site's host", http.MethodDelete, "/api/v1/capabilities/site-2/host-1", "",
-			http.StatusForbidden, contract.ProblemNotAuthorized},
-		{"delete unknown host", http.MethodDelete, "/api/v1/capabilities/site-1/host-9", "",
-			http.StatusNotFound, contract.ProblemDeviceNotFound},
-		{"delete the gateway", http.MethodDelete, "/api/v1/capabilities/site-1", "",
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			f := f.with(t)
-			p := f.wantProblem(f.send(site1, tt.method, tt.path, tt.body), tt.status, tt.typ,
-				strings.ToLower(tt.method), capabilitiesPath)
-			if tt.status == http.StatusUnprocessableEntity && len(p.Errors) == 0 {
-				t.Error("422 without errors[]")
-			}
-		})
-	}
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1", capabilities("site-1", "")), http.StatusCreated)
+		put := http.MethodPut
+		for _, tt := range []struct {
+			name, method, path, body string
+			status                   int
+			typ                      string
+		}{
+			{"another site's gateway", put, "/api/v1/capabilities/site-2", capabilities("site-2", ""),
+				http.StatusForbidden, contract.ProblemNotAuthorized},
+			{"another site's host", put, "/api/v1/capabilities/site-2/host-1", capabilities("site-2/host-1", ""),
+				http.StatusForbidden, contract.ProblemNotAuthorized},
+			{"autonomous target", put, "/api/v1/capabilities/site-1/*", capabilities("site-1/host-1", ""),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"child of a host", put, "/api/v1/capabilities/site-1/host-1/cam", capabilities("site-1/host-1/cam", ""),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"id differs from path", put, "/api/v1/capabilities/site-1/host-3", capabilities("site-1/host-4", ""),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"schema: no vendor", put, "/api/v1/capabilities/site-1/host-3",
+				`{"properties":{"id":"site-1/host-3","modelNumber":"m","serialNumber":"1"}}`,
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"label that is not a string", put, "/api/v1/capabilities/site-1/host-3", capabilities("site-1/host-3", `{"line":2}`),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"not JSON", put, "/api/v1/capabilities/site-1/host-3", `{"properties":`,
+				http.StatusBadRequest, contract.ProblemInvalidRequest},
+			{"delete another site's host", http.MethodDelete, "/api/v1/capabilities/site-2/host-1", "",
+				http.StatusForbidden, contract.ProblemNotAuthorized},
+			{"delete unknown host", http.MethodDelete, "/api/v1/capabilities/site-1/host-9", "",
+				http.StatusNotFound, contract.ProblemDeviceNotFound},
+			{"delete the gateway", http.MethodDelete, "/api/v1/capabilities/site-1", "",
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				f := f.with(t)
+				p := f.wantProblem(f.send(site1, tt.method, tt.path, tt.body), tt.status, tt.typ,
+					strings.ToLower(tt.method), capabilitiesPath)
+				if tt.status == http.StatusUnprocessableEntity && len(p.Errors) == 0 {
+					t.Error("422 without errors[]")
+				}
+			})
+		}
 
-	// DELETE removes a host: preliminary checks no longer see it.
-	f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1/host-3", capabilities("site-1/host-3", "")), http.StatusCreated)
-	f.wantStatus(f.send(site1, http.MethodDelete, "/api/v1/capabilities/site-1/host-3", ""), http.StatusNoContent)
-	if _, err := f.deploy.Create(f.ctx, deploy.Request{AppID: appID, Version: version,
-		Target: contract.DeviceID{Site: site1, Host: "host-3"}}); !errors.Is(err, deploy.ErrCheckFailed) {
-		t.Errorf("deploy to a removed host: err %v, want ErrCheckFailed", err)
-	}
+		// DELETE removes a host: preliminary checks no longer see it.
+		f.wantStatus(f.send(site1, http.MethodPut, "/api/v1/capabilities/site-1/host-3", capabilities("site-1/host-3", "")), http.StatusCreated)
+		f.wantStatus(f.send(site1, http.MethodDelete, "/api/v1/capabilities/site-1/host-3", ""), http.StatusNoContent)
+		if _, err := f.deploy.Create(f.ctx, deploy.Request{AppID: appID, Version: version,
+			Target: contract.DeviceID{Site: site1, Host: "host-3"}}); !errors.Is(err, deploy.ErrCheckFailed) {
+			t.Errorf("deploy to a removed host: err %v, want ErrCheckFailed", err)
+		}
+	})
 }
 
 // SPEC §17.2: "A deleted deployment reported `removed` is marked removed; status history keeps
 // every report."
 func TestSpec_17_2_DeletedDeploymentReportedRemovedIsMarkedRemovedHistoryKept(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(site1, "hi")
-	f.reportStatus(site1, d.ID, status(d.ID, "site-1/host-1", f.siteVersion(site1), contract.StateInstalled), http.StatusCreated)
-	if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	f.reportStatus(site1, d.ID, status(d.ID, "site-1/host-1", f.siteVersion(site1), contract.StateRemoving), http.StatusOK)
-	if got := f.deployment(d.ID); got.Removed {
-		t.Fatal("marked removed on `removing`")
-	}
-	f.reportStatus(site1, d.ID, status(d.ID, "site-1/host-1", f.siteVersion(site1), contract.StateRemoved), http.StatusOK)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(site1, "hi")
+		f.reportStatus(site1, d.ID, status(d.ID, "site-1/host-1", f.siteVersion(site1), contract.StateInstalled), http.StatusCreated)
+		if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		f.reportStatus(site1, d.ID, status(d.ID, "site-1/host-1", f.siteVersion(site1), contract.StateRemoving), http.StatusOK)
+		if got := f.deployment(d.ID); got.Removed {
+			t.Fatal("marked removed on `removing`")
+		}
+		f.reportStatus(site1, d.ID, status(d.ID, "site-1/host-1", f.siteVersion(site1), contract.StateRemoved), http.StatusOK)
 
-	if got := f.deployment(d.ID); !got.Removed {
-		t.Error("deleted deployment reported removed is not marked removed")
-	}
-	f.wantHistory(d.ID, contract.StateInstalled, contract.StateRemoving, contract.StateRemoved)
-	f.wantCurrent(d.ID, contract.StateRemoved)
+		if got := f.deployment(d.ID); !got.Removed {
+			t.Error("deleted deployment reported removed is not marked removed")
+		}
+		f.wantHistory(d.ID, contract.StateInstalled, contract.StateRemoving, contract.StateRemoved)
+		f.wantCurrent(d.ID, contract.StateRemoved)
 
-	// A deployment that is not deleted is not marked removed.
-	live := f.create(site1, "hola")
-	f.reportStatus(site1, live.ID, status(live.ID, "", f.siteVersion(site1), contract.StateRemoved), http.StatusCreated)
-	if f.deployment(live.ID).Removed {
-		t.Error("a deployment that is not deleted was marked removed")
-	}
+		// A deployment that is not deleted is not marked removed.
+		live := f.create(site1, "hola")
+		f.reportStatus(site1, live.ID, status(live.ID, "", f.siteVersion(site1), contract.StateRemoved), http.StatusCreated)
+		if f.deployment(live.ID).Removed {
+			t.Error("a deployment that is not deleted was marked removed")
+		}
+	})
 }
 
 // SPEC §8.1.2: a status whose adoptedManifestVersion is older than the version holding the
 // current digest is kept in history but is not current, and does not mark a deployment removed.
 func TestStatusWithStaleAdoptedManifestVersionIsHistoryOnly(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(site1, "hi")
-	v1 := f.siteVersion(site1)
-	f.reportStatus(site1, d.ID, status(d.ID, "", v1, contract.StateInstalled), http.StatusCreated)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(site1, "hi")
+		v1 := f.siteVersion(site1)
+		f.reportStatus(site1, d.ID, status(d.ID, "", v1, contract.StateInstalled), http.StatusCreated)
 
-	if _, err := f.deploy.Update(f.ctx, d.ID, deploy.Request{AppID: appID, Version: version, Target: d.Target,
-		Parameters: map[string]any{"greeting": "ciao"}}); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	v2 := f.siteVersion(site1)
-	// A later manifest that leaves d's digest alone does not make v2 reports stale.
-	f.create(site1, "other")
-
-	f.reportStatus(site1, d.ID, status(d.ID, "", v1, contract.StateFailed), http.StatusOK)
-	f.wantCurrent(d.ID, contract.StateInstalled)
-	f.reportStatus(site1, d.ID, status(d.ID, "", v2, contract.StateInstalling), http.StatusOK)
-	f.wantCurrent(d.ID, contract.StateInstalling)
-
-	if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	// `removed` counts only from the manifest that deleted the deployment: v1 is about an older
-	// digest, and v2 predates the deletion (e.g. a report delayed in the outbox).
-	for _, v := range []contract.ManifestVersion{v1, v2} {
-		f.reportStatus(site1, d.ID, status(d.ID, "", v, contract.StateRemoved), http.StatusOK)
-		if f.deployment(d.ID).Removed {
-			t.Fatalf("a `removed` adopted at version %d marked the deployment removed", v)
+		if _, err := f.deploy.Update(f.ctx, d.ID, deploy.Request{AppID: appID, Version: version, Target: d.Target,
+			Parameters: map[string]any{"greeting": "ciao"}}); err != nil {
+			t.Fatalf("update: %v", err)
 		}
-	}
-	f.reportStatus(site1, d.ID, status(d.ID, "", f.siteVersion(site1), contract.StateRemoved), http.StatusOK)
-	if !f.deployment(d.ID).Removed {
-		t.Error("`removed` at the deleting version did not mark the deployment removed")
-	}
-	f.wantHistory(d.ID, contract.StateInstalled, contract.StateFailed, contract.StateInstalling,
-		contract.StateRemoved, contract.StateRemoved, contract.StateRemoved)
+		v2 := f.siteVersion(site1)
+		// A later manifest that leaves d's digest alone does not make v2 reports stale.
+		f.create(site1, "other")
+
+		f.reportStatus(site1, d.ID, status(d.ID, "", v1, contract.StateFailed), http.StatusOK)
+		f.wantCurrent(d.ID, contract.StateInstalled)
+		f.reportStatus(site1, d.ID, status(d.ID, "", v2, contract.StateInstalling), http.StatusOK)
+		f.wantCurrent(d.ID, contract.StateInstalling)
+
+		if err := f.deploy.Delete(f.ctx, d.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		// `removed` counts only from the manifest that deleted the deployment: v1 is about an older
+		// digest, and v2 predates the deletion (e.g. a report delayed in the outbox).
+		for _, v := range []contract.ManifestVersion{v1, v2} {
+			f.reportStatus(site1, d.ID, status(d.ID, "", v, contract.StateRemoved), http.StatusOK)
+			if f.deployment(d.ID).Removed {
+				t.Fatalf("a `removed` adopted at version %d marked the deployment removed", v)
+			}
+		}
+		f.reportStatus(site1, d.ID, status(d.ID, "", f.siteVersion(site1), contract.StateRemoved), http.StatusOK)
+		if !f.deployment(d.ID).Removed {
+			t.Error("`removed` at the deleting version did not mark the deployment removed")
+		}
+		f.wantHistory(d.ID, contract.StateInstalled, contract.StateFailed, contract.StateInstalling,
+			contract.StateRemoved, contract.StateRemoved, contract.StateRemoved)
+	})
 }
 
 func TestWrongMethodOnStatusIs405(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(site1, "hi")
-	for _, method := range []string{http.MethodGet, http.MethodPut} {
-		rec := f.send(site1, method, "/api/v1/deployments/"+d.ID.String()+"/status", "")
-		f.wantProblem(rec, http.StatusMethodNotAllowed, contract.ProblemAboutBlank, strings.ToLower(method), statusPath)
-		if got := rec.Header().Get("Allow"); got != "POST" {
-			t.Errorf("%s: Allow %q, want POST", method, got)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(site1, "hi")
+		for _, method := range []string{http.MethodGet, http.MethodPut} {
+			rec := f.send(site1, method, "/api/v1/deployments/"+d.ID.String()+"/status", "")
+			f.wantProblem(rec, http.StatusMethodNotAllowed, contract.ProblemAboutBlank, strings.ToLower(method), statusPath)
+			if got := rec.Header().Get("Allow"); got != "POST" {
+				t.Errorf("%s: Allow %q, want POST", method, got)
+			}
 		}
-	}
+	})
 }
 
 // SPEC §11.1: status report rules.
 func TestStatusReportRules(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(site1, "hi")
-	other := f.create(site2, "hola")
-	v := f.siteVersion(site1)
-	for _, tt := range []struct {
-		name   string
-		id     uuid.UUID
-		body   string
-		status int
-		typ    string
-	}{
-		{"body names another deployment", d.ID, status(other.ID, "", v, contract.StateInstalled),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"another site's deployment", other.ID, status(other.ID, "", 1, contract.StateInstalled),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"unknown deployment", uuid.Nil, "", http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"device at another site", d.ID, status(d.ID, "site-2/host-1", v, contract.StateInstalled),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"adopted version 0", d.ID, status(d.ID, "", 0, contract.StateInstalled),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"adopted version not yet published", d.ID, status(d.ID, "", v+1, contract.StateInstalled),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"schema: unknown state", d.ID, strings.Replace(status(d.ID, "", v, contract.StateInstalled), `"installed"`, `"running"`, 1),
-			http.StatusUnprocessableEntity, contract.ProblemSemanticError},
-		{"not JSON", d.ID, "{", http.StatusBadRequest, contract.ProblemInvalidRequest},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			f := f.with(t)
-			id, body := tt.id, tt.body
-			if id == uuid.Nil {
-				id = uuid.New()
-				body = status(id, "", v, contract.StateInstalled)
-			}
-			rec := f.send(site1, http.MethodPost, "/api/v1/deployments/"+id.String()+"/status", body)
-			p := f.wantProblem(rec, tt.status, tt.typ, "post", statusPath)
-			if tt.status == http.StatusUnprocessableEntity && (len(p.Errors) == 0 || p.Errors[0].Field == "") {
-				t.Errorf("422 errors[] %+v, want a named field", p.Errors)
-			}
-		})
-	}
-	if h := f.history(d.ID); len(h) != 0 {
-		t.Errorf("rejected reports were recorded: %v", h)
-	}
-	if h := f.history(other.ID); len(h) != 0 {
-		t.Errorf("another site's deployment got a report: %v", h)
-	}
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(site1, "hi")
+		other := f.create(site2, "hola")
+		v := f.siteVersion(site1)
+		for _, tt := range []struct {
+			name   string
+			id     uuid.UUID
+			body   string
+			status int
+			typ    string
+		}{
+			{"body names another deployment", d.ID, status(other.ID, "", v, contract.StateInstalled),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"another site's deployment", other.ID, status(other.ID, "", 1, contract.StateInstalled),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"unknown deployment", uuid.Nil, "", http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"device at another site", d.ID, status(d.ID, "site-2/host-1", v, contract.StateInstalled),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"adopted version 0", d.ID, status(d.ID, "", 0, contract.StateInstalled),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"adopted version not yet published", d.ID, status(d.ID, "", v+1, contract.StateInstalled),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"schema: unknown state", d.ID, strings.Replace(status(d.ID, "", v, contract.StateInstalled), `"installed"`, `"running"`, 1),
+				http.StatusUnprocessableEntity, contract.ProblemSemanticError},
+			{"not JSON", d.ID, "{", http.StatusBadRequest, contract.ProblemInvalidRequest},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				f := f.with(t)
+				id, body := tt.id, tt.body
+				if id == uuid.Nil {
+					id = uuid.New()
+					body = status(id, "", v, contract.StateInstalled)
+				}
+				rec := f.send(site1, http.MethodPost, "/api/v1/deployments/"+id.String()+"/status", body)
+				p := f.wantProblem(rec, tt.status, tt.typ, "post", statusPath)
+				if tt.status == http.StatusUnprocessableEntity && (len(p.Errors) == 0 || p.Errors[0].Field == "") {
+					t.Errorf("422 errors[] %+v, want a named field", p.Errors)
+				}
+			})
+		}
+		if h := f.history(d.ID); len(h) != 0 {
+			t.Errorf("rejected reports were recorded: %v", h)
+		}
+		if h := f.history(other.ID); len(h) != 0 {
+			t.Errorf("another site's deployment got a report: %v", h)
+		}
+	})
 }
 
 // SPEC §17.2: a retired site gets 403 on the report endpoints too.
 func TestRetiredSiteCannotReport(t *testing.T) {
-	f := newFixture(t)
-	d := f.create(site1, "hi")
-	if err := f.deploy.RetireSite(f.ctx, site1); err != nil {
-		t.Fatal(err)
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(site1, "hi")
+		if err := f.deploy.RetireSite(f.ctx, site1); err != nil {
+			t.Fatal(err)
+		}
+		for _, tt := range []struct{ method, url, path, body string }{
+			{http.MethodPut, "/api/v1/capabilities/site-1", capabilitiesPath, capabilities("site-1", "")},
+			{http.MethodDelete, "/api/v1/capabilities/site-1/host-1", capabilitiesPath, ""},
+			{http.MethodPost, "/api/v1/deployments/" + d.ID.String() + "/status", statusPath, status(d.ID, "", 2, contract.StateInstalled)},
+		} {
+			f.wantProblem(f.send(site1, tt.method, tt.url, tt.body), http.StatusForbidden, contract.ProblemNotAuthorized,
+				strings.ToLower(tt.method), tt.path)
+		}
+	})
+}
+
+// SPEC §11.1: a site retired after the API checked its token gets the same 403 when its report is
+// written, and a site that no longer exists gets 401, as an unknown token does (SPEC §15.6).
+func TestSiteChangedAfterAuthCheck(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(site1, "hi")
+		if err := f.deploy.RetireSite(f.ctx, site1); err != nil {
+			t.Fatal(err)
+		}
+		const gone = contract.SiteID("site-gone")
+		f.tokens[gone] = "token-of-a-removed-site"
+		// The check sees each site as it was when the request arrived: active, and existing.
+		f.handler = api.New(staleAuth{auth.New(f.store), f.tokens[gone], gone}, staleStore{f.store}, f.deploy, nil)
+		for _, tt := range []struct {
+			site                    contract.SiteID
+			status                  int
+			typ                     string
+			method, url, path, body string
+		}{
+			{site1, http.StatusForbidden, contract.ProblemNotAuthorized, http.MethodPut, "/api/v1/capabilities/site-1", capabilitiesPath, capabilities("site-1", "")},
+			{site1, http.StatusForbidden, contract.ProblemNotAuthorized, http.MethodDelete, "/api/v1/capabilities/site-1/host-1", capabilitiesPath, ""},
+			{site1, http.StatusForbidden, contract.ProblemNotAuthorized, http.MethodPost, "/api/v1/deployments/" + d.ID.String() + "/status", statusPath, status(d.ID, "", 2, contract.StateInstalled)},
+			{gone, http.StatusUnauthorized, contract.ProblemAboutBlank, http.MethodPut, "/api/v1/capabilities/site-gone", capabilitiesPath, capabilities("site-gone", "")},
+			{gone, http.StatusUnauthorized, contract.ProblemAboutBlank, http.MethodDelete, "/api/v1/capabilities/site-gone/host-1", capabilitiesPath, ""},
+			{gone, http.StatusUnauthorized, contract.ProblemAboutBlank, http.MethodPost, "/api/v1/deployments/" + d.ID.String() + "/status", statusPath, status(d.ID, "", 2, contract.StateInstalled)},
+		} {
+			t.Run(string(tt.site)+" "+tt.method+" "+tt.path, func(t *testing.T) {
+				f := f.with(t)
+				rec := f.send(tt.site, tt.method, tt.url, tt.body)
+				f.wantProblem(rec, tt.status, tt.typ, strings.ToLower(tt.method), tt.path)
+				if tt.status == http.StatusUnauthorized && rec.Header().Get("WWW-Authenticate") != "Bearer" {
+					t.Errorf("WWW-Authenticate %q, want Bearer", rec.Header().Get("WWW-Authenticate"))
+				}
+			})
+		}
+		if h := f.history(d.ID); len(h) != 0 {
+			t.Errorf("reports were recorded: %v", h)
+		}
+	})
+}
+
+// staleAuth maps token to site, a site the store no longer has, and every other token as auth does.
+type staleAuth struct {
+	*auth.Tokens
+	token string
+	site  contract.SiteID
+}
+
+func (a staleAuth) Verify(ctx context.Context, token string) (contract.SiteID, error) {
+	if token == a.token {
+		return a.site, nil
 	}
-	for _, tt := range []struct{ method, url, path, body string }{
-		{http.MethodPut, "/api/v1/capabilities/site-1", capabilitiesPath, capabilities("site-1", "")},
-		{http.MethodDelete, "/api/v1/capabilities/site-1/host-1", capabilitiesPath, ""},
-		{http.MethodPost, "/api/v1/deployments/" + d.ID.String() + "/status", statusPath, status(d.ID, "", 2, contract.StateInstalled)},
-	} {
-		f.wantProblem(f.send(site1, tt.method, tt.url, tt.body), http.StatusForbidden, contract.ProblemNotAuthorized,
-			strings.ToLower(tt.method), tt.path)
-	}
+	return a.Tokens.Verify(ctx, token)
+}
+
+// staleStore reports every site as existing and active.
+type staleStore struct{ storetest.Store }
+
+func (staleStore) Site(_ context.Context, id contract.SiteID) (deploy.Site, bool, error) {
+	return deploy.Site{ID: id}, true, nil
 }
 
 func (f fixture) deployment(id uuid.UUID) deploy.Deployment {
