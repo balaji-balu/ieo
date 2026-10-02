@@ -413,6 +413,38 @@ succeed without changes.
 - The EN writes values into the Compose project's environment file for that component.
 - Secrets MUST NOT be read from the archive. Secret provisioning is out of scope (§15.4).
 
+### 5.5 Device Constraint Evaluation `[IEO]`
+
+A host *satisfies* a profile's `deviceConstraints` when it satisfies every `eligibilityRule` and,
+where §8 asks for it, the `capacityRequirements`. Margo defines the operators; IEO fixes what Margo
+leaves open. The CO (§8.1.1) and the LO (§8.4, §8.6) use the same rules.
+
+Eligibility rules:
+
+- Every rule MUST match. Within a rule, `propertySelector` and `labelSelector` MUST both match
+  (an absent selector matches). Within a selector, every match expression MUST match `[Margo]`.
+- A property selector's `key` is an RFC 6901 JSON Pointer into the host's capabilities
+  `properties` object as encoded on the wire (§11.1), e.g. `/cpus/0/architecture`. A label
+  selector's `key` is a label name.
+- A key is absent when the pointer resolves to nothing or the label is not set. For an absent key,
+  `NotIn` and `DoesNotExist` match; `In`, `Gt`, `Lt`, `Exists`, `ContainsAll` and `ContainsAny`
+  do not.
+- `In` / `NotIn`: the value equals (does not equal) one of `values`. Property values compare by
+  JSON type and value (numbers numerically). Labels are strings (§4.1.2) and compare by text form:
+  label `"2"` equals `2` and `"2"`, label `"true"` equals `true`.
+- `Gt` / `Lt`: `values` holds exactly one number, and the value is a number (for a label, its text
+  read as a decimal number) greater (less) than it. Anything else does not match.
+- `ContainsAll` / `ContainsAny`: the value is an array, and some element satisfies all (at least
+  one) of the `itemSelector` expressions, whose keys are JSON Pointers relative to the element.
+
+Capacity requirements, against the host's reported capabilities:
+
+- `cpu`: a single `cpus` entry has at least `cores` and, when `architectures` is given, an
+  `architecture` in it. Cores from different entries are never added `[Margo]`.
+- `memory`, `storage`: the reported amount, in binary units (`Ki`…`Ei`), is at least the required
+  amount.
+- A host that does not report a required field does not satisfy the requirement.
+
 ## 6. Configuration Specification
 
 ### 6.1 Configuration Resolution
@@ -610,7 +642,7 @@ instead).
 
 - The target site exists and is `active`.
 - Directed: the host exists and its last reported capabilities satisfy `eligibilityRules` and
-  `capacityRequirements`.
+  `capacityRequirements` (§5.5).
 - Autonomous: at least one host at the site satisfies them.
 - Every REQUIRED parameter has a value. A parameter is REQUIRED when its Application Description
   gives it no `value`, since Margo requires a `value` for every deployment parameter. A request

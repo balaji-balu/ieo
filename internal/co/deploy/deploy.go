@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/balaji-balu/ieo/internal/co/catalog"
+	"github.com/balaji-balu/ieo/internal/constraints"
 	"github.com/balaji-balu/ieo/internal/contract"
 )
 
@@ -231,18 +233,22 @@ func (s *Service) put(ctx context.Context, id uuid.UUID, req Request, update boo
 	if err != nil {
 		return Deployment{}, err
 	}
+	var deviceConstraints contract.DeviceConstraints
+	if profile.DeviceConstraints != nil {
+		deviceConstraints = *profile.DeviceConstraints
+	}
 	d := Deployment{
 		ID:         id,
 		Target:     req.Target,
 		AppID:      req.AppID,
 		AppVersion: req.Version,
-		Profile:    profile,
+		Profile:    profile.ID,
 		Name:       cmp.Or(req.Name, req.AppID),
 		Namespace:  cmp.Or(req.Namespace, req.AppID),
 		Parameters: req.Parameters,
 	}
 	yamlBytes, err := contract.BuildApplicationDeployment(app.Description, contract.DeploymentChoices{
-		ID: id, Name: d.Name, Namespace: d.Namespace, DeviceID: d.Target, Profile: profile, Parameters: d.Parameters,
+		ID: id, Name: d.Name, Namespace: d.Namespace, DeviceID: d.Target, Profile: profile.ID, Parameters: d.Parameters,
 	})
 	if errors.Is(err, contract.ErrDeploymentParameter) {
 		return Deployment{}, fmt.Errorf("%w: %w", ErrCheckFailed, err) // SPEC §8.1.1
@@ -253,7 +259,7 @@ func (s *Service) put(ctx context.Context, id uuid.UUID, req Request, update boo
 	d.Digest = contract.DigestOf(yamlBytes) // SPEC §8.1 step 3
 
 	err = s.store.ChangeSite(ctx, req.Target.Site, func(state SiteState, exists bool) (SiteChange, error) {
-		if err := checkTarget(state, exists, req.Target); err != nil {
+		if err := checkTarget(state, exists, req.Target, deviceConstraints); err != nil {
 			return SiteChange{}, err
 		}
 		if update {
@@ -273,44 +279,63 @@ func (s *Service) put(ctx context.Context, id uuid.UUID, req Request, update boo
 	return d, nil
 }
 
-// selectProfile returns the id of the requested compose profile, or of the only one when none is
-// requested (SPEC §11.3).
-func selectProfile(desc contract.ApplicationDescription, requested string) (string, error) {
-	var compose []string
+// selectProfile returns the requested compose profile, or the only one when none is requested
+// (SPEC §11.3).
+func selectProfile(desc contract.ApplicationDescription, requested string) (contract.ApplicationDeploymentProfile, error) {
+	var compose []contract.ApplicationDeploymentProfile
+	var ids []string
 	for _, p := range desc.DeploymentProfiles {
-		if p.Type == contract.ProfileTypeCompose {
-			compose = append(compose, p.ID)
+		if p.Type != contract.ProfileTypeCompose {
+			continue
 		}
+		if requested != "" && p.ID == requested {
+			return p, nil
+		}
+		compose = append(compose, p)
+		ids = append(ids, p.ID)
 	}
 	switch {
-	case requested != "" && slices.Contains(compose, requested):
-		return requested, nil
 	case requested != "":
-		return "", fmt.Errorf("%w: no %s deployment profile %q", ErrInvalidRequest, contract.ProfileTypeCompose, requested)
+		return contract.ApplicationDeploymentProfile{}, fmt.Errorf("%w: no %s deployment profile %q",
+			ErrInvalidRequest, contract.ProfileTypeCompose, requested)
 	case len(compose) == 1:
 		return compose[0], nil
 	default:
-		return "", fmt.Errorf("%w: %d %s deployment profiles, name one of %v", ErrInvalidRequest,
-			len(compose), contract.ProfileTypeCompose, compose)
+		return contract.ApplicationDeploymentProfile{}, fmt.Errorf("%w: %d %s deployment profiles, name one of %v",
+			ErrInvalidRequest, len(compose), contract.ProfileTypeCompose, ids)
 	}
 }
 
-// checkTarget runs the site and host checks of SPEC §8.1.1. Device constraints are not evaluated
-// yet (roadmap B2b).
-func checkTarget(state SiteState, exists bool, target contract.DeviceID) error {
+// checkTarget runs the site and host checks of SPEC §8.1.1: a directed host must satisfy c, and an
+// autonomous target needs at least one host at the site that does (SPEC §5.5).
+func checkTarget(state SiteState, exists bool, target contract.DeviceID, c contract.DeviceConstraints) error {
 	switch {
 	case !exists:
 		return fmt.Errorf("%w: unknown site %s", ErrCheckFailed, target.Site)
 	case state.Site.Retired:
 		return fmt.Errorf("%w: site %s is retired", ErrCheckFailed, target.Site)
-	case target.Autonomous && len(state.Hosts) == 0:
-		return fmt.Errorf("%w: site %s has no eligible host", ErrCheckFailed, target.Site)
 	case !target.Autonomous:
-		if _, ok := state.Hosts[target.Host]; !ok {
+		caps, ok := state.Hosts[target.Host]
+		if !ok {
 			return fmt.Errorf("%w: unknown host %s", ErrCheckFailed, target)
 		}
+		if err := constraints.Check(c, caps); err != nil {
+			return fmt.Errorf("%w: host %s: %w", ErrCheckFailed, target, err)
+		}
+		return nil
 	}
-	return nil
+	var reasons []string
+	for _, host := range slices.Sorted(maps.Keys(state.Hosts)) {
+		err := constraints.Check(c, state.Hosts[host])
+		if err == nil {
+			return nil
+		}
+		reasons = append(reasons, fmt.Sprintf("%s: %v", host, err))
+	}
+	if len(reasons) == 0 {
+		return fmt.Errorf("%w: site %s has no hosts", ErrCheckFailed, target.Site)
+	}
+	return fmt.Errorf("%w: no eligible host at site %s (%s)", ErrCheckFailed, target.Site, strings.Join(reasons, "; "))
 }
 
 // republish returns the change that puts d, whose YAML is yamlBytes (nil when d is deleted), into

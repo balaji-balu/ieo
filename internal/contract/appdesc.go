@@ -49,9 +49,10 @@ type ApplicationMetadata struct {
 // ApplicationDeploymentProfile is one way to deploy the application: Type is `compose`, `helm` or
 // `custom`, and Components are installed in order.
 type ApplicationDeploymentProfile struct {
-	ID         string      `yaml:"id"`
-	Type       string      `yaml:"type"`
-	Components []Component `yaml:"components"`
+	ID                string             `yaml:"id"`
+	Type              string             `yaml:"type"`
+	Components        []Component        `yaml:"components"`
+	DeviceConstraints *DeviceConstraints `yaml:"deviceConstraints"`
 }
 
 // ApplicationParameter is a configurable parameter: its default Value and the components it is
