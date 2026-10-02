@@ -21,6 +21,10 @@ const (
 	ProblemDeploymentNotFound = "https://docs.margo.org/specification/problem-types#deployment-not-found"
 	ProblemInvalidBundle      = "https://docs.margo.org/specification/problem-types#invalid-bundle"
 	ProblemCannotGenerate     = "https://docs.margo.org/specification/problem-types#server-cannot-generate-response"
+	ProblemInvalidRequest     = "https://docs.margo.org/specification/problem-types#invalid-request"
+	ProblemSemanticError      = "https://docs.margo.org/specification/problem-types#semantic-error"
+	ProblemGatewayNotFound    = "https://docs.margo.org/specification/problem-types#gateway-not-found"
+	ProblemDeviceNotFound     = "https://docs.margo.org/specification/problem-types#device-not-found"
 	ProblemAboutBlank         = "about:blank"
 )
 
@@ -169,6 +173,8 @@ type Problem struct {
 	Status   int    `json:"status,omitempty"`
 	Detail   string `json:"detail,omitempty"`
 	Instance string `json:"instance,omitempty"`
+	// Errors are field-level errors, on 422 responses (Margo extension).
+	Errors []FieldError `json:"errors,omitempty"`
 }
 
 // ApplicationDeployment is one application instance assigned to one target (Margo

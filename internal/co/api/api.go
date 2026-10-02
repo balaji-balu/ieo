@@ -40,32 +40,53 @@ type Store interface {
 	Bundle(ctx context.Context, site contract.SiteID, digest contract.Digest) ([]byte, bool, error)
 }
 
+// Reporter takes what an LO reports (SPEC §8.1.2, §8.3). site is always the caller's site.
+type Reporter interface {
+	ReportCapabilities(ctx context.Context, site contract.SiteID, id contract.DeviceID, caps contract.DeviceCapabilitiesManifest) (created bool, err error)
+	RemoveDevice(ctx context.Context, site contract.SiteID, id contract.DeviceID) error
+	ReportStatus(ctx context.Context, site contract.SiteID, id uuid.UUID, status contract.DeploymentStatus) (created bool, err error)
+}
+
 const (
 	cacheManifest  = "private"                              // SPEC §11.1
 	cacheImmutable = "private, max-age=31536000, immutable" // SPEC §11.1
 )
 
 type server struct {
-	auth  Authenticator
-	store Store
-	log   *slog.Logger
-	mux   *http.ServeMux
+	auth     Authenticator
+	store    Store
+	reporter Reporter
+	log      *slog.Logger
+	mux      *http.ServeMux
 }
 
 type siteKey struct{}
 
 // New returns the API handler. A nil log uses slog.Default.
-func New(auth Authenticator, store Store, log *slog.Logger) http.Handler {
+func New(auth Authenticator, store Store, reporter Reporter, log *slog.Logger) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &server{auth: auth, store: store, log: log, mux: http.NewServeMux()}
+	s := &server{auth: auth, store: store, reporter: reporter, log: log, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /api/v1/deployments", s.manifest)
 	s.mux.HandleFunc("GET /api/v1/deployments/{deploymentId}/{digest}", s.deployment)
 	s.mux.HandleFunc("GET /api/v1/bundles/{digest}", s.bundle)
-	for _, p := range []string{"/api/v1/deployments", "/api/v1/deployments/{deploymentId}/{digest}", "/api/v1/bundles/{digest}"} {
-		s.mux.HandleFunc(p, methodNotAllowed) // other methods on a known path
-	}
+	s.mux.HandleFunc("PUT /api/v1/capabilities/{deviceId...}", s.putCapabilities)
+	s.mux.HandleFunc("DELETE /api/v1/capabilities/{deviceId...}", s.deleteCapabilities)
+	s.mux.HandleFunc("POST /api/v1/deployments/{deploymentId}/status", s.status)
+	// GET would otherwise reach the deployment route with digest "status".
+	s.mux.HandleFunc("GET /api/v1/deployments/{deploymentId}/status", methodNotAllowed("POST"))
+	// Other methods on a known path.
+	s.mux.HandleFunc("/api/v1/deployments", methodNotAllowed("GET, HEAD"))
+	s.mux.HandleFunc("/api/v1/bundles/{digest}", methodNotAllowed("GET, HEAD"))
+	s.mux.HandleFunc("/api/v1/capabilities/{deviceId...}", methodNotAllowed("PUT, DELETE"))
+	s.mux.HandleFunc("/api/v1/deployments/{deploymentId}/{digest}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("digest") == "status" {
+			methodNotAllowed("POST")(w, r)
+			return
+		}
+		methodNotAllowed("GET, HEAD")(w, r)
+	})
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, http.StatusNotFound, contract.ProblemAboutBlank, "", "no such resource")
 	})
@@ -249,9 +270,11 @@ func (s *server) internalError(w http.ResponseWriter, r *http.Request, site cont
 	problem(w, r, http.StatusInternalServerError, contract.ProblemAboutBlank, "", "")
 }
 
-func methodNotAllowed(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Allow", "GET, HEAD")
-	problem(w, r, http.StatusMethodNotAllowed, contract.ProblemAboutBlank, "", "")
+func methodNotAllowed(allow string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Allow", allow)
+		problem(w, r, http.StatusMethodNotAllowed, contract.ProblemAboutBlank, "", "")
+	}
 }
 
 // problem writes an RFC 9457 problem (SPEC §11.1). An empty title is the status text, as
@@ -260,7 +283,13 @@ func problem(w http.ResponseWriter, r *http.Request, status int, typ, title, det
 	if title == "" {
 		title = http.StatusText(status)
 	}
-	b, err := json.Marshal(contract.Problem{Type: typ, Title: title, Status: status, Detail: detail, Instance: r.URL.Path})
+	writeProblem(w, contract.Problem{Type: typ, Title: title, Status: status, Detail: detail, Instance: r.URL.Path})
+}
+
+// writeProblem writes p as an RFC 9457 problem (SPEC §11.1).
+func writeProblem(w http.ResponseWriter, p contract.Problem) {
+	status := p.Status
+	b, err := json.Marshal(p)
 	if err != nil { // cannot happen: every field is a string or int
 		b = []byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`)
 	}
