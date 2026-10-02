@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"maps"
+	"slices"
 	"sync"
 
 	"github.com/google/uuid"
@@ -30,6 +31,10 @@ type Memory struct {
 	// published records every digest a deployment had in a manifest, and every bundle of each
 	// site's manifests, so the API serves a site only its own content (SPEC §11.1).
 	published map[publication]bool
+	// history holds every status reported for a deployment, oldest first; current its current
+	// status (SPEC §8.1.2).
+	history map[uuid.UUID][]contract.DeploymentStatus
+	current map[uuid.UUID]contract.DeploymentStatus
 }
 
 type appKey struct{ id, version string }
@@ -58,6 +63,8 @@ func NewMemory() *Memory {
 		blobs:       map[contract.Digest][]byte{},
 		tokens:      map[auth.TokenHash]contract.SiteID{},
 		published:   map[publication]bool{},
+		history:     map[uuid.UUID][]contract.DeploymentStatus{},
+		current:     map[uuid.UUID]contract.DeploymentStatus{},
 		siteTokens:  map[contract.SiteID]auth.TokenHash{},
 	}
 }
@@ -136,7 +143,9 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 		Deployments: map[uuid.UUID]deploy.Deployment{},
 		YAML:        map[uuid.UUID][]byte{},
 		Manifest:    cloneManifest(m.manifests[site]),
+		Reports:     map[uuid.UUID]int{},
 	}
+	_, state.Gateway = m.devices[contract.DeviceID{Site: site}]
 	for id, caps := range m.devices {
 		if id.Site == site && id.Host != "" {
 			state.Hosts[id.Host] = caps
@@ -147,6 +156,7 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 			continue
 		}
 		state.Deployments[id] = cloneDeployment(sd.d)
+		state.Reports[id] = len(m.history[id])
 		if !sd.d.Deleted {
 			state.YAML[id] = bytes.Clone(m.blobs[sd.d.Digest])
 		}
@@ -167,6 +177,20 @@ func (m *Memory) ChangeSite(_ context.Context, site contract.SiteID,
 	for d, b := range c.Blobs {
 		if _, ok := m.blobs[d]; !ok {
 			m.blobs[d] = bytes.Clone(b)
+		}
+	}
+	if c.Device != nil {
+		if c.Device.Capabilities == nil {
+			delete(m.devices, c.Device.ID)
+		} else {
+			m.devices[c.Device.ID] = cloneCapabilities(*c.Device.Capabilities)
+		}
+	}
+	if c.Status != nil {
+		id := c.Status.Status.DeploymentID
+		m.history[id] = append(m.history[id], cloneStatus(c.Status.Status))
+		if c.Status.Current {
+			m.current[id] = cloneStatus(c.Status.Status)
 		}
 	}
 	if c.Manifest != nil {
@@ -245,4 +269,39 @@ func (m *Memory) SiteByToken(_ context.Context, hash auth.TokenHash) (contract.S
 	defer m.mu.Unlock()
 	site, ok := m.tokens[hash]
 	return site, ok, nil
+}
+
+// CurrentStatus returns the current status of a deployment, and whether it has one.
+func (m *Memory) CurrentStatus(_ context.Context, id uuid.UUID) (contract.DeploymentStatus, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.current[id]
+	return cloneStatus(s), ok, nil
+}
+
+// StatusHistory returns every status reported for a deployment, oldest first.
+func (m *Memory) StatusHistory(_ context.Context, id uuid.UUID) ([]contract.DeploymentStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]contract.DeploymentStatus, len(m.history[id]))
+	for i, s := range m.history[id] {
+		out[i] = cloneStatus(s)
+	}
+	return out, nil
+}
+
+func cloneStatus(s contract.DeploymentStatus) contract.DeploymentStatus {
+	s.Components = slices.Clone(s.Components)
+	return s
+}
+
+func cloneCapabilities(c contract.DeviceCapabilitiesManifest) contract.DeviceCapabilitiesManifest {
+	c.Labels = maps.Clone(c.Labels)
+	p := &c.Properties
+	p.CPUs = slices.Clone(p.CPUs)
+	p.Peripherals = slices.Clone(p.Peripherals)
+	p.Interfaces = slices.Clone(p.Interfaces)
+	p.SupportedRuntimes = slices.Clone(p.SupportedRuntimes)
+	p.SupportedDeploymentTypes = slices.Clone(p.SupportedDeploymentTypes)
+	return c
 }
