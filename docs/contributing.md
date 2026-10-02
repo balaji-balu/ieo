@@ -142,7 +142,7 @@ cp deploy/helm/ieo-co/schemas/init.sql db/init.sql
 
 ### CO store schema (`internal/co/store/postgres`)
 
-The CO's new store (roadmap B4) has its own ent schema in
+The CO's new store (roadmap B4, ADR 0013) has its own ent schema in
 `internal/co/store/postgres/ent/schema`, with `co_*` tables kept apart from the Git-based code's
 (ADR 0002). Its versioned SQL migrations live in `internal/co/store/postgres/migrations/` and are
 embedded in the binary: the store applies the ones a database lacks when it opens, so no

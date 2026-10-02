@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// migrations are the store's schema changes, applied in name order. A migration, once released,
+// migrations are the store's schema changes, applied in name order (ADR 0013). A migration, once released,
 // is never edited: add the next one.
 //
 //go:embed migrations/*.sql
