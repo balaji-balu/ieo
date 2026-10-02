@@ -10,6 +10,7 @@ require (
 	github.com/goccy/go-yaml v1.18.0
 	github.com/google/go-github/v55 v55.0.0
 	github.com/google/uuid v1.6.0
+	github.com/gowebpki/jcs v1.0.1
 	github.com/joho/godotenv v1.5.1
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.0

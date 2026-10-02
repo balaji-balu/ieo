@@ -11,6 +11,8 @@ Margo baseline: Margo Specification pre-draft, Workload Management API `1.0.0-rc
 OpenAPI file is kept unchanged at `api/margo/f209a7f/workload-management-api-1.0.0-rc.3.yaml`; a pin
 change follows §17.1 (ADR 0010). The Application Description schema (§5.3) is pinned in the same
 directory: Margo's LinkML source and the JSON Schema generated from it (see the README there).
+The ApplicationDeployment layout (§4.1.5) follows Margo's `DesiredState` schema at the same commit
+(`src/specification/margo-management-interface/desired-state.linkml.yaml`).
 
 ## Normative Language
 
@@ -243,15 +245,28 @@ One application instance assigned to one target `[Margo]`.
 Fields:
 
 - `id` (UUID) — REQUIRED. Assigned at creation and never changed. Edits keep the ID.
-- `metadata.name`, `metadata.namespace` (strings)
+- `metadata.name`, `metadata.namespace` (strings) — chosen by the CO: taken from the request,
+  each defaulting to the application ID.
 - `metadata.deviceId` (string) — the target:
   - Directed: `<site_id>/<host_id>`
   - Autonomous: `<site_id>/*`
 - `spec.applicationId` (string)
 - `spec.deploymentProfile` — the selected Compose profile: `type`, `components` copied from the
   Application Description, `deviceConstraints` copied **unmodified**.
-- `spec.parameters` (map) — parameter name → `{value, targets}`.
-- vendor `x-…-extensions` copied exactly from the Application Description.
+- `spec.parameters` (map) — parameter name → `{value, targets}`, one entry per parameter of the
+  Application Description: `value` is the request's value, or else the description's `value`;
+  `targets` are the description's. Always present (`{}` when there are none).
+- vendor `x-…-extensions` copied exactly from the Application Description: the description's
+  top-level extensions into `spec`, the profile's into `spec.deploymentProfile`, and each
+  component's with its component.
+
+Layout `[Margo]`: one YAML document with keys in this order — `id`; `metadata` (`name`,
+`namespace`, `deviceId`); `spec` (`applicationId`; `deploymentProfile` (`type`, `components`,
+`deviceConstraints` when the profile has them, then the profile's extensions); `parameters`; then the
+top-level extensions). The profile's `id` is not copied; Margo's `DesiredState` has no such field.
+
+"Copied exactly" and "copied unmodified" mean the same keys in the same order with the same values.
+The CO writes the YAML itself, so the description's indentation, quoting and comments are not kept.
 
 Derived:
 
@@ -268,7 +283,10 @@ Fields:
   site's deployment set (create, update, delete).
 - `deployments` (list) — per deployment: `deploymentId`, `digest`, content URL.
 - `bundle` (object or null) — digest and URL of a gzip tar of all deployment YAMLs; `null` when
-  there are no deployments.
+  there are no deployments. The archive layout is in ADR 0012.
+
+`deployments` is ordered by `deploymentId`, ascending. Adding a site publishes its first manifest:
+`manifestVersion` 1, no deployments, `bundle: null`.
 
 A deployment absent from the manifest is to be removed from the site.
 
@@ -583,13 +601,20 @@ On create or update of a deployment the CO MUST, in one transaction:
 On delete the CO removes the deployment from the site's manifest and increments
 `manifestVersion`. Stored YAML for old digests MAY be kept for history.
 
+`manifestVersion` increments only when the site's set of `(deploymentId, digest)` changes. An update
+that rebuilds identical bytes, or a delete of a deployment already deleted, changes no manifest. An
+update keeps the deployment's site: a target at another site is rejected (delete and create
+instead).
+
 #### 8.1.1 Preliminary Checks
 
 - The target site exists and is `active`.
 - Directed: the host exists and its last reported capabilities satisfy `eligibilityRules` and
   `capacityRequirements`.
 - Autonomous: at least one host at the site satisfies them.
-- Every REQUIRED parameter has a value.
+- Every REQUIRED parameter has a value. A parameter is REQUIRED when its Application Description
+  gives it no `value`, since Margo requires a `value` for every deployment parameter. A request
+  naming a parameter the description does not define is rejected.
 
 #### 8.1.2 Status Ingestion
 

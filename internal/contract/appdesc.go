@@ -147,7 +147,7 @@ func fixGeneratedSchema(node any) {
 					patterns = map[string]any{}
 					n["patternProperties"] = patterns
 				}
-				patterns["^x-.+-extensions$"] = map[string]any{"type": "object"}
+				patterns[extensionKeyPattern] = map[string]any{"type": "object"}
 			}
 		}
 		if n["$ref"] == "#/$defs/Schema" {
