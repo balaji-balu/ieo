@@ -89,9 +89,10 @@ func newFixture(t *testing.T) fixture {
 	}
 	tokens := auth.New(s)
 	log := &bytes.Buffer{}
+	svc := deploy.New(s)
 	f := fixture{
-		t: t, ctx: ctx, store: s, deploy: deploy.New(s),
-		handler: api.New(tokens, s, slog.New(slog.NewJSONHandler(log, nil))),
+		t: t, ctx: ctx, store: s, deploy: svc,
+		handler: api.New(tokens, s, svc, slog.New(slog.NewJSONHandler(log, nil))),
 		api:     margotest.Load(t), tokens: map[contract.SiteID]string{}, log: log,
 	}
 	for _, site := range []contract.SiteID{site1, site2} {
@@ -405,7 +406,7 @@ func TestManifestAcceptNegotiation(t *testing.T) {
 // appears in the log or the response.
 func TestStoreFailureLogsNoToken(t *testing.T) {
 	f := newFixture(t)
-	f.handler = api.New(auth.New(f.store), failingStore{f.store}, slog.New(slog.NewJSONHandler(f.log, nil)))
+	f.handler = api.New(auth.New(f.store), failingStore{f.store}, f.deploy, slog.New(slog.NewJSONHandler(f.log, nil)))
 	rec := f.get(site1, manifestPath)
 	f.wantProblem(rec, http.StatusInternalServerError, contract.ProblemAboutBlank, "get", manifestPath)
 	if f.log.Len() == 0 {

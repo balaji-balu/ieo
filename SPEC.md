@@ -654,10 +654,12 @@ instead).
 
 - The CO appends every received DeploymentStatus to the deployment's status history and updates its
   current status.
-- When a deleted deployment is reported `removed` on its device, the CO marks the deployment
-  removed.
+- When a deleted deployment is reported `removed` on its device, with an `adoptedManifestVersion`
+  at least that of the manifest that deleted it, the CO marks the deployment removed.
 - A status whose `adoptedManifestVersion` is older than the version holding the deployment's current
-  digest is recorded in history but does not replace the current status.
+  digest is recorded in history but does not replace the current status, and does not mark a
+  deleted deployment removed. The version holding the current digest is the first manifest that
+  carried it; an update that rebuilds the same digest keeps it.
 
 #### 8.1.3 Manifest Serialization `[Margo]`
 
@@ -909,6 +911,21 @@ CO obligations:
   `GET /api/v1/deployments` and `GET /api/v1/bundles/{digest}`.
 - Answer `GET /api/v1/deployments` with `406` and problem type `#server-cannot-generate-response`
   when `Accept` admits neither `application/vnd.margo.manifest.v1+json` nor a matching wildcard.
+- Request bodies: unparseable JSON gets `400` `#invalid-request`. A body that fails the Margo
+  schema or a rule below gets `422` `#semantic-error` with `errors[]`.
+- Capabilities (`PUT`/`DELETE /api/v1/capabilities/{deviceId}`), with `{deviceId}` `<site_id>` or
+  `<site_id>/<host_id>`:
+  - A top-level ID other than the caller's site gets `403` `#not-authorized` (Margo local policy).
+  - `422`: any other form of `{deviceId}`, `properties.id` different from the path, or a label
+    value that is not a string (labels are strings, §5.5).
+  - `PUT` answers `201` for a new device and `200` for a replaced report; a host before its
+    site's gateway report gets `404` `#gateway-not-found`.
+  - `DELETE` answers `204`; an unknown host gets `404` `#device-not-found`, and the gateway itself
+    `422` (retire the site instead).
+- Status (`POST /api/v1/deployments/{deploymentId}/status`), §8.1.2: `201` for a deployment's first
+  report, `200` after. `422` when the body's `deploymentId` differs from the path, the deployment
+  is not the caller's, `deviceId` is at another site, or `adoptedManifestVersion` is `0` or above
+  the site's current `manifestVersion`. The Margo file lists no `404` for this operation.
 - Serve deployment YAML and bundles byte-for-byte identical to their digests, with
   `Cache-Control: private, max-age=31536000, immutable`.
 - Serve the manifest with `Cache-Control: private` only.

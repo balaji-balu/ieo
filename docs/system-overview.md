@@ -280,6 +280,7 @@ CO obligations beyond the endpoint list:
 - Deployment YAML and bundles are served byte-for-byte identical to their digests, with `Cache-Control: private, max-age=31536000, immutable`; the manifest with `Cache-Control: private` only.
 - If there are no deployments, `bundle` is present and `null`.
 - A site sees only its own content: another site's deployment YAML or bundle gets the same `404` as one that doesn't exist.
+- A host's capability report needs its site's gateway report first (`404 gateway-not-found`). Every status report is kept in the deployment's history; one about an older digest never becomes current, and a deleted deployment reported `removed` is marked removed.
 
 ### 6.3 LO ↔ EN (NATS, [IEO])
 

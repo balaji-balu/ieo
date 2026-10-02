@@ -28,7 +28,24 @@ var (
 	ErrInvalidRequest = errors.New("invalid deployment request")
 	// ErrCheckFailed: a preliminary check of SPEC §8.1.1 failed.
 	ErrCheckFailed = errors.New("preliminary check failed")
+	// ErrNotAuthorized: a report names a device of another site (SPEC §11.1).
+	ErrNotAuthorized = errors.New("not authorized")
+	// ErrGatewayNotFound: a host reported before its site's gateway (SPEC §8.3).
+	ErrGatewayNotFound = errors.New("gateway not found")
 )
+
+// InvalidField is an error, wrapping ErrInvalidRequest, about one field of an LO's report: Field
+// is the path segment `deviceId` or `deploymentId`, or a dotted body field (SPEC §11.1).
+type InvalidField struct {
+	Field   string
+	Message string
+}
+
+func (e *InvalidField) Error() string {
+	return fmt.Sprintf("%v: %s: %s", ErrInvalidRequest, e.Field, e.Message)
+}
+
+func (e *InvalidField) Unwrap() error { return ErrInvalidRequest }
 
 // Site is a site as the CO keeps it (SPEC §4.1.1).
 type Site struct {
@@ -48,7 +65,13 @@ type Deployment struct {
 	Namespace  string
 	Parameters map[string]any
 	Digest     contract.Digest
-	Deleted    bool
+	// DigestVersion is the manifest version that first carried Digest (SPEC §8.1.2).
+	DigestVersion contract.ManifestVersion
+	Deleted       bool
+	// DeletedVersion is the manifest version that deleted the deployment (SPEC §8.1.2).
+	DeletedVersion contract.ManifestVersion
+	// Removed: the deployment is deleted and its device reported it removed (SPEC §8.1.2).
+	Removed bool
 }
 
 // Manifest is a site's published State Manifest (SPEC §4.1.6): Body is the exact response body,
@@ -70,6 +93,11 @@ type SiteState struct {
 	// YAML holds the current YAML of each deployment that is not deleted.
 	YAML     map[uuid.UUID][]byte
 	Manifest Manifest
+	// Gateway reports whether the site's gateway (the LO) has reported its capabilities (SPEC
+	// §8.3).
+	Gateway bool
+	// Reports counts the status reports received for each deployment (SPEC §8.1.2).
+	Reports map[uuid.UUID]int
 }
 
 // SiteChange is what a change writes to one site. Nil fields are left as they are.
@@ -80,6 +108,22 @@ type SiteChange struct {
 	// under a digest is kept.
 	Blobs    map[contract.Digest][]byte
 	Manifest *Manifest
+	Device   *DeviceChange
+	Status   *StatusReport
+}
+
+// DeviceChange replaces the latest capabilities of a device of the site, or removes the device
+// when Capabilities is nil (SPEC §8.3).
+type DeviceChange struct {
+	ID           contract.DeviceID
+	Capabilities *contract.DeviceCapabilitiesManifest
+}
+
+// StatusReport appends Status to its deployment's status history, and makes it the current status
+// when Current is set (SPEC §8.1.2).
+type StatusReport struct {
+	Status  contract.DeploymentStatus
+	Current bool
 }
 
 // Store keeps sites, deployments and manifests.
@@ -268,6 +312,7 @@ func (s *Service) put(ctx context.Context, id uuid.UUID, req Request, update boo
 				return SiteChange{}, ErrNotFound
 			}
 			if old.Digest == d.Digest {
+				d.DigestVersion = old.DigestVersion    // SPEC §8.1.2
 				return SiteChange{Deployment: &d}, nil // same (ID, digest): no new manifest (SPEC §8.1)
 			}
 		}
@@ -352,6 +397,9 @@ func republish(state SiteState, d Deployment, yamlBytes []byte) (SiteChange, err
 	}
 	if !d.Deleted {
 		blobs[d.Digest] = yamlBytes
+		d.DigestVersion = m.Version // the first manifest to carry this digest (SPEC §8.1.2)
+	} else {
+		d.DeletedVersion = m.Version
 	}
 	return SiteChange{Deployment: &d, Blobs: blobs, Manifest: &m}, nil
 }
