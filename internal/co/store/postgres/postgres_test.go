@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/balaji-balu/ieo/internal/co/deploy"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres"
 	"github.com/balaji-balu/ieo/internal/co/store/storetest"
+	"github.com/balaji-balu/ieo/internal/contract"
 )
 
 // The migrations create exactly the tables the ent schema describes.
@@ -34,7 +36,7 @@ func TestMigrationsMatchSchema(t *testing.T) {
 func TestOpenAppliesEachMigrationOnce(t *testing.T) {
 	s, dsn := storetest.PostgresURL(t)
 	ctx := context.Background()
-	if err := deploy.New(s).AddSite(ctx, "site-1"); err != nil {
+	if _, err := deploy.New(s).AddSite(ctx, "site-1"); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -66,7 +68,7 @@ func TestOpenAppliesEachMigrationOnce(t *testing.T) {
 func TestDatabaseRefusesLowerManifestVersion(t *testing.T) {
 	s, dsn := storetest.PostgresURL(t)
 	ctx := context.Background()
-	if err := deploy.New(s).AddSite(ctx, "site-1"); err != nil {
+	if _, err := deploy.New(s).AddSite(ctx, "site-1"); err != nil {
 		t.Fatal(err)
 	}
 	conn := db(t, dsn)
@@ -108,4 +110,52 @@ func db(t *testing.T, dsn string) *sql.DB {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
+}
+
+// SPEC §18.3: "Verify CO database restore keeps `manifestVersion` increasing (§12)." A restore
+// brings back an older manifest_version, as if the database were restored from a backup; raising
+// the versions puts every site above anything it published before.
+func TestSpec_18_3_RestoreThenRaiseVersionsKeepsManifestVersionIncreasing(t *testing.T) {
+	s, dsn := storetest.PostgresURL(t)
+	ctx := context.Background()
+	svc := deploy.New(s)
+	if _, err := svc.AddSite(ctx, "site-1"); err != nil {
+		t.Fatal(err)
+	}
+	for v := contract.ManifestVersion(2); v <= 4; v++ { // publish up to version 4
+		if err := s.ChangeSite(ctx, "site-1", func(deploy.SiteState, bool) (deploy.SiteChange, error) {
+			return deploy.SiteChange{Manifest: &deploy.Manifest{Version: v, Body: []byte{byte(v)}, ETag: `"e"`}}, nil
+		}); err != nil {
+			t.Fatalf("publish %d: %v", v, err)
+		}
+	}
+	// The restore: the backup was taken at version 2. A restore loads rows without the trigger.
+	conn := db(t, dsn)
+	for _, stmt := range []string{
+		"ALTER TABLE co_sites DISABLE TRIGGER co_sites_manifest_version_never_decreases",
+		"UPDATE co_sites SET manifest_version = 2 WHERE id = 'site-1'",
+		"ALTER TABLE co_sites ENABLE TRIGGER co_sites_manifest_version_never_decreases",
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+
+	if _, err := svc.RaiseManifestVersions(ctx, 10); err != nil {
+		t.Fatalf("raise: %v", err)
+	}
+	m, ok, err := s.Manifest(ctx, "site-1")
+	if err != nil || !ok {
+		t.Fatalf("manifest: %v %v", ok, err)
+	}
+	var body contract.StateManifest
+	if err := json.Unmarshal(m.Body, &body); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if m.Version != 12 || body.ManifestVersion != 12 {
+		t.Errorf("after restore to 2 and raise by 10: version %d, body %d; want 12", m.Version, body.ManifestVersion)
+	}
+	if m.Version <= 4 {
+		t.Errorf("version %d is not above the last published version 4", m.Version)
+	}
 }

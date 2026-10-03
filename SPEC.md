@@ -1046,6 +1046,11 @@ Rules:
   procedure MUST set each site's version above its last published value.
 - `[IEO]` The CO's database itself refuses any update that lowers a site's `manifestVersion`,
   whichever code or manual fix issues it.
+- `[IEO]` The restore procedure is `co sites raise-versions --by N`, run after the restore. It
+  republishes every site's manifest, retired sites included, at its version plus N (N ≥ 1), with
+  deployments, digests and bundles unchanged, one site per transaction; rerunning it only raises
+  versions further. N MUST exceed the number of manifest versions any site may have published
+  since the backup was taken.
 
 ## 13. Logging and Observability
 
@@ -1077,6 +1082,12 @@ Each tier exposes Prometheus metrics. REQUIRED names (prefix `ieo_`):
 
 When the LO or EN is not deployed as a container, it reports its own resource usage through the
 host's collector `[Margo]`.
+
+### 13.4 Health Check `[IEO]`
+
+The CO answers `GET /healthz` on the listener of the Margo API, outside `/api/v1` and without
+authentication: `200` while its database answers, `503` when it does not. The response reveals
+nothing else.
 
 ## 14. Failure Model and Recovery Strategy
 
@@ -1111,6 +1122,7 @@ host's collector `[Margo]`.
 
 - Create, update or delete deployments through `edgectl`.
 - Retire a site.
+- Restore the CO database, then raise every site's `manifestVersion` (§12).
 - Decommission a host (LO configuration or operator command; implementation-defined).
 - Configure polling interval, polling hours and downtime windows at the LO.
 
@@ -1160,6 +1172,10 @@ and scoped NATS credentials) replaces them (ADR 0005):
   and serve only that site's resources.
   - The CO generates the token from 256 random bits, returns it once, and stores only its SHA-256.
     Issuing a new token for a site replaces the old one.
+  - Until the operator API registers sites (§11.3), `co site add <site-id>` adds the site and
+    prints its token on one line of stdout; it refuses a site that exists.
+    `co site rotate-token <site-id>` prints a token that replaces the old one, and refuses a
+    retired site. Neither command logs the token.
   - A missing or unknown token gets `401` with problem type `about:blank` and
     `WWW-Authenticate: Bearer`; the LO treats it like `Unreachable` (§7.4).
 - LO ↔ EN: ENs MUST authenticate to NATS with per-site username and password. Until scoped

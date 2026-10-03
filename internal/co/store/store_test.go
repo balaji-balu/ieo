@@ -27,7 +27,7 @@ func newSites(t *testing.T, newStore storetest.New) storetest.Store {
 	t.Helper()
 	s := newStore(t)
 	for _, site := range []contract.SiteID{site1, site2} {
-		if err := deploy.New(s).AddSite(context.Background(), site); err != nil {
+		if _, err := deploy.New(s).AddSite(context.Background(), site); err != nil {
 			t.Fatalf("add site %s: %v", site, err)
 		}
 	}
@@ -528,4 +528,28 @@ func status(id uuid.UUID, adopted contract.ManifestVersion) contract.DeploymentS
 		Status:     contract.DeploymentState{State: contract.StateInstalled},
 		Components: []contract.ComponentStatus{{Name: "web", State: contract.StateInstalled}},
 	}
+}
+
+// Sites lists every site in ID order, retired ones included, for the restore procedure (SPEC §12).
+func TestSitesListsEverySiteRetiredIncluded(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		ctx := context.Background()
+		s := newStore(t)
+		if got, err := s.Sites(ctx); err != nil || len(got) != 0 {
+			t.Fatalf("sites of an empty store = %v, %v; want none", got, err)
+		}
+		svc := deploy.New(s)
+		for _, site := range []contract.SiteID{site2, "site-0", site1} {
+			if _, err := svc.AddSite(ctx, site); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := svc.RetireSite(ctx, site1); err != nil {
+			t.Fatal(err)
+		}
+		want := []deploy.Site{{ID: "site-0"}, {ID: site1, Retired: true}, {ID: site2}}
+		if got, err := s.Sites(ctx); err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("sites = %+v, %v; want %+v", got, err, want)
+		}
+	})
 }

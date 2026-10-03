@@ -239,3 +239,24 @@ func blobs(ctx context.Context, tx *ent.Tx, digests []string) (map[string][]byte
 	}
 	return out, nil
 }
+
+// Sites returns every site in ID order, retired ones included.
+func (s *Store) Sites(ctx context.Context) ([]deploy.Site, error) {
+	rows, err := s.client.Site.Query().Select(site.FieldID, site.FieldRetired).Order(ent.Asc(site.FieldID)).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list sites: %w", err)
+	}
+	sites := make([]deploy.Site, len(rows))
+	for i, row := range rows {
+		sites[i] = siteOf(row)
+	}
+	return sites, nil
+}
+
+// Ping reports whether the database answers, for the CO's health check (SPEC §13).
+func (s *Store) Ping(ctx context.Context) error {
+	if err := s.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping co store: %w", err)
+	}
+	return nil
+}

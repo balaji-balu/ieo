@@ -89,7 +89,7 @@ func newFixture(t *testing.T, newStore storetest.New) fixture {
 	}
 	f := fixture{t: t, ctx: ctx, store: s, deploy: deploy.New(s)}
 	for _, site := range []contract.SiteID{site1, site2} {
-		if err := f.deploy.AddSite(ctx, site); err != nil {
+		if _, err := f.deploy.AddSite(ctx, site); err != nil {
 			t.Fatalf("add site %s: %v", site, err)
 		}
 	}
@@ -373,7 +373,7 @@ func TestSpec_17_2_ManifestVersionStartsAtOnePerSite(t *testing.T) {
 		if m, _ := f.manifest(site2); m.Version != 1 {
 			t.Errorf("%s: manifestVersion %d, want 1: another site's changes must not count", site2, m.Version)
 		}
-		if err := f.deploy.AddSite(f.ctx, site1); err != nil {
+		if _, err := f.deploy.AddSite(f.ctx, site1); err != nil {
 			t.Fatalf("add site again: %v", err)
 		}
 		if m, _ := f.manifest(site1); m.Version != 3 {
@@ -490,6 +490,134 @@ func TestReportsFromUnknownOrRetiredSite(t *testing.T) {
 		}
 		if f.deploymentCount(gone) != 0 {
 			t.Error("unknown site got deployments")
+		}
+	})
+}
+
+// Adding a site reports whether it was new, so `co site add` can refuse an existing site before it
+// issues a token (SPEC §15.6).
+func TestAddSiteReportsWhetherItCreatedTheSite(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		site3 := contract.SiteID("site-3")
+		if created, err := f.deploy.AddSite(f.ctx, site3); err != nil || !created {
+			t.Errorf("add new site: created=%v err=%v, want true, nil", created, err)
+		}
+		if created, err := f.deploy.AddSite(f.ctx, site3); err != nil || created {
+			t.Errorf("add existing site: created=%v err=%v, want false, nil", created, err)
+		}
+		if err := f.deploy.RetireSite(f.ctx, site3); err != nil {
+			t.Fatal(err)
+		}
+		if created, err := f.deploy.AddSite(f.ctx, site3); err != nil || created {
+			t.Errorf("add retired site: created=%v err=%v, want false, nil", created, err)
+		}
+	})
+}
+
+// SPEC §12: the restore procedure republishes every site's manifest, retired sites included, at
+// its version plus by. Deployments, digests and bundles stay as they are, so the old YAML and
+// bundle URLs are still served and status reports about them are still current.
+func TestRaiseManifestVersions(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(request()) // site-1 at version 2
+		if err := f.deploy.RetireSite(f.ctx, site2); err != nil {
+			t.Fatal(err)
+		}
+		before1, body1 := f.manifest(site1)
+		before2, _ := f.manifest(site2)
+		stored, ok, err := f.store.Deployment(f.ctx, d.ID)
+		if err != nil || !ok {
+			t.Fatalf("deployment: %v %v", ok, err)
+		}
+
+		raised, err := f.deploy.RaiseManifestVersions(f.ctx, 10)
+		if err != nil {
+			t.Fatalf("raise: %v", err)
+		}
+		want := []deploy.Raised{{Site: site1, From: 2, To: 12}, {Site: site2, From: 1, To: 11}}
+		if !reflect.DeepEqual(raised, want) {
+			t.Errorf("raised = %+v, want %+v", raised, want)
+		}
+
+		after1, afterBody1 := f.manifest(site1) // also checks the body states the new version
+		if after1.Version != 12 {
+			t.Errorf("%s: version %d, want 12", site1, after1.Version)
+		}
+		if after1.ETag == before1.ETag {
+			t.Errorf("%s: ETag unchanged (%s); an LO holding it would get 304 and keep the old version", site1, after1.ETag)
+		}
+		if after1.Bundle != before1.Bundle || !reflect.DeepEqual(afterBody1.Deployments, body1.Deployments) ||
+			!reflect.DeepEqual(afterBody1.Bundle, body1.Bundle) {
+			t.Errorf("%s: deployments or bundle changed:\nbefore %s\nafter  %s", site1, before1.Body, after1.Body)
+		}
+		if after2, _ := f.manifest(site2); after2.Version != 11 || after2.ETag == before2.ETag {
+			t.Errorf("retired %s: version %d ETag %s, want 11 and a new ETag", site2, after2.Version, after2.ETag)
+		}
+		if got, _, _ := f.store.Site(f.ctx, site2); !got.Retired {
+			t.Errorf("%s no longer retired", site2)
+		}
+		if got, ok, err := f.store.Deployment(f.ctx, d.ID); err != nil || !ok || !reflect.DeepEqual(got, stored) {
+			t.Errorf("deployment changed by the raise:\nbefore %+v\nafter  %+v (ok=%v err=%v)", stored, got, ok, err)
+		}
+	})
+}
+
+// SPEC §12, §8.1.2: after the raise, the YAML and bundle URLs of the old manifest are still served,
+// status reports about the deployment are still current, and versions keep growing.
+func TestRaiseManifestVersionsKeepsServingAndReports(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		d := f.create(request()) // site-1 at version 2
+		if _, err := f.deploy.RaiseManifestVersions(f.ctx, 10); err != nil {
+			t.Fatalf("raise: %v", err)
+		}
+		after1, _ := f.manifest(site1)
+		if b, ok, err := f.store.DeploymentYAML(f.ctx, site1, d.ID, d.Digest); err != nil || !ok || len(b) == 0 {
+			t.Errorf("deployment YAML no longer served: ok=%v err=%v", ok, err)
+		}
+		if b, ok, err := f.store.Bundle(f.ctx, site1, after1.Bundle); err != nil || !ok || len(b) == 0 {
+			t.Errorf("bundle no longer served: ok=%v err=%v", ok, err)
+		}
+
+		// A report at the raised version, and one at the version that first carried the digest,
+		// are both current (SPEC §8.1.2).
+		for _, adopted := range []contract.ManifestVersion{12, 2} {
+			st := contract.DeploymentStatus{DeploymentID: d.ID, AdoptedManifestVersion: adopted,
+				Status: contract.DeploymentState{State: contract.StateInstalled}}
+			if _, err := f.deploy.ReportStatus(f.ctx, site1, d.ID, st); err != nil {
+				t.Fatalf("report at %d: %v", adopted, err)
+			}
+			if cur, ok, _ := f.store.CurrentStatus(f.ctx, d.ID); !ok || cur.AdoptedManifestVersion != adopted {
+				t.Errorf("report at version %d not current: %+v", adopted, cur)
+			}
+		}
+
+		// Rerunning is safe: versions only grow.
+		if _, err := f.deploy.RaiseManifestVersions(f.ctx, 1); err != nil {
+			t.Fatalf("raise again: %v", err)
+		}
+		if m, _ := f.manifest(site1); m.Version != 13 {
+			t.Errorf("%s: version %d after raising again by 1, want 13", site1, m.Version)
+		}
+		// The next change publishes above the raised version.
+		f.create(request())
+		if m, _ := f.manifest(site1); m.Version != 14 {
+			t.Errorf("%s: version %d after a create, want 14", site1, m.Version)
+		}
+	})
+}
+
+// Raising by 0 would not move any version above a restored one (SPEC §12).
+func TestRaiseManifestVersionsByZeroIsInvalid(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		if _, err := f.deploy.RaiseManifestVersions(f.ctx, 0); !errors.Is(err, deploy.ErrInvalidRequest) {
+			t.Errorf("raise by 0: %v, want ErrInvalidRequest", err)
+		}
+		if m, _ := f.manifest(site1); m.Version != 1 {
+			t.Errorf("raise by 0 changed version to %d", m.Version)
 		}
 	})
 }

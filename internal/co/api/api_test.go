@@ -96,7 +96,7 @@ func newFixture(t *testing.T, newStore storetest.New) fixture {
 		api:     margotest.Load(t), tokens: map[contract.SiteID]string{}, log: log,
 	}
 	for _, site := range []contract.SiteID{site1, site2} {
-		if err := f.deploy.AddSite(ctx, site); err != nil {
+		if _, err := f.deploy.AddSite(ctx, site); err != nil {
 			t.Fatalf("add site %s: %v", site, err)
 		}
 		host := contract.DeviceID{Site: site, Host: "host-1"}
