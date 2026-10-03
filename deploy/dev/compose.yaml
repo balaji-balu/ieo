@@ -114,7 +114,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9002/healthz"]
+      # Both APIs: the LO still registers on 9001, once, at startup (until roadmap slice C).
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9002/healthz && wget -qO- http://127.0.0.1:9001/api/v1/sites"]
       interval: 5s
       timeout: 3s
       retries: 30

@@ -58,7 +58,10 @@ the schema files in step with new migrations.
 
 LOs reject a manifest whose `manifestVersion` is not above the last one they accepted (SPEC §8.2),
 so after the CO database is restored from a backup, every site's version must be raised above
-anything it published before the restore (SPEC §12). Run this once the restore is done:
+anything it published before the restore (SPEC §12). First add again, with `co site add`, any site
+added after the backup was taken: the restore lost it, its token and its manifests, and its LO needs
+the new token. Likewise run `co site rotate-token` for any site whose token was replaced after the
+backup. Then run:
 
 ```sh
 docker compose exec co /app/orchestrator sites raise-versions --by 1000000            # Compose

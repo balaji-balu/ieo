@@ -160,12 +160,7 @@ func get(t *testing.T, url, token string) (int, []byte) {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	var resp *http.Response
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-		if resp, err = http.DefaultClient.Do(req); err == nil || time.Now().After(deadline) {
-			break
-		}
-	}
+	resp, err := http.DefaultClient.Do(req) // the listener is bound before serve starts
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -240,6 +235,30 @@ func TestHealthzReportsDatabase(t *testing.T) {
 	}
 }
 
+// A database outage is logged once when it starts and once when it ends, not on every probe.
+func TestHealthzLogsOnlyChanges(t *testing.T) {
+	var logs bytes.Buffer
+	var ping error
+	h := handler(pinger(func(context.Context) error { return ping }), http.NotFoundHandler(), slog.New(slog.NewJSONHandler(&logs, nil)))
+	probe := func() {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	}
+	probe()
+	ping = errors.New("connection refused")
+	probe()
+	probe()
+	probe()
+	ping = nil
+	probe()
+	probe()
+	if n := strings.Count(logs.String(), "database unavailable"); n != 1 {
+		t.Errorf("outage logged %d times, want once:\n%s", n, logs.String())
+	}
+	if n := strings.Count(logs.String(), "database available"); n != 1 {
+		t.Errorf("recovery logged %d times, want once:\n%s", n, logs.String())
+	}
+}
+
 // SPEC §12: `co sites raise-versions --by N` raises every site's manifestVersion by N ≥ 1.
 func TestRaiseVersionsCommand(t *testing.T) {
 	s, dsn := storetest.PostgresURL(t)
@@ -284,8 +303,8 @@ func TestUsageErrors(t *testing.T) {
 }
 
 // SPEC §17.7: "No credential, key or token appears in logs or status messages." and "Every tier
-// writes each log line as one JSON object." This covers every co command, and a database that
-// cannot be reached, whose URL carries a password.
+// writes each log line as one JSON object.", for the CO. This covers every co command, and a database
+// that cannot be reached, whose URL carries a password.
 func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	_, dsn := storetest.PostgresURL(t)
 	var logs strings.Builder
@@ -293,8 +312,8 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	token := add.token(t)
 	rotate := runCO(t, dsn, "site", "rotate-token", "site-1")
 	rotated := rotate.token(t)
-	logs.WriteString(add.stderr + rotate.stderr)
-	logs.WriteString(runCO(t, dsn, "sites", "raise-versions", "--by", "1").stderr)
+	raise := runCO(t, dsn, "sites", "raise-versions", "--by", "1")
+	jsonLogs := []string{add.stderr, rotate.stderr, raise.stderr}
 
 	base, stop, serveLogs := startServe(t, dsn)
 	get(t, base+"/api/v1/deployments", rotated)
@@ -303,7 +322,7 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	if err := stop(); err != nil {
 		t.Fatal(err)
 	}
-	logs.WriteString(serveLogs.String())
+	jsonLogs = append(jsonLogs, serveLogs.String())
 
 	const password = "pw-must-not-be-logged"
 	unreachable := "postgres://postgres:" + password + "@127.0.0.1:1/postgres?sslmode=disable&connect_timeout=2"
@@ -311,7 +330,7 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	if failed.code != 1 {
 		t.Errorf("site add with an unreachable database: exit %d, want 1", failed.code)
 	}
-	logs.WriteString(failed.stderr)
+	jsonLogs = append(jsonLogs, failed.stderr)
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -320,9 +339,12 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	if err := serve(context.Background(), config{DatabaseURL: unreachable}, ln, slog.New(slog.NewJSONHandler(&serveFailed, nil))); err == nil {
 		t.Error("serve with an unreachable database returned nil")
 	} else {
-		serveFailed.WriteString(err.Error() + "\n") // main logs it
+		logs.WriteString(err.Error() + "\n") // run logs it
 	}
-	logs.WriteString(serveFailed.String())
+	jsonLogs = append(jsonLogs, serveFailed.String())
+	for _, l := range jsonLogs {
+		logs.WriteString(l)
+	}
 
 	secrets := map[string]string{"token": token, "rotated token": rotated, "database URL": dsn, "unreachable database URL": unreachable,
 		"password": password}
@@ -340,7 +362,7 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 			t.Errorf("the logs contain the %s", name)
 		}
 	}
-	sc := bufio.NewScanner(strings.NewReader(add.stderr + rotate.stderr + serveLogs.String() + failed.stderr))
+	sc := bufio.NewScanner(strings.NewReader(strings.Join(jsonLogs, "")))
 	for sc.Scan() {
 		var line map[string]any
 		if err := json.Unmarshal(sc.Bytes(), &line); err != nil {

@@ -50,7 +50,7 @@ func issue(ctx context.Context, s *postgres.Store, id contract.SiteID, stdout io
 		return err
 	}
 	if _, err := fmt.Fprintln(stdout, token); err != nil {
-		return fmt.Errorf("print the token of site %s, which replaced its old one; run co site rotate-token %s: %w", id, id, err)
+		return fmt.Errorf("print the token of site %s: %w; it is issued but lost, so run: co site rotate-token %s", id, err, id)
 	}
 	log.Info("site token issued", "site_id", id)
 	return nil
