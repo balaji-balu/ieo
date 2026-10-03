@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 
@@ -162,6 +163,8 @@ type Store interface {
 	// ChangeDevice is ChangeSite for a change that reads only device id of site.
 	ChangeDevice(ctx context.Context, site contract.SiteID, id contract.DeviceID,
 		change func(state DeviceState, exists bool) (SiteChange, error)) error
+	// Sites returns every site in ID order, retired ones included.
+	Sites(ctx context.Context) ([]Site, error)
 }
 
 // Request asks for a deployment of one application version (SPEC §11.3).
@@ -191,9 +194,12 @@ func New(store Store) *Service {
 }
 
 // AddSite adds an active site and publishes its first manifest: version 1, no deployments (SPEC
-// §4.1.6). Adding a site that exists changes nothing.
-func (s *Service) AddSite(ctx context.Context, id contract.SiteID) error {
+// §4.1.6), and reports whether it added the site. Adding a site that exists, retired or not,
+// changes nothing.
+func (s *Service) AddSite(ctx context.Context, id contract.SiteID) (bool, error) {
+	created := false
 	err := s.store.ChangeSite(ctx, id, func(_ SiteState, exists bool) (SiteChange, error) {
+		created = !exists
 		if exists {
 			return SiteChange{}, nil
 		}
@@ -204,9 +210,57 @@ func (s *Service) AddSite(ctx context.Context, id contract.SiteID) error {
 		return SiteChange{Site: &Site{ID: id}, Blobs: blobs, Manifest: &m}, nil
 	})
 	if err != nil {
-		return fmt.Errorf("add site %s: %w", id, err)
+		return false, fmt.Errorf("add site %s: %w", id, err)
 	}
-	return nil
+	return created, nil
+}
+
+// Raised is one site whose manifest version RaiseManifestVersions raised.
+type Raised struct {
+	Site     contract.SiteID
+	From, To contract.ManifestVersion
+}
+
+// maxManifestVersion is the largest manifestVersion the CO stores (a Postgres bigint).
+const maxManifestVersion = contract.ManifestVersion(math.MaxInt64)
+
+// RaiseManifestVersions republishes every site's manifest, retired sites included, at its version
+// plus by: the restore procedure of SPEC §12. Deployments, digests and bundles are left as they
+// are; only the manifest body and its ETag change. Each site changes in a transaction of its own,
+// in ID order, so after an error the sites already raised stay raised and rerunning is safe:
+// versions only grow. by 0 is an InvalidField.
+func (s *Service) RaiseManifestVersions(ctx context.Context, by contract.ManifestVersion) ([]Raised, error) {
+	if by == 0 {
+		return nil, fmt.Errorf("raise manifest versions: %w", &InvalidField{"by", "must be at least 1"})
+	}
+	sites, err := s.store.Sites(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("raise manifest versions: %w", err)
+	}
+	raised := make([]Raised, 0, len(sites))
+	for _, site := range sites {
+		var r Raised
+		err := s.store.ChangeSite(ctx, site.ID, func(state SiteState, exists bool) (SiteChange, error) {
+			if !exists {
+				return SiteChange{}, ErrNotFound // sites are never removed
+			}
+			from := state.Manifest.Version
+			if by > maxManifestVersion || from > maxManifestVersion-by {
+				return SiteChange{}, &InvalidField{"by", fmt.Sprintf("raises manifestVersion %d above %d", from, maxManifestVersion)}
+			}
+			m, blobs, err := publish(from+by, state.YAML)
+			if err != nil {
+				return SiteChange{}, err
+			}
+			r = Raised{Site: site.ID, From: from, To: m.Version}
+			return SiteChange{Blobs: blobs, Manifest: &m}, nil
+		})
+		if err != nil {
+			return raised, fmt.Errorf("raise manifest version of site %s: %w", site.ID, err)
+		}
+		raised = append(raised, r)
+	}
+	return raised, nil
 }
 
 // RetireSite marks a site retired; its deployments and manifest are kept. Retiring a retired

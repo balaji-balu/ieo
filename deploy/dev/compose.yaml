@@ -99,21 +99,23 @@ services:
       timeout: 3s
       retries: 20
 
-  # Central Orchestrator: API on 9001.
+  # Central Orchestrator: Margo API (and /healthz) on 9002; the old API on 9001 until roadmap slice E.
   co:
     build:
       <<: *ieo-build
       args: { CMD: co }
     environment:
       APP_ENV: prod
+      CO_MARGO_ADDR: ":9002"
       CO_PORT: "9001"
       CO_METRICS_PORT: "9200"
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/orchestration?sslmode=disable
-    ports: ["9001:9001"]
+    ports: ["9001:9001", "9002:9002"]
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9001/api/v1/sites"]
+      # Both APIs: the LO still registers on 9001, once, at startup (until roadmap slice C).
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9002/healthz && wget -qO- http://127.0.0.1:9001/api/v1/sites"]
       interval: 5s
       timeout: 3s
       retries: 30

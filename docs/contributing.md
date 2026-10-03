@@ -56,7 +56,8 @@ variables already set in the shell win). One `.env` in the repository root serve
 
 ```dotenv
 # --- CO ---
-CO_PORT=9001
+CO_MARGO_ADDR=:9002                # Margo API for LOs and /healthz (default :9002)
+CO_PORT=9001                       # the old API, served only when set (until roadmap slice E)
 CO_METRICS_PORT=9201
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
 
@@ -83,7 +84,7 @@ Give the CO and LO metrics ports different values when both run on one machine.
 Each in its own terminal, waiting for the previous one to come up:
 
 ```sh
-go run ./cmd/co      # wait for: CO API running on : {"": "9001"}
+go run ./cmd/co      # wait for: CO API running on : {"": "9001"} (old API) and "serving the Margo API"
 go run ./cmd/lo      # wait for: HTTP server started on : {"port": "9010"}
 go run ./cmd/en      # expect:   LO {"siteid": "..."}
 go run ./cmd/edgectl --help

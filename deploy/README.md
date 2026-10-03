@@ -53,3 +53,24 @@ For a test install you can instead delete the volume and start again (deletes al
 
 Developers: see [`docs/contributing.md`](../docs/contributing.md#data-model-changes) for keeping
 the schema files in step with new migrations.
+
+### Restoring the CO database
+
+LOs reject a manifest whose `manifestVersion` is not above the last one they accepted (SPEC §8.2),
+so after the CO database is restored from a backup, every site's version must be raised above
+anything it published before the restore (SPEC §12). First add again, with `co site add`, any site
+added after the backup was taken: the restore lost it, its token and its manifests, and its LO needs
+the new token. Likewise run `co site rotate-token` for any site whose token was replaced after the
+backup. Then run:
+
+```sh
+docker compose exec co /app/orchestrator sites raise-versions --by 1000000            # Compose
+kubectl exec deploy/<release>-co -- /app/orchestrator sites raise-versions --by 1000000   # Helm
+```
+
+`--by N` must exceed the number of manifest versions any site may have published since the backup:
+each deployment create, update or delete publishes one. A large N costs nothing. The command logs
+each site's old and new version, raises retired sites too, and changes nothing else: deployments,
+digests and bundles stay as they are. It is safe while the CO is serving. Running it again only
+raises the versions further, so rerun it if it stops partway. Until it has run, LOs that poll
+reject the restored manifests as rollbacks and keep their current state.

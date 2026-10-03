@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -378,4 +379,13 @@ func cloneCapabilities(c contract.DeviceCapabilitiesManifest) contract.DeviceCap
 	p.SupportedRuntimes = slices.Clone(p.SupportedRuntimes)
 	p.SupportedDeploymentTypes = slices.Clone(p.SupportedDeploymentTypes)
 	return c
+}
+
+// Sites returns every site in ID order, retired ones included.
+func (m *Memory) Sites(context.Context) ([]deploy.Site, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sites := slices.Collect(maps.Values(m.sites))
+	slices.SortFunc(sites, func(a, b deploy.Site) int { return strings.Compare(string(a.ID), string(b.ID)) })
+	return sites, nil
 }

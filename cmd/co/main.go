@@ -1,168 +1,157 @@
+// Command co is the Central Orchestrator (SPEC §3). It serves the Margo Workload Management API to
+// LOs (SPEC §11.1) and has the operator commands that run next to it: adding sites and issuing
+// their tokens (SPEC §15.6), and the restore procedure (SPEC §12).
+//
+// It is configured from the environment; a .env file in the working directory sets variables that
+// are not set. It logs JSON on stderr (SPEC §13.1) and never logs a token or the database URL
+// (SPEC §15.4).
 package main
 
 import (
-	//"context"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
-	"time"
+	"os/signal"
+	"strings"
+	"syscall"
 
-	"entgo.io/ent/dialect"
-	"entgo.io/ent/dialect/sql"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq" // enables the 'postgres' driver
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
 
-	"github.com/balaji-balu/ieo/ent"
-	"github.com/balaji-balu/ieo/internal/api"
-	"github.com/balaji-balu/ieo/pkg/co/model"
-	"github.com/balaji-balu/ieo/pkg/logx"
-
-	//"github.com/balaji-balu/ieo/internal/config"
-	"github.com/balaji-balu/ieo/internal/co"
-	"github.com/balaji-balu/ieo/internal/gitmanager"
-	"github.com/balaji-balu/ieo/internal/metrics"
+	"github.com/balaji-balu/ieo/internal/co/store/postgres"
+	"github.com/balaji-balu/ieo/internal/contract"
 )
 
-func init() {
-	err := godotenv.Load("./.env") // relative path to project root
-	if err != nil {
-		//log.Println("No .env file found, reading from system environment")
-	}
+const usage = `usage:
+  co [serve]                       serve the Margo API on CO_MARGO_ADDR
+  co site add <site-id>            add a site and print its token
+  co site rotate-token <site-id>   print a new token for a site, replacing its old one
+  co sites raise-versions --by N   after a database restore, raise every site's manifestVersion by N
+environment:
+  DATABASE_URL    Postgres URL of the CO store (required)
+  CO_MARGO_ADDR   address of the Margo API (default ` + defaultMargoAddr + `)
+  CO_PORT         port of the old API, served only when set (until roadmap slice E)`
 
+const defaultMargoAddr = ":9002"
+
+// config is what co reads from the environment.
+type config struct {
+	DatabaseURL string // DATABASE_URL
+	MargoAddr   string // CO_MARGO_ADDR
+	LegacyPort  string // CO_PORT
 }
 
 func main() {
-	//ctx := context.Background()
-	if err := logx.Init(logx.Options{
-		Env: os.Getenv("APP_ENV"), // dev / prod
-		//Version: "0.1.0",
-	}); err != nil {
-		fmt.Fprintln(os.Stderr, "logger init failed:", err)
-		os.Exit(1)
+	_ = godotenv.Load() // no .env file is fine
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
+}
+
+// usageError is a command line or configuration co cannot run.
+type usageError string
+
+func (e usageError) Error() string { return string(e) }
+
+// run runs the co command args and returns its exit code: 0 on success, 1 on failure, 2 for a
+// usage error. Only a token goes to stdout; logs go to stderr.
+func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	log := slog.New(slog.NewJSONHandler(stderr, nil))
+	if len(args) == 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+		_, _ = fmt.Fprintln(stdout, usage) // nothing to do about a failed write to stdout
+		return 0
 	}
-	log := logx.New("co")
-	port := os.Getenv("CO_PORT")
-	metrics_port := os.Getenv("CO_METRICS_PORT")
+	cmd, err := parse(args, stdout, log)
+	if err == nil {
+		cfg := config{DatabaseURL: getenv("DATABASE_URL"), MargoAddr: getenv("CO_MARGO_ADDR"), LegacyPort: getenv("CO_PORT")}
+		if cfg.MargoAddr == "" {
+			cfg.MargoAddr = defaultMargoAddr
+		}
+		if cfg.DatabaseURL == "" {
+			err = usageError("DATABASE_URL is not set")
+		} else {
+			err = cmd(ctx, cfg)
+		}
+	}
+	var uerr usageError
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &uerr):
+		log.Error("invalid command", "error", err.Error(), "usage", usage)
+		return 2
+	default:
+		log.Error("co failed", "error", err.Error())
+		return 1
+	}
+}
 
-	// options := config.Options{
-	//     AppName: "ieo",
-	//     Unit: "co",
-	//     Env: os.Getenv("APP_ENV"),
-	// }
-	// rootDir, err := config.RootDir(options)
-	// if err != nil {
-	//     log.Fatalw("rootdir detection error","error", err)
-	// }
+type command func(ctx context.Context, cfg config) error
 
-	// log.Debugw("root directory", "rootDir", rootDir)
-	// //cfgPath := filepath.Join("./configs", options.Unit, "dev.yaml")
-	// //options.RootDir = rootDir
-	// var cfg model.COConfig
-	// if err := config.Load(options, &cfg); err != nil {
-	//     log.Fatalw("Configution load error","error", err)
-	// }
-	cfg := model.COConfig{}
-	cfg.Git.Repo = "deployments"
-	cfg.Git.Branch = "main"
-
-	cfg.Appregistry.Repo = "https://github.com/edge-orchestration-platform/app-registry"
-	cfg.Appregistry.Branch = "main"
-
-	// log.Debugw("loaded config", "cfg:", cfg)
-
-	log.Infow("CO starting", "pid", os.Getpid())
-	log.Infow("conf done")
-
-	grpcPort := flag.String("grpc", ":50051", "CO gRPC listen address")
-	// versionFlag := flag.Bool("version", false, "Print the version and exit")
-	// flag.Parse()
-	// if *versionFlag {
-	//     fmt.Println("CO version:", cfg.Server.Version)
-	//     os.Exit(0)
-	// }
-
-	dsn := os.Getenv("DATABASE_URL")
-	log.Infow("connecting to postgres at", zap.String("dsn:", dsn))
-
-	var drv *sql.Driver
-	var err1 error
-	for i := 1; i <= 10; i++ {
-		drv, err1 = sql.Open(dialect.Postgres, dsn)
-		if err1 == nil {
-			if err1 = drv.DB().Ping(); err1 == nil {
-				log.Infow("✅ Connected to Postgres")
-				break
+// parse returns the command args name, or a usageError.
+func parse(args []string, stdout io.Writer, log *slog.Logger) (command, error) {
+	switch {
+	case len(args) == 0 || len(args) == 1 && args[0] == "serve":
+		return func(ctx context.Context, cfg config) error {
+			ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.MargoAddr)
+			if err != nil {
+				return fmt.Errorf("listen for the Margo API: %w", err)
 			}
+			return serve(ctx, cfg, ln, log)
+		}, nil
+
+	case len(args) >= 2 && args[0] == "site" && (args[1] == "add" || args[1] == "rotate-token"):
+		if len(args) != 3 {
+			return nil, usageError("co site " + args[1] + " takes one site ID")
 		}
-		log.Infow("⏳ Waiting for Postgres \n", zap.Int("attempt...", i))
-		time.Sleep(3 * time.Second)
-	}
-	if err1 != nil {
-		log.Errorw("❌ Failed to connect to Postgres after retries.", err1)
-		return
-	}
-
-	client := ent.NewClient(ent.Driver(drv))
-	defer client.Close()
-
-	// if err := client.Schema.Create(ctx); err != nil {
-	//     log.Fatalf("failed creating schema resources: %v", err)
-	// }
-	metrics.Init("co")
-	metrics.StartServer(metrics_port)
-
-	gitm := gitmanager.NewManager()
-
-	gitm.Register(gitmanager.RepoConfig{
-		Name:        "app-registry",
-		Mode:        gitmanager.GitRemote, // or GitLocal
-		RemoteURL:   "https://github.com/edge-orchestration-platform/app-registry.git",
-		Branch:      "main",
-		WorkingPath: "/tmp/app-registry",
-	})
-
-	gitm.Register(gitmanager.RepoConfig{
-		Name:      "deployments",
-		Mode:      gitmanager.GitRemote, //GitLocal, //,
-		RemoteURL: "https://github.com/edge-orchestration-platform/deployments.git",
-		//LocalPath: "/home/balaji/local-deployments",
-		Branch:      "main",
-		Token:       os.Getenv("GITHUB_TOKEN"),
-		WorkingPath: "/tmp/deployments-co",
-	})
-	if err := gitm.InitRepo("deployments"); err != nil {
-		log.Errorw("Git initrepo failed", "err", err)
-	}
-	cfg1, err := gitm.GetConfig("deployments")
-	if err != nil {
-		log.Errorw("config", "err", err)
-	}
-	log.Infow("CONFIG: \n", "config", cfg1)
-	//fmt.Printf("CONFIG: %+v\n", gitm.GetConfig("deployments"))
-	c := co.NewCO(gitm, "app-registry", "deployments")
-
-	router := api.NewRouter(client, c, cfg)
-	log.Infow("CO API running on :", "", port)
-	if err := router.Run(fmt.Sprintf(":%s", port)); err != nil {
-		log.Errorw("Router init failed", "err", err)
-		return
-	}
-
-	// Start gRPC server for callbacks from LO
-	go func() {
-		lis, err := net.Listen("tcp", *grpcPort)
+		id, err := contract.ParseSiteID(args[2])
 		if err != nil {
-			log.Errorw("[CO] failed to listen:", "", err)
+			return nil, usageError(err.Error())
 		}
-		s := grpc.NewServer()
-		//pb.RegisterCentralOrchestratorServer(s, &server{})
-		log.Infow("[CO] gRPC listening on", "", *grpcPort)
-		if err := s.Serve(lis); err != nil {
-			log.Errorw("[CO] serve: ", "err", err)
-			return
+		op := siteAdd
+		if args[1] == "rotate-token" {
+			op = siteRotateToken
 		}
-	}()
+		return func(ctx context.Context, cfg config) error {
+			return withStore(ctx, cfg, func(s *postgres.Store) error { return op(ctx, s, id, stdout, log) })
+		}, nil
+
+	case len(args) >= 2 && args[0] == "sites" && args[1] == "raise-versions":
+		fs := flag.NewFlagSet("raise-versions", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		by := fs.Uint64("by", 0, "")
+		if err := fs.Parse(args[2:]); err != nil {
+			return nil, usageError("co sites raise-versions: " + err.Error())
+		}
+		switch {
+		case fs.NArg() > 0:
+			return nil, usageError("co sites raise-versions takes no arguments, only --by N")
+		case *by == 0:
+			return nil, usageError("co sites raise-versions needs --by N, with N at least 1")
+		}
+		return func(ctx context.Context, cfg config) error {
+			return withStore(ctx, cfg, func(s *postgres.Store) error {
+				return sitesRaiseVersions(ctx, s, contract.ManifestVersion(*by), log)
+			})
+		}, nil
+	}
+	return nil, usageError(fmt.Sprintf("unknown command %q", strings.Join(args, " ")))
+}
+
+// withStore opens the CO store, runs f with it, and closes it.
+func withStore(ctx context.Context, cfg config, f func(*postgres.Store) error) error {
+	s, err := postgres.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	err = f(s)
+	if cerr := s.Close(); cerr != nil {
+		err = errors.Join(err, fmt.Errorf("close co store: %w", cerr))
+	}
+	return err
 }
