@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -75,8 +77,18 @@ func findSpecTests(root string) ([]specTest, []parseFailure, error) {
 }
 
 // scanFile returns the TestSpec_17_ functions of one file, or a failure if it doesn't parse.
+// The parser is given rel as the file name, so the positions in its errors are repo-relative and
+// slash-separated like every other path in the report (ADR 0009).
 func scanFile(fset *token.FileSet, path, rel string) ([]specTest, *parseFailure) {
-	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments|parser.SkipObjectResolution)
+	src, err := os.ReadFile(path)
+	if err != nil {
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err // drop the OS path; rel replaces it
+		}
+		return nil, &parseFailure{file: rel, err: rel + ": " + err.Error()}
+	}
+	f, err := parser.ParseFile(fset, rel, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return nil, &parseFailure{file: rel, err: err.Error()}
 	}
