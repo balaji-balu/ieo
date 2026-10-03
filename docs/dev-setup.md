@@ -13,6 +13,8 @@ Every command below runs from the repository root and works the same in PowerShe
 | Docker Desktop | current, WSL 2 backend | Podman Desktop also works but is not the default |
 | Go | 1.25 | For `go build`, `go test` and the helpers under `tools/` |
 | Git | any | |
+| golangci-lint | v2.5.0, built with Go 1.25 | Same version as CI: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0`. A release binary or an install built with an older Go refuses to lint a Go 1.25 module |
+| C compiler (gcc) | any, optional | Only for `go test -race`, which needs cgo. Without one on Windows, drop `-race` locally; CI runs it on Linux |
 
 Memory: give Docker Desktop at least 6 GB (Settings → Resources, or `memory=` in `%UserProfile%\.wslconfig`).
 Each simulated host runs its own Docker engine and needs about 1–2 GB.
@@ -99,4 +101,6 @@ Don't run the full stack at the same time: the `go run` services use the same po
 | `up --wait` times out on `host1` or `host2` | Docker Desktop must allow privileged containers (the default). Check `docker compose -f deploy/dev/compose.yaml logs host1` |
 | Containers killed or very slow | Not enough memory for two engines; raise the WSL 2 memory limit (see Prerequisites) |
 | LO: `CO rejected: {"error":"db query failed"}` | The Postgres volume predates the current schema; reset it with `down -v` (deletes data) |
+| `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1` | No C compiler; install gcc (for example MSYS2 `mingw-w64-ucrt-x86_64-gcc`) or run the tests without `-race` (see Prerequisites) |
+| golangci-lint: `the Go language version (go1.24) used to build golangci-lint is lower than the targeted Go version (1.25)` | Reinstall it with `go install` as in Prerequisites |
 | `en1` or `en2` keeps restarting | It registers with the LO once at startup and exits on failure; check `logs lo en1` |

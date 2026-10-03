@@ -85,6 +85,7 @@ go run ./tools/conformance
 ```
 
 Cloud sessions install `golangci-lint` through the SessionStart hook in `.claude/settings.json`.
+On Windows, see `docs/dev-setup.md` (Prerequisites) for the golangci-lint version and `-race`.
 
 Local stack (ADR 0009, `docs/dev-setup.md`): `docker compose -f deploy/dev/compose.yaml up -d --build --wait`
 runs everything, including two simulated hosts; add `nats postgres` to start only those and
