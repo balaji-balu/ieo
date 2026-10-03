@@ -116,7 +116,8 @@ func TestReportOutput(t *testing.T) {
 		"§17.2 Sync",
 		"SPEC.md:18  First sync with an empty bundle stores nothing.",
 		"pkg/a/a_test.go:19  TestSpec_17_2_Orphan: quote §17.2 \"No such bullet\" matches no bullet",
-		"pkg/broken/broken_test.go:",
+		// Every path is repo-relative and slash-separated, parse errors included (ADR 0009).
+		"\n  pkg/broken/broken_test.go:3:",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output lacks %q:\n%s", want, got)
