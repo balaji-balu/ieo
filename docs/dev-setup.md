@@ -34,7 +34,7 @@ later ones reuse the cache.
 
 | Service | Laptop port | Role |
 | --- | --- | --- |
-| `co` | 9001 | Central Orchestrator API |
+| `co` | 9002, 9001 | Central Orchestrator: Margo API for LOs on 9002 (health check at `/healthz`); the old API on 9001 until roadmap slice E |
 | `lo` | 9010 | Local Orchestrator for the one site |
 | `nats` | 4222, 8222 (monitoring) | LO ↔ EN messaging |
 | `postgres` | 5432 | CO database (`postgres` / `postgres`, database `orchestration`) |
@@ -57,6 +57,18 @@ the Git-based code that roadmap slices B–D replace. Until then the CO and LO c
 repositories at startup (they log an error and keep running if that fails), and the EN uses a mock
 runtime, so it does not start workloads in its host yet. The harness picks up each slice as it
 lands, with no change to the Compose file.
+
+## Adding a site
+
+The Margo API on 9002 serves a site only to an LO that presents the site's token. Add the site and
+keep the token it prints; the CO shows it only this once and stores only its hash:
+
+```sh
+docker compose -f deploy/dev/compose.yaml exec co app site add site-1
+```
+
+If the token is lost, `exec co app site rotate-token site-1` prints a new one and the old one stops
+working. The LO of this harness does not use the Margo API yet (roadmap slice C).
 
 ## Using the registry
 
@@ -83,7 +95,7 @@ Don't run the full stack at the same time: the `go run` services use the same po
 
 | Symptom | Fix |
 | --- | --- |
-| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 9001, 9010) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
+| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 9001, 9002, 9010) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
 | `up --wait` times out on `host1` or `host2` | Docker Desktop must allow privileged containers (the default). Check `docker compose -f deploy/dev/compose.yaml logs host1` |
 | Containers killed or very slow | Not enough memory for two engines; raise the WSL 2 memory limit (see Prerequisites) |
 | LO: `CO rejected: {"error":"db query failed"}` | The Postgres volume predates the current schema; reset it with `down -v` (deletes data) |
