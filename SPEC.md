@@ -479,7 +479,8 @@ CO:
 - `co.database_url`: string, REQUIRED
 - `co.wfm_id`: string, REQUIRED
 - `co.trust_domain`: string, REQUIRED
-- `co.tls.cert_file`, `co.tls.key_file`, `co.tls.client_ca_file`: paths, REQUIRED
+- `co.tls.cert_file`, `co.tls.key_file`, `co.tls.client_ca_file`: paths, REQUIRED from Appendix B
+  step 4; not read before it (§15.6)
 - `co.ca.cert_file`, `co.ca.key_file`: paths, REQUIRED (issues LO certificates)
 - `co.operator_token`: string, REQUIRED in phase 1
 - `co.registry.insecure`: boolean, default `false`
@@ -489,7 +490,10 @@ LO:
 
 - `lo.site_id`: string, REQUIRED
 - `lo.co_url`: string, REQUIRED
-- `lo.tls.cert_file`, `lo.tls.key_file`, `lo.tls.ca_file`: paths, REQUIRED
+- `lo.tls.cert_file`, `lo.tls.key_file`, `lo.tls.ca_file`: paths, REQUIRED from Appendix B step 4.
+  Before it, only `lo.tls.ca_file` is read, OPTIONAL: it verifies the CO's certificate (§15.6)
+- `lo.co_insecure`: boolean, default `false` `[IEO, interim]`: allows an `http://` `lo.co_url`
+  (§15.6)
 - `lo.data_dir`: path, REQUIRED
 - `lo.poll.interval`: duration, default `60s` `[Margo: user-configurable]`
 - `lo.poll.hours`: list of hour ranges, default all hours `[Margo]`
@@ -1192,6 +1196,14 @@ and scoped NATS credentials) replaces them (ADR 0005):
     retired site. Neither command logs the token.
   - A missing or unknown token gets `401` with problem type `about:blank` and
     `WWW-Authenticate: Bearer`; the LO treats it like `Unreachable` (§7.4).
+  - The CO serves the Margo API over plain HTTP. Where the CO ↔ LO path leaves a trusted network,
+    a TLS-terminating proxy in front of the CO carries it over HTTPS.
+  - The LO sends the token only to an `https://` `lo.co_url`, and verifies the server's
+    certificate against `lo.tls.ca_file` when it is set, or the system roots otherwise. It sends
+    the token to an `http://` URL only when `lo.co_insecure` is true, and then logs a warning at
+    startup that names the URL, never the token. An `http://` URL without `lo.co_insecure` is a
+    configuration error: the LO exits at startup (§6.1).
+  - The LO follows no redirects on Margo API requests. A `3xx` response is `Unreachable` (§7.4).
 - LO ↔ EN: ENs MUST authenticate to NATS with per-site username and password. Until scoped
   credentials land, these credentials are shared by the hosts of one site.
 - `edgectl` → CO: requests MUST carry the static operator token from configuration.
@@ -1548,6 +1560,9 @@ endpoints (§11.3 holds IEO-specific operations).
 - The CO rejects a client without a certificate from the configured CA.
 - An EN credential cannot publish on another host's subjects or subscribe to another host's `.cmd`.
 - No credential, key or token appears in logs or status messages.
+- Until mutual TLS, the LO sends its site token only to an `https://` CO URL unless
+  `lo.co_insecure` is set, exits at startup on an `http://` URL without it, and follows no
+  redirects (§15.6).
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
 - `edgectl site add` produces a certificate whose SPIFFE ID matches §4.2.
 - Every tier writes each log line as one JSON object.

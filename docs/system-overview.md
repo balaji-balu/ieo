@@ -126,7 +126,7 @@ Per the Margo Identity and Authorization Framework:
 - The CO holds an X.509-SVID with SPIFFE ID `spiffe://<trust-domain>/margo/wfm/<wfm-id>`.
 - Each LO holds an X.509-SVID with SPIFFE ID `spiffe://<trust-domain>/margo/wfm/<wfm-id>/client/<site-id>`.
 - Every Margo API call uses mutual TLS (TLS 1.3 by default). The CO identifies the caller **only** from the SVID, never from the path or body, and only exposes that caller's own resources.
-- The CO keeps an accepted-client policy; a site that is retired gets `403` with the Margo `#not-authorized` problem type, titled "Client Relationship Retired". Until mTLS (Appendix B step 4) the caller is identified by a per-site bearer token whose SHA-256 the CO keeps (§15.6).
+- The CO keeps an accepted-client policy; a site that is retired gets `403` with the Margo `#not-authorized` problem type, titled "Client Relationship Retired". Until mTLS (Appendix B step 4) the caller is identified by a per-site bearer token whose SHA-256 the CO keeps (§15.6). The LO sends it only over HTTPS (a TLS-terminating proxy in front of the CO), or over plain HTTP when configured to allow it, as on the laptop harness.
 - **[IEO]** Enrollment is operator-driven: `edgectl site add` registers the site and issues the LO's SVID from a CA managed by the CO deployment. Automated renewal is future work (Margo has not specified it yet).
 
 ### 4.3 Site-internal identity (LO ↔ EN) [IEO]
