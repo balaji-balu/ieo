@@ -585,8 +585,10 @@ backoff and security handling differ.
 1. `NotModified` — `304`.
 2. `Accepted` — new manifest verified and committed.
 3. `RejectedRollback` — `manifestVersion` not greater than stored. Security event.
-4. `AbortedDigestMismatch` — any fetched artifact failed digest verification. Security event.
-5. `Unreachable` — transport error, or `5xx` without `Retry-After`. Backoff.
+4. `AbortedDigestMismatch` — any fetched artifact failed digest verification, or a bundle does not
+   match the manifest (§8.2). Security event.
+5. `Unreachable` — transport error, `5xx` without `Retry-After`, a manifest that fails validation,
+   or a content fetch that failed (§8.2). Backoff.
 6. `Throttled` — `429`, or any response carrying `Retry-After`. Wait as instructed.
 7. `Retired` — `403` with problem type `#not-authorized` on `GET /api/v1/deployments`: the CO
    refuses this client by local policy, of which retirement is the case Margo names (§11.1). Margo
@@ -674,13 +676,21 @@ At the configured interval, subject to polling hours and downtime windows:
 
 1. `GET /api/v1/deployments`, with `If-None-Match: <etag>` when an ETag is stored.
 2. `304` → outcome `NotModified`.
-3. `200` → check `manifestVersion > accepted_manifest_version`. Otherwise outcome
+3. `200` → validate the manifest `[IEO]`: it validates against the pinned Margo schema, names each
+   `deploymentId` at most once, and has a non-null `bundle` when it has deployments (§4.1.6).
+   Otherwise outcome `Unreachable`, logged at error level with the reason; keep previous desired
+   state. Then check `manifestVersion > accepted_manifest_version`. Otherwise outcome
    `RejectedRollback`; keep previous desired state.
 4. Determine digests not already held. Fetch them:
    - first sync, or more than half the deployments changed → `GET /api/v1/bundles/{digest}`;
    - otherwise → `GET /api/v1/deployments/{deploymentId}/{digest}` for each.
-   The threshold is implementation-defined; the RECOMMENDED value is half.
-5. Verify the SHA-256 of every fetched artifact against its digest. Any mismatch → outcome
+   The threshold is implementation-defined; the RECOMMENDED value is half. `[IEO]` The LO
+   fetches the bundle when the deployments whose digest it does not hold are more than half of the
+   deployments in the manifest; a first sync holds none. The threshold is not configurable.
+5. Verify the SHA-256 of every fetched artifact against its digest. A bundle's bytes are verified
+   against the manifest's bundle digest before the bundle is unpacked. A fetched bundle MUST also
+   match the manifest: exactly one entry per deployment in the manifest and nothing else, laid out
+   as in ADR 0012, each entry matching that deployment's digest. Any mismatch → outcome
    `AbortedDigestMismatch`; keep previous desired state; the next poll retries.
 6. Atomically replace `desired` with the new set. Record for each deployment the
    `manifestVersion` its current digest first appeared in (`adopted_manifest_version`).
@@ -690,6 +700,10 @@ At the configured interval, subject to polling hours and downtime windows:
 
 Rules:
 
+- `[IEO]` A content fetch that fails ends the sync attempt and leaves desired state unchanged: outcome
+  `Throttled` for a `429` or a response carrying `Retry-After`, `Unreachable` for anything else.
+  The next poll retries the fetch, subject to `retryable` and `backoffStrategy` (below); a failed
+  content fetch never stops polling the manifest.
 - A `404` on a content URL means only that the digest is unavailable. It is never a removal
   signal.
 - A deployment absent from an accepted manifest is removed.
@@ -1061,8 +1075,8 @@ Rules:
 - LO and EN log lines MUST include `site_id`; EN and host-scoped LO lines MUST include `host_id`.
 - Sync attempts MUST log their outcome (§7.4) and `manifest_version`.
 - `RejectedRollback` and `AbortedDigestMismatch` MUST be logged at a security/warning level with
-  the offending values: the stored and received `manifestVersion`, or the expected and computed
-  digest.
+  the offending values: the stored and received `manifestVersion`, the expected and computed
+  digest, or the bundle entry that does not match the manifest.
 - Log sink failures MUST NOT stop orchestration.
 
 ### 13.2 Metrics
@@ -1109,7 +1123,7 @@ nothing else.
 | Planned downtime window | LO does not poll and ignores communication errors during the window. |
 | Site retired | LO stops polling; keeps current workloads running until an operator intervenes. |
 | `manifestVersion` ≤ stored | Reject; security log; keep previous desired state. |
-| Digest mismatch | Abort the whole update; keep previous desired state; retry next poll. |
+| Digest mismatch, or bundle not matching the manifest | Abort the whole update; keep previous desired state; retry next poll. |
 | Invalid archive | Component `failed` with `IEO-ARCHIVE-INVALID`; LO retries with backoff. |
 | EN offline | After missed-heartbeat window: no commands; its deployments `pending`. On return: inventory, then reconcile. |
 | Command rejected or unacknowledged | Actual state unchanged; per-deployment retry with backoff. |
@@ -1244,12 +1258,28 @@ function sync_tick(state):
     304:                     record(NotModified); flush_outbox(); schedule(sync_tick, cfg.poll.interval); return
     200:                     manifest = parse(resp.body)
 
+  if not valid(manifest):                       # schema, unique IDs, bundle present (§8.2 step 3)
+    log_error(Unreachable, reason); schedule(sync_tick, backoff()); return
+
   if state.version != null and manifest.version <= state.version:
     security_log(RejectedRollback, manifest.version, state.version)
     schedule(sync_tick, cfg.poll.interval); return
 
   missing = [d for d in manifest.deployments if not state.has_blob(d.digest)]
-  blobs = fetch_bundle_or_individual(manifest, missing)
+  fetched, err = fetch_bundle_or_individual(manifest, missing)   # raw bytes, not yet unpacked
+  if err:                                       # 404 included: never a removal; polling continues
+    record(Throttled if err.retry_after else Unreachable)
+    schedule(sync_tick, err.retry_after or backoff()); return
+  if fetched.is_bundle:
+    if sha256(fetched.bytes) != manifest.bundle.digest:          # before unpacking (§15.3)
+      security_log(AbortedDigestMismatch, manifest.bundle.digest)
+      schedule(sync_tick, cfg.poll.interval); return
+    blobs, ok = unpack_bundle(fetched.bytes, manifest)           # ADR 0012; one entry per deployment
+    if not ok:
+      security_log(AbortedDigestMismatch, offending_entry)
+      schedule(sync_tick, cfg.poll.interval); return
+  else:
+    blobs = fetched.yamls
   for (digest, bytes) in blobs:
     if sha256(bytes) != digest:
       security_log(AbortedDigestMismatch, digest)
@@ -1443,8 +1473,14 @@ endpoints (§11.3 holds IEO-specific operations).
 - `304` changes nothing.
 - A manifest with `manifestVersion` equal to or lower than stored is rejected, logged as a security
   event, and leaves desired state unchanged.
-- A digest mismatch on any artifact aborts the whole update and leaves desired state unchanged.
-- A `404` on a content URL does not remove the deployment.
+- A digest mismatch on any artifact, or a bundle with a missing, extra or misnamed entry, aborts the
+  whole update and leaves desired state unchanged.
+- When the deployments whose digest the LO does not hold are more than half of the manifest's, the
+  LO fetches the bundle; otherwise it fetches each of them by its content URL.
+- A `404` on a content URL does not remove the deployment, leaves desired state unchanged, and does
+  not stop polling.
+- A manifest that fails validation (schema, duplicate `deploymentId`, `bundle: null` with
+  deployments) is not accepted and leaves desired state unchanged.
 - A deployment absent from an accepted manifest is removed from desired state.
 - `adoptedManifestVersion` stays at the version where the current digest first appeared, across
   later manifests that do not change that deployment.
@@ -1521,7 +1557,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - Each sync attempt writes one log line with its §7.4 outcome and `manifest_version`, for every
   outcome in §7.4.
 - `RejectedRollback` and `AbortedDigestMismatch` are logged at the security/warning level with the
-  offending values: the stored and received `manifestVersion`, or the expected and computed digest.
+  offending values: the stored and received `manifestVersion`, the expected and computed digest, or
+  the bundle entry that does not match the manifest.
 - REQUIRED metrics in §13.2 are exposed and change as expected in the scenarios above.
 - A log sink failure does not stop orchestration.
 

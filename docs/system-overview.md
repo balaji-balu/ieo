@@ -177,15 +177,16 @@ The LO runs this loop at the configured polling rate (§9):
 1. `GET /api/v1/deployments` with `If-None-Match: <last ETag>` (omitted on first sync).
 2. `304 Not Modified` → nothing to do.
 3. `200 OK` → validate:
+   - the manifest MUST validate against the pinned Margo schema, name each deployment once, and name a bundle when it has deployments. Otherwise the LO keeps its desired state and retries at the next poll.
    - `manifestVersion` MUST be strictly greater than the stored version. Otherwise reject the manifest and log a security event (rollback protection).
 4. Fetch content for every deployment whose digest the LO does not already hold:
-   - many changes or first sync → `GET` the bundle (`/api/v1/bundles/{digest}`);
-   - few changes → `GET /api/v1/deployments/{id}/{digest}` for each.
-5. Verify the SHA-256 digest of every fetched artifact. **Any mismatch aborts the whole update; the LO keeps its previous desired state.**
+   - first sync, or more than half the deployments to fetch → `GET` the bundle (`/api/v1/bundles/{digest}`);
+   - otherwise → `GET /api/v1/deployments/{id}/{digest}` for each.
+5. Verify the SHA-256 digest of every fetched artifact, and that a bundle holds exactly the manifest's deployments. **Any mismatch aborts the whole update; the LO keeps its previous desired state.**
 6. Store the new desired state atomically, then reconcile the site (§5.5).
 7. Once reconciliation has been started for every deployment, durably persist the new `manifestVersion` and ETag.
 
-A deployment that is **absent** from the manifest is to be removed. A `404` on a content URL only means that digest is unavailable; it is never a removal signal.
+A deployment that is **absent** from the manifest is to be removed. A `404` on a content URL only means that digest is unavailable; it is never a removal signal. Any failed content fetch ends the attempt with desired state unchanged, and the next poll retries.
 
 **Catching up after an outage** needs nothing extra: the first successful poll returns the complete current manifest, and the LO converges to it. Intermediate manifests the LO never saw do not matter.
 
