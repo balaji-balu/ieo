@@ -687,7 +687,8 @@ At the configured interval, subject to polling hours and downtime windows:
    The threshold is implementation-defined; the RECOMMENDED value is half. `[IEO]` The LO
    fetches the bundle when the deployments whose digest it does not hold are more than half of the
    deployments in the manifest; a first sync holds none. The threshold is not configurable.
-5. Verify the SHA-256 of every fetched artifact against its digest. A fetched bundle MUST also
+5. Verify the SHA-256 of every fetched artifact against its digest. A bundle's bytes are verified
+   against the manifest's bundle digest before the bundle is unpacked. A fetched bundle MUST also
    match the manifest: exactly one entry per deployment in the manifest and nothing else, laid out
    as in ADR 0012, each entry matching that deployment's digest. Any mismatch → outcome
    `AbortedDigestMismatch`; keep previous desired state; the next poll retries.
@@ -701,7 +702,8 @@ Rules:
 
 - `[IEO]` A content fetch that fails ends the sync attempt and leaves desired state unchanged: outcome
   `Throttled` for a `429` or a response carrying `Retry-After`, `Unreachable` for anything else.
-  The next poll retries; a failed content fetch never stops polling, whatever its problem fields.
+  The next poll retries the fetch, subject to `retryable` and `backoffStrategy` (below); a failed
+  content fetch never stops polling the manifest.
 - A `404` on a content URL means only that the digest is unavailable. It is never a removal
   signal.
 - A deployment absent from an accepted manifest is removed.
@@ -1264,13 +1266,20 @@ function sync_tick(state):
     schedule(sync_tick, cfg.poll.interval); return
 
   missing = [d for d in manifest.deployments if not state.has_blob(d.digest)]
-  blobs, err = fetch_bundle_or_individual(manifest, missing)
-  if err:                                       # 404 included: never a removal, never stops polling
+  fetched, err = fetch_bundle_or_individual(manifest, missing)   # raw bytes, not yet unpacked
+  if err:                                       # 404 included: never a removal; polling continues
     record(Throttled if err.retry_after else Unreachable)
     schedule(sync_tick, err.retry_after or backoff()); return
-  if fetched_bundle and not bundle_matches_manifest(blobs, manifest):
-    security_log(AbortedDigestMismatch, offending_entry)
-    schedule(sync_tick, cfg.poll.interval); return
+  if fetched.is_bundle:
+    if sha256(fetched.bytes) != manifest.bundle.digest:          # before unpacking (§15.3)
+      security_log(AbortedDigestMismatch, manifest.bundle.digest)
+      schedule(sync_tick, cfg.poll.interval); return
+    blobs, ok = unpack_bundle(fetched.bytes, manifest)           # ADR 0012; one entry per deployment
+    if not ok:
+      security_log(AbortedDigestMismatch, offending_entry)
+      schedule(sync_tick, cfg.poll.interval); return
+  else:
+    blobs = fetched.yamls
   for (digest, bytes) in blobs:
     if sha256(bytes) != digest:
       security_log(AbortedDigestMismatch, digest)
@@ -1468,8 +1477,8 @@ endpoints (§11.3 holds IEO-specific operations).
   whole update and leaves desired state unchanged.
 - When the deployments whose digest the LO does not hold are more than half of the manifest's, the
   LO fetches the bundle; otherwise it fetches each of them by its content URL.
-- A `404` on a content URL does not remove the deployment; the attempt ends `Unreachable` and the
-  next poll retries.
+- A `404` on a content URL does not remove the deployment, leaves desired state unchanged, and does
+  not stop polling.
 - A manifest that fails validation (schema, duplicate `deploymentId`, `bundle: null` with
   deployments) is not accepted and leaves desired state unchanged.
 - A deployment absent from an accepted manifest is removed from desired state.
