@@ -500,9 +500,11 @@ LO:
 - `lo.poll.downtime_windows`: list of time windows, default `[]` `[Margo]`
 - `lo.poll.max_backoff`: duration, default `10m`
 - `lo.nats.listen_addr`: string, default `:4222`
-- `lo.nats.tls.cert_file`, `lo.nats.tls.key_file`: paths, REQUIRED
-- `lo.nats.operator_key_file`: path, REQUIRED (signs per-host and, with the data-plane proposal
-  `docs/proposals/data-plane.md`, per-workload credentials)
+- `lo.nats.tls.cert_file`, `lo.nats.tls.key_file`: paths, REQUIRED once the LO runs the site NATS
+  server (§11.2); not read before it
+- `lo.nats.operator_key_file`: path, REQUIRED from Appendix B step 4 (scoped NATS credentials); not
+  read before it. It signs per-host and, with the data-plane proposal
+  `docs/proposals/data-plane.md`, per-workload credentials
 - `lo.heartbeat.interval`: duration, default `10s` (MUST equal the ENs' `en.heartbeat.interval`)
 - `lo.heartbeat.offline_after_missed`: integer, default `3`
 - `lo.metrics_listen_addr`: string, default `:9091`
@@ -1203,7 +1205,8 @@ and scoped NATS credentials) replaces them (ADR 0005):
     the token to an `http://` URL only when `lo.co_insecure` is true, and then logs a warning at
     startup that names the URL, never the token. An `http://` URL without `lo.co_insecure` is a
     configuration error: the LO exits at startup (§6.1).
-  - The LO follows no redirects on Margo API requests. A `3xx` response is `Unreachable` (§7.4).
+  - The LO follows no redirects on Margo API requests. A redirect (`301`, `302`, `303`, `307`,
+    `308`) is `Unreachable` (§7.4); `304` stays `NotModified`.
 - LO ↔ EN: ENs MUST authenticate to NATS with per-site username and password. Until scoped
   credentials land, these credentials are shared by the hosts of one site.
 - `edgectl` → CO: requests MUST carry the static operator token from configuration.
