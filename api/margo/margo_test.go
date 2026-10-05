@@ -9,7 +9,8 @@ import (
 )
 
 // TestWorkloadManagementAPIDocumentFixesRequired checks the workaround in f209a7f/README.md:
-// UnsignedAppStateManifest keeps its real required properties and loses the dotted names.
+// UnsignedAppStateManifest's dotted names become required properties of the bundle schema they
+// name, DeploymentBundleRef.
 func TestWorkloadManagementAPIDocumentFixesRequired(t *testing.T) {
 	doc, err := margo.WorkloadManagementAPIDocument()
 	if err != nil {
@@ -24,12 +25,19 @@ func TestWorkloadManagementAPIDocumentFixesRequired(t *testing.T) {
 			}
 		}
 	}
-	var got []string
-	for _, r := range schemas["UnsignedAppStateManifest"].(map[string]any)["required"].([]any) {
-		got = append(got, r.(string))
+	required := func(name string) []string {
+		var out []string
+		req, _ := schemas[name].(map[string]any)["required"].([]any)
+		for _, r := range req {
+			out = append(out, r.(string))
+		}
+		return out
 	}
-	if want := []string{"manifestVersion", "bundle", "deployments"}; !slices.Equal(got, want) {
+	if got, want := required("UnsignedAppStateManifest"), []string{"manifestVersion", "bundle", "deployments"}; !slices.Equal(got, want) {
 		t.Errorf("UnsignedAppStateManifest required = %v, want %v", got, want)
+	}
+	if got, want := required("DeploymentBundleRef"), []string{"mediaType", "digest", "url"}; !slices.Equal(got, want) {
+		t.Errorf("DeploymentBundleRef required = %v, want %v", got, want)
 	}
 
 	// Each call returns its own value, so one caller's change never reaches another.

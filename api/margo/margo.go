@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/goccy/go-yaml"
@@ -47,15 +48,20 @@ func WorkloadManagementAPIDocument() (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("margo OpenAPI file: no components.schemas")
 	}
-	dropDottedRequired(schemas)
+	if err := moveDottedRequired(schemas); err != nil {
+		return nil, err
+	}
 	return doc, nil
 }
 
-// dropDottedRequired removes `required` entries that contain a `.`. UnsignedAppStateManifest
-// requires "bundle.mediaType", "bundle.digest" and "bundle.url"; JSON Schema reads these as
-// literal property names, so every valid manifest would fail (f209a7f/README.md).
-func dropDottedRequired(schemas map[string]any) {
-	for _, s := range schemas {
+// moveDottedRequired fixes `required` entries of the form `<property>.<field>`:
+// UnsignedAppStateManifest requires "bundle.mediaType", "bundle.digest" and "bundle.url", which
+// JSON Schema reads as literal property names, so every valid manifest would fail. Each entry
+// becomes `<field>` in the required list of the schema that `<property>` references (here
+// DeploymentBundleRef), which is what the names mean. `required` does not apply to null, so a
+// null bundle stays valid (f209a7f/README.md).
+func moveDottedRequired(schemas map[string]any) error {
+	for name, s := range schemas {
 		obj, ok := s.(map[string]any)
 		if !ok {
 			continue
@@ -65,11 +71,35 @@ func dropDottedRequired(schemas map[string]any) {
 			continue
 		}
 		kept := []any{}
-		for _, name := range req {
-			if n, ok := name.(string); !ok || !strings.Contains(n, ".") {
-				kept = append(kept, name)
+		for _, r := range req {
+			entry, _ := r.(string)
+			prop, field, dotted := strings.Cut(entry, ".")
+			if !dotted {
+				kept = append(kept, r)
+				continue
+			}
+			target, err := referencedSchema(schemas, obj, prop)
+			if err != nil {
+				return fmt.Errorf("margo OpenAPI file: %s requires %q: %w", name, entry, err)
+			}
+			targetReq, _ := target["required"].([]any)
+			if !slices.Contains(targetReq, any(field)) {
+				target["required"] = append(targetReq, field)
 			}
 		}
 		obj["required"] = kept
 	}
+	return nil
+}
+
+// referencedSchema returns the component schema that property prop of obj references by $ref.
+func referencedSchema(schemas, obj map[string]any, prop string) (map[string]any, error) {
+	props, _ := obj["properties"].(map[string]any)
+	p, _ := props[prop].(map[string]any)
+	ref, _ := p["$ref"].(string)
+	target, ok := schemas[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	if !strings.HasPrefix(ref, "#/components/schemas/") || !ok {
+		return nil, fmt.Errorf("property %q does not reference a component schema", prop)
+	}
+	return target, nil
 }

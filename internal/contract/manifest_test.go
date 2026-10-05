@@ -141,6 +141,9 @@ func TestDecodeStateManifest(t *testing.T) {
 		{"deploymentId not a UUID", `{"manifestVersion":1,"deployments":[` + ref("d1") + `],"bundle":` + bundle + `}`},
 		{"digest not sha256", `{"manifestVersion":1,"deployments":[{"deploymentId":"` + testUUID + `","digest":"md5:x","url":"/x"}],"bundle":` + bundle + `}`},
 		{"duplicate deploymentId", `{"manifestVersion":1,"deployments":[` + ref(testUUID) + `,` + ref(testUUID) + `],"bundle":` + bundle + `}`},
+		{"schema: bundle without digest", `{"manifestVersion":1,"deployments":[` + ref(testUUID) + `],"bundle":{"mediaType":"` + contract.BundleMediaType + `","url":"/x"}}`},
+		{"schema: bundle without url", `{"manifestVersion":1,"deployments":[` + ref(testUUID) + `],"bundle":{"mediaType":"` + contract.BundleMediaType + `","digest":"` + testDigest + `"}}`},
+		{"schema: bundle without mediaType", `{"manifestVersion":1,"deployments":[` + ref(testUUID) + `],"bundle":{"digest":"` + testDigest + `","url":"/x"}}`},
 		{"bundle null with deployments", `{"manifestVersion":1,"deployments":[` + ref(testUUID) + `],"bundle":null}`},
 	} {
 		if _, err := contract.DecodeStateManifest([]byte(tt.body)); !errors.Is(err, contract.ErrInvalidManifest) {
