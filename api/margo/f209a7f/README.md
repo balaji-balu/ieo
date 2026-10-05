@@ -26,11 +26,13 @@ The CO validates Application Descriptions against the generated file (SPEC §5.3
 
 ## Known upstream defects
 
-`internal/contract` works around these in memory, never in these files: the §17.1 contract tests for
-the OpenAPI file, and Application Description validation for the generated schema.
+These are worked around in memory, never in these files. For the OpenAPI file, `api/margo`
+(`WorkloadManagementAPIDocument`) does it once, for production validation in `internal/contract` and
+the §17.1 contract tests alike. For the generated schema, `internal/contract` does it in Application
+Description validation.
 
 | Schema | Defect | Workaround |
 | --- | --- | --- |
-| `UnsignedAppStateManifest` | `required` lists `bundle.mediaType`, `bundle.digest` and `bundle.url`. JSON Schema reads these as literal top-level property names, so every valid manifest fails validation. | The test validator drops `required` entries that contain a `.` before compiling. |
+| `UnsignedAppStateManifest` | `required` lists `bundle.mediaType`, `bundle.digest` and `bundle.url`. JSON Schema reads these as literal top-level property names, so every valid manifest fails validation. | `WorkloadManagementAPIDocument` drops `required` entries that contain a `.` before anything compiles the schemas. |
 | `application-description.schema.json`: `ApplicationDescription`, `DeploymentProfile`, `Component` | The LinkML slot `x-placeholder-extensions` stands for any `x-<name>-extensions` key, but the generator emits a literal property `x_placeholder_extensions` and closes `DeploymentProfile` and `Component` (`additionalProperties: false`). Real vendor extensions are rejected there. | Replace the property with `patternProperties: {"^x-.+-extensions$": {type: object}}`. |
 | `application-description.schema.json`: `Configuration.schema` items | LinkML subclasses (`TextValidationSchema`, …) are emitted as separate definitions, and the items reference only the closed base `Schema`, so fields such as `maxLength` are rejected. Margo's own valid examples fail. | Replace each `$ref` to `Schema` with `anyOf` over its five subclasses. |

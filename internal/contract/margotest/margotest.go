@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-yaml"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/balaji-balu/ieo/api/margo"
@@ -23,20 +22,14 @@ type API struct {
 	compiler *jsonschema.Compiler
 }
 
-// Load parses the pinned file and works around its known defects in memory.
+// Load parses the pinned file, with its known defects worked around by
+// margo.WorkloadManagementAPIDocument.
 func Load(t testing.TB) *API {
 	t.Helper()
-	js, err := yaml.YAMLToJSON(margo.WorkloadManagementAPI)
+	doc, err := margo.WorkloadManagementAPIDocument()
 	if err != nil {
-		t.Fatalf("Margo OpenAPI file: %v", err)
+		t.Fatal(err)
 	}
-	v, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
-	if err != nil {
-		t.Fatalf("Margo OpenAPI file: %v", err)
-	}
-	doc := v.(map[string]any)
-	fixUpstreamDefects(doc)
-
 	// Only components are a schema resource; paths hold OpenAPI objects (e.g. `required: true`)
 	// that are not JSON Schema.
 	c := jsonschema.NewCompiler()
@@ -45,30 +38,6 @@ func Load(t testing.TB) *API {
 		t.Fatal(err)
 	}
 	return &API{doc: doc, compiler: c}
-}
-
-// fixUpstreamDefects works around the defects listed in api/margo/<commit>/README.md, in memory.
-// The vendored file itself stays unchanged.
-func fixUpstreamDefects(doc map[string]any) {
-	schemas := lookup(doc, "components", "schemas").(map[string]any)
-	for _, s := range schemas {
-		obj, ok := s.(map[string]any)
-		if !ok {
-			continue
-		}
-		req, ok := obj["required"].([]any)
-		if !ok {
-			continue
-		}
-		kept := []any{}
-		for _, name := range req {
-			// e.g. UnsignedAppStateManifest requires "bundle.mediaType", which no object has.
-			if !strings.Contains(name.(string), ".") {
-				kept = append(kept, name)
-			}
-		}
-		obj["required"] = kept
-	}
 }
 
 // Request returns the schema of an operation's request body.
