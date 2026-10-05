@@ -56,6 +56,9 @@ type BundleFile struct {
 	YAML         []byte
 }
 
+// BundleEntryName is the name of deployment id's entry in a bundle (ADR 0012).
+func BundleEntryName(id uuid.UUID) string { return id.String() + ".yaml" }
+
 // EncodeBundle returns the bundle holding files (SPEC §4.1.6, ADR 0012): a gzip tar with one
 // `<deploymentId>.yaml` per file, built so that the same files always give the same bytes, in any
 // order.
@@ -69,7 +72,7 @@ func EncodeBundle(files []BundleFile) ([]byte, error) {
 	for _, f := range files {
 		h := &tar.Header{
 			Typeflag: tar.TypeReg,
-			Name:     f.DeploymentID.String() + ".yaml",
+			Name:     BundleEntryName(f.DeploymentID),
 			Size:     int64(len(f.YAML)),
 			Mode:     0o644,
 			ModTime:  time.Unix(0, 0),
@@ -141,7 +144,7 @@ func DecodeBundle(b []byte) ([]BundleFile, error) {
 func bundleEntryID(name string) (uuid.UUID, error) {
 	stem, ok := strings.CutSuffix(name, ".yaml")
 	id, err := uuid.Parse(stem)
-	if !ok || err != nil || id.String() != stem {
+	if !ok || err != nil || BundleEntryName(id) != name {
 		return uuid.UUID{}, fmt.Errorf("%w: entry %q is not named <lowercase deploymentId>.yaml", ErrInvalidBundle, name)
 	}
 	return id, nil
