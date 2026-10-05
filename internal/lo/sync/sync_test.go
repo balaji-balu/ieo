@@ -283,11 +283,7 @@ func TestSpec_17_3_DigestMismatchAbortsWholeUpdate(t *testing.T) {
 		before := f.state()
 		v2 := with(with(v1, idA, "2"), idB, "2") // 2 of 4 not held: fetched one by one
 		m := f.co.publish(2, v2)
-		for _, d := range m.Deployments {
-			if d.DeploymentID == idA {
-				f.co.override(d.URL, respond(http.StatusOK, []byte("tampered")))
-			}
-		}
+		f.co.override(refOf(t, m, idA).URL, respond(http.StatusOK, []byte("tampered")))
 
 		f.tick(losync.AbortedDigestMismatch)
 
@@ -340,17 +336,10 @@ func TestSpec_17_3_ContentURL404DoesNotRemoveDeployment(t *testing.T) {
 	tests := []struct {
 		name string
 		v2   map[uuid.UUID][]byte
-		url  func(m contract.StateManifest) string
+		url  func(t *testing.T, m contract.StateManifest) string
 	}{
-		{"YAML", with(yamls("1", idA, idB), idB, "2"), func(m contract.StateManifest) string {
-			for _, d := range m.Deployments {
-				if d.DeploymentID == idB {
-					return d.URL
-				}
-			}
-			return ""
-		}},
-		{"bundle", with(yamls("2", idA, idB, idC), idA, "1"), func(m contract.StateManifest) string { return m.Bundle.URL }},
+		{"YAML", with(yamls("1", idA, idB), idB, "2"), func(t *testing.T, m contract.StateManifest) string { return refOf(t, m, idB).URL }},
+		{"bundle", with(yamls("2", idA, idB, idC), idA, "1"), func(_ *testing.T, m contract.StateManifest) string { return m.Bundle.URL }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -358,7 +347,7 @@ func TestSpec_17_3_ContentURL404DoesNotRemoveDeployment(t *testing.T) {
 			f.accept(1, yamls("1", idA, idB))
 			before := f.state()
 			m := f.co.publish(2, tc.v2)
-			url := tc.url(m)
+			url := tc.url(t, m)
 			f.co.override(url, func(w http.ResponseWriter, _ *http.Request) {
 				writeProblem(w, http.StatusNotFound, contract.ProblemDeploymentNotFound)
 			})
@@ -505,13 +494,8 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 		f.accept(1, v1)
 		m := f.co.publish(2, with(v1, idB, "2"))
 		wrong := []byte("tampered")
-		var want contract.DeploymentRef
-		for _, d := range m.Deployments {
-			if d.DeploymentID == idB {
-				want = d
-				f.co.override(d.URL, respond(http.StatusOK, wrong))
-			}
-		}
+		want := refOf(t, m, idB)
+		f.co.override(want.URL, respond(http.StatusOK, wrong))
 		f.tick(losync.AbortedDigestMismatch)
 		requireFields(t, f.outcomeLine(), map[string]any{
 			"level": "WARN", "outcome": "AbortedDigestMismatch", "deployment_id": idB.String(),
@@ -529,12 +513,7 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 		}
 		f.co.replaceBundle(b)
 		f.tick(losync.AbortedDigestMismatch)
-		var digestB contract.Digest
-		for _, d := range m.Deployments {
-			if d.DeploymentID == idB {
-				digestB = d.Digest
-			}
-		}
+		digestB := refOf(t, m, idB).Digest
 		requireFields(t, f.outcomeLine(), map[string]any{
 			"level": "WARN", "deployment_id": idB.String(),
 			"digest": string(digestB), "computed_digest": string(contract.DigestOf(wrong)),
@@ -564,12 +543,7 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 		}
 		f.co.replaceBundle(b)
 		f.tick(losync.AbortedDigestMismatch)
-		var digestB contract.Digest
-		for _, d := range m.Deployments {
-			if d.DeploymentID == idB {
-				digestB = d.Digest
-			}
-		}
+		digestB := refOf(t, m, idB).Digest
 		requireFields(t, f.outcomeLine(), map[string]any{
 			"level": "WARN", "bundle_entry": idB.String() + ".yaml", "deployment_id": idB.String(), "digest": string(digestB),
 		})
@@ -846,4 +820,16 @@ func recv[T any](t *testing.T, ch <-chan T, what string) T {
 		t.Fatalf("timed out waiting for %s", what)
 		panic("unreachable")
 	}
+}
+
+// refOf returns deployment id's entry in m.
+func refOf(t *testing.T, m contract.StateManifest, id uuid.UUID) contract.DeploymentRef {
+	t.Helper()
+	for _, d := range m.Deployments {
+		if d.DeploymentID == id {
+			return d
+		}
+	}
+	t.Fatalf("deployment %s is not in the manifest", id)
+	return contract.DeploymentRef{}
 }
