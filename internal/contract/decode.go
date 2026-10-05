@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/goccy/go-yaml"
+	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/balaji-balu/ieo/api/margo"
@@ -23,6 +23,9 @@ var (
 	// ErrSemantic means the body is JSON but not a valid Margo body for the operation (Margo
 	// #semantic-error, SPEC §11.1).
 	ErrSemantic = errors.New("semantic error in request body")
+	// ErrInvalidManifest is returned, wrapped with the reason, for a State Manifest the LO must
+	// not accept (SPEC §8.2 step 3).
+	ErrInvalidManifest = errors.New("invalid state manifest")
 )
 
 // FieldError is one field-level error of a request body (Margo ProblemDetail `errors[]`). Field
@@ -42,6 +45,28 @@ func DecodeDeviceCapabilities(b []byte) (DeviceCapabilitiesManifest, []FieldErro
 // it (SPEC §11.1).
 func DecodeDeploymentStatus(b []byte) (DeploymentStatus, []FieldError, error) {
 	return decodeMargo[DeploymentStatus]("DeploymentStatusManifest", b)
+}
+
+// DecodeStateManifest validates b, the body of GET /api/v1/deployments, and decodes it (SPEC
+// §8.2 step 3): it validates against the pinned Margo UnsignedAppStateManifest schema, names each
+// deploymentId at most once, and has a non-null bundle when it has deployments (§4.1.6). Every
+// failure wraps ErrInvalidManifest. Whether the version may be accepted is the caller's check.
+func DecodeStateManifest(b []byte) (StateManifest, error) {
+	m, _, err := decodeMargo[StateManifest]("UnsignedAppStateManifest", b)
+	if err != nil {
+		return StateManifest{}, fmt.Errorf("%w: %w", ErrInvalidManifest, err)
+	}
+	seen := make(map[uuid.UUID]bool, len(m.Deployments))
+	for _, d := range m.Deployments {
+		if seen[d.DeploymentID] {
+			return StateManifest{}, fmt.Errorf("%w: deploymentId %s appears more than once", ErrInvalidManifest, d.DeploymentID)
+		}
+		seen[d.DeploymentID] = true
+	}
+	if len(m.Deployments) > 0 && m.Bundle == nil {
+		return StateManifest{}, fmt.Errorf("%w: bundle is null but there are %d deployments", ErrInvalidManifest, len(m.Deployments))
+	}
+	return m, nil
 }
 
 // decodeMargo returns ErrMalformed for input that isn't JSON, and ErrSemantic with field errors
@@ -88,26 +113,22 @@ func nonStringLabels(v any) []FieldError {
 
 const wfmSchemaURL = "https://margo.invalid/workload-management-api.json"
 
-// wfmSchemas compiles the request-body schemas of the pinned Margo OpenAPI file once. Neither
-// has a known defect (api/margo/f209a7f/README.md). The file is fixed at build time and covered
-// by tests, so a failure here is a programmer error (G-B4).
+// wfmSchemas compiles the schemas of the pinned Margo OpenAPI file that IEO decodes, once, with
+// the file's known defects worked around (margo.WorkloadManagementAPIDocument). The file is fixed
+// at build time and covered by tests, so a failure here is a programmer error (G-B4).
 var wfmSchemas = sync.OnceValue(func() map[string]*jsonschema.Schema {
-	js, err := yaml.YAMLToJSON(margo.WorkloadManagementAPI)
+	doc, err := margo.WorkloadManagementAPIDocument()
 	if err != nil {
-		panic(fmt.Sprintf("Margo OpenAPI file: %v", err))
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
-	if err != nil {
-		panic(fmt.Sprintf("Margo OpenAPI file: %v", err))
+		panic(err.Error())
 	}
 	// Only components are a schema resource; paths hold OpenAPI objects that are not JSON Schema.
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(jsonschema.Draft2020)
-	if err := c.AddResource(wfmSchemaURL, map[string]any{"components": doc.(map[string]any)["components"]}); err != nil {
+	if err := c.AddResource(wfmSchemaURL, map[string]any{"components": doc["components"]}); err != nil {
 		panic(fmt.Sprintf("Margo OpenAPI file: %v", err))
 	}
 	schemas := map[string]*jsonschema.Schema{}
-	for _, name := range []string{"DeviceCapabilitiesManifest", "DeploymentStatusManifest"} {
+	for _, name := range []string{"DeviceCapabilitiesManifest", "DeploymentStatusManifest", "UnsignedAppStateManifest"} {
 		schemas[name] = c.MustCompile(wfmSchemaURL + "#/components/schemas/" + name)
 	}
 	return schemas
