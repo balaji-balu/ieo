@@ -1132,6 +1132,7 @@ nothing else.
 | Planned downtime window | LO does not poll and ignores communication errors during the window. |
 | Site retired | LO stops polling; keeps current workloads running until an operator intervenes. |
 | `manifestVersion` ≤ stored | Reject; security log; keep previous desired state. |
+| `[IEO]` LO store file cannot be opened: another LO process holds it, it is not an LO store, or its layout is one this LO does not know | Exit non-zero at startup with a readable error naming the file. Never delete or overwrite it: that would reset rollback protection. The operator removes or restores the file; the LO then re-syncs (§12). |
 | `[IEO]` LO store failure during a sync attempt, or an attempt cut short by LO shutdown | The attempt ends with no §7.4 outcome: a store failure is logged at error level, a shutdown is not logged as a failure. Desired state, version and ETag stay as last committed; the next poll retries. |
 | Digest mismatch, or bundle not matching the manifest | Abort the whole update; keep previous desired state; retry next poll. |
 | Invalid archive | Component `failed` with `IEO-ARCHIVE-INVALID`; LO retries with backoff. |

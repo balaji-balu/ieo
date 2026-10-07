@@ -31,7 +31,8 @@ the LO's event loop, not to its store.
   | `desired` | deployment ID (lowercase UUID string) | JSON `{"digest", "adoptedManifestVersion", "yaml"}`, `yaml` in base64 |
 
 - An empty file gets every bucket and key above, so a missing key or bucket later means damage.
-  A file with buckets but no `meta`, or with another `schema`, is refused at open.
+  A file with buckets but no `meta`, or with another `schema`, is refused at open, and the LO
+  exits at startup without touching it (SPEC §14.2).
 - `ReplaceDesired` deletes and recreates `desired` in one transaction; `CommitVersion` writes
   `version` and `etag` in another (§8.2 steps 6 and 8). bbolt syncs to disk on each commit.
 - `Load` fails on any key, record or bucket it cannot decode, and on a YAML that does not match its
