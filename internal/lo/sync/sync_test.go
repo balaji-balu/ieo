@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/balaji-balu/ieo/internal/contract"
 	"github.com/balaji-balu/ieo/internal/lo/store"
 	losync "github.com/balaji-balu/ieo/internal/lo/sync"
+	"github.com/balaji-balu/ieo/internal/lo/sync/synctest"
 	"github.com/balaji-balu/ieo/internal/platform"
 	"github.com/balaji-balu/ieo/internal/platform/platformtest"
 )
@@ -45,7 +47,7 @@ var (
 type fixture struct {
 	t     *testing.T
 	ctx   context.Context
-	co    *fakeCO
+	co    *synctest.CO
 	cfg   losync.Config
 	store losync.Store
 	sync  *losync.Syncer
@@ -54,9 +56,9 @@ type fixture struct {
 
 func newFixture(t *testing.T, change ...func(*losync.Config)) *fixture {
 	t.Helper()
-	f := &fixture{t: t, ctx: context.Background(), co: newFakeCO(t), log: &bytes.Buffer{}}
+	f := &fixture{t: t, ctx: context.Background(), co: synctest.NewCO(t), log: &bytes.Buffer{}}
 	f.cfg = losync.Config{
-		SiteID: site, COURL: coURL, Token: f.co.token, PollInterval: pollInterval, Transport: f.co,
+		SiteID: site, COURL: synctest.URL, Token: f.co.Token(), PollInterval: pollInterval, Transport: f.co,
 		Clock: platformtest.NewFakeClock(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)),
 		Log:   slog.New(slog.NewJSONHandler(f.log, nil)),
 	}
@@ -97,9 +99,9 @@ func (f *fixture) state() losync.State {
 // accept publishes the deployments at version v and syncs, which must accept them.
 func (f *fixture) accept(v contract.ManifestVersion, yamls map[uuid.UUID][]byte) {
 	f.t.Helper()
-	f.co.publish(v, yamls)
+	f.co.Publish(v, yamls)
 	f.tick(losync.Accepted)
-	f.co.takeRequests()
+	f.co.TakeRequests()
 	f.log.Reset()
 }
 
@@ -148,14 +150,14 @@ func desired(v contract.ManifestVersion, yamls map[uuid.UUID][]byte) map[uuid.UU
 func yamls(rev string, ids ...uuid.UUID) map[uuid.UUID][]byte {
 	out := map[uuid.UUID][]byte{}
 	for _, id := range ids {
-		out[id] = yamlOf(id, rev)
+		out[id] = synctest.YAMLOf(id, rev)
 	}
 	return out
 }
 
 func with(m map[uuid.UUID][]byte, id uuid.UUID, rev string) map[uuid.UUID][]byte {
 	m = maps.Clone(m)
-	m[id] = yamlOf(id, rev)
+	m[id] = synctest.YAMLOf(id, rev)
 	return m
 }
 
@@ -163,11 +165,11 @@ func with(m map[uuid.UUID][]byte, id uuid.UUID, rev string) map[uuid.UUID][]byte
 func TestSpec_17_3_FirstSyncFetchesBundleAndAccepts(t *testing.T) {
 	f := newFixture(t)
 	v1 := yamls("1", idA, idB)
-	f.co.publish(1, v1)
+	f.co.Publish(1, v1)
 
 	f.tick(losync.Accepted)
 
-	reqs := f.co.takeRequests()
+	reqs := f.co.TakeRequests()
 	if got := paths(reqs); len(got) != 2 || got[0] != manifestPath || countPrefix(got, bundlePrefix) != 1 {
 		t.Fatalf("requests = %v, want the manifest, then one bundle and no YAML", got)
 	}
@@ -177,7 +179,7 @@ func TestSpec_17_3_FirstSyncFetchesBundleAndAccepts(t *testing.T) {
 	if h := reqs[0].Header.Get("Accept"); h != contract.ManifestMediaType {
 		t.Errorf("Accept = %q, want %q (SPEC §11.1)", h, contract.ManifestMediaType)
 	}
-	want := losync.State{Version: 1, ETag: contract.ETag(f.co.manifest), Desired: desired(1, v1)}
+	want := losync.State{Version: 1, ETag: contract.ETag(f.co.ManifestBody()), Desired: desired(1, v1)}
 	if got := f.state(); !reflect.DeepEqual(got, want) {
 		t.Errorf("state = %+v\nwant %+v", got, want)
 	}
@@ -191,7 +193,7 @@ func TestSpec_17_3_NotModifiedChangesNothing(t *testing.T) {
 
 	f.tick(losync.NotModified)
 
-	reqs := f.co.takeRequests()
+	reqs := f.co.TakeRequests()
 	if got := paths(reqs); !slices.Equal(got, []string{manifestPath}) {
 		t.Fatalf("requests = %v, want only the manifest", got)
 	}
@@ -209,11 +211,11 @@ func TestSpec_17_3_RollbackRejected(t *testing.T) {
 			f := newFixture(t)
 			f.accept(2, yamls("1", idA))
 			before := f.state()
-			f.co.publish(v, yamls("2", idA, idB)) // other content, so another ETag
+			f.co.Publish(v, yamls("2", idA, idB)) // other content, so another ETag
 
 			f.tick(losync.RejectedRollback)
 
-			if got := paths(f.co.takeRequests()); !slices.Equal(got, []string{manifestPath}) {
+			if got := paths(f.co.TakeRequests()); !slices.Equal(got, []string{manifestPath}) {
 				t.Errorf("requests = %v, want only the manifest", got)
 			}
 			f.requireUnchanged(before)
@@ -242,27 +244,27 @@ func TestSpec_17_3_DigestMismatchAbortsWholeUpdate(t *testing.T) {
 	}
 	bundleCases := []struct {
 		name  string
-		setup func(t *testing.T, co *fakeCO, m contract.StateManifest)
+		setup func(t *testing.T, co *synctest.CO, m contract.StateManifest)
 	}{
-		{"bundle bytes do not match its digest", func(_ *testing.T, co *fakeCO, m contract.StateManifest) {
-			co.override(m.Bundle.URL, respond(http.StatusOK, []byte("not the bundle")))
+		{"bundle bytes do not match its digest", func(_ *testing.T, co *synctest.CO, m contract.StateManifest) {
+			co.Override(m.Bundle.URL, synctest.Respond(http.StatusOK, []byte("not the bundle")))
 		}},
-		{"an entry does not match its deployment's digest", func(t *testing.T, co *fakeCO, _ contract.StateManifest) {
-			co.replaceBundle(bundle(t, map[uuid.UUID][]byte{idA: v1[idA], idB: []byte("tampered")}))
+		{"an entry does not match its deployment's digest", func(t *testing.T, co *synctest.CO, _ contract.StateManifest) {
+			co.ReplaceBundle(bundle(t, map[uuid.UUID][]byte{idA: v1[idA], idB: []byte("tampered")}))
 		}},
-		{"an entry is missing", func(t *testing.T, co *fakeCO, _ contract.StateManifest) {
-			co.replaceBundle(bundle(t, map[uuid.UUID][]byte{idA: v1[idA]}))
+		{"an entry is missing", func(t *testing.T, co *synctest.CO, _ contract.StateManifest) {
+			co.ReplaceBundle(bundle(t, map[uuid.UUID][]byte{idA: v1[idA]}))
 		}},
-		{"an extra entry", func(t *testing.T, co *fakeCO, _ contract.StateManifest) {
-			co.replaceBundle(bundle(t, map[uuid.UUID][]byte{idA: v1[idA], idB: v1[idB], idC: yamlOf(idC, "1")}))
+		{"an extra entry", func(t *testing.T, co *synctest.CO, _ contract.StateManifest) {
+			co.ReplaceBundle(bundle(t, map[uuid.UUID][]byte{idA: v1[idA], idB: v1[idB], idC: synctest.YAMLOf(idC, "1")}))
 		}},
-		{"a misnamed entry", func(t *testing.T, co *fakeCO, _ contract.StateManifest) {
-			co.replaceBundle(tarGz(t,
+		{"a misnamed entry", func(t *testing.T, co *synctest.CO, _ contract.StateManifest) {
+			co.ReplaceBundle(tarGz(t,
 				tarEntry{idA.String() + ".yaml", tar.TypeReg, v1[idA]},
 				tarEntry{strings.ToUpper(idB.String()) + ".yaml", tar.TypeReg, v1[idB]}))
 		}},
-		{"a directory entry", func(t *testing.T, co *fakeCO, _ contract.StateManifest) {
-			co.replaceBundle(tarGz(t,
+		{"a directory entry", func(t *testing.T, co *synctest.CO, _ contract.StateManifest) {
+			co.ReplaceBundle(tarGz(t,
 				tarEntry{idA.String() + ".yaml", tar.TypeReg, v1[idA]},
 				tarEntry{idB.String() + ".yaml", tar.TypeReg, v1[idB]},
 				tarEntry{"extra/", tar.TypeDir, nil}))
@@ -272,12 +274,12 @@ func TestSpec_17_3_DigestMismatchAbortsWholeUpdate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			before := f.state()
-			tc.setup(t, f.co, f.co.publish(1, v1))
+			tc.setup(t, f.co, f.co.Publish(1, v1))
 
 			f.tick(losync.AbortedDigestMismatch)
 
 			f.requireUnchanged(before)
-			if got := paths(f.co.takeRequests()); countPrefix(got, bundlePrefix) != 1 {
+			if got := paths(f.co.TakeRequests()); countPrefix(got, bundlePrefix) != 1 {
 				t.Errorf("requests = %v, want one bundle request", got)
 			}
 		})
@@ -289,13 +291,13 @@ func TestSpec_17_3_DigestMismatchAbortsWholeUpdate(t *testing.T) {
 		f.accept(1, v1)
 		before := f.state()
 		v2 := with(with(v1, idA, "2"), idB, "2") // 2 of 4 not held: fetched one by one
-		m := f.co.publish(2, v2)
-		f.co.override(refOf(t, m, idA).URL, respond(http.StatusOK, []byte("tampered")))
+		m := f.co.Publish(2, v2)
+		f.co.Override(refOf(t, m, idA).URL, synctest.Respond(http.StatusOK, []byte("tampered")))
 
 		f.tick(losync.AbortedDigestMismatch)
 
 		f.requireUnchanged(before)
-		if got := paths(f.co.takeRequests()); countPrefix(got, bundlePrefix) != 0 {
+		if got := paths(f.co.TakeRequests()); countPrefix(got, bundlePrefix) != 0 {
 			t.Errorf("requests = %v, want no bundle request", got)
 		}
 	})
@@ -319,11 +321,11 @@ func TestSpec_17_3_BundleOnlyWhenMoreThanHalfNotHeld(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.accept(1, tc.v1)
-			f.co.publish(2, tc.v2)
+			f.co.Publish(2, tc.v2)
 
 			f.tick(losync.Accepted)
 
-			got := paths(f.co.takeRequests())
+			got := paths(f.co.TakeRequests())
 			if n := countPrefix(got, bundlePrefix); n != tc.wantBundles {
 				t.Errorf("requests = %v: %d bundle requests, want %d", got, n, tc.wantBundles)
 			}
@@ -353,16 +355,16 @@ func TestSpec_17_3_ContentURL404DoesNotRemoveDeployment(t *testing.T) {
 			f := newFixture(t)
 			f.accept(1, yamls("1", idA, idB))
 			before := f.state()
-			m := f.co.publish(2, tc.v2)
+			m := f.co.Publish(2, tc.v2)
 			url := tc.url(t, m)
-			f.co.override(url, func(w http.ResponseWriter, _ *http.Request) {
-				writeProblem(w, http.StatusNotFound, contract.ProblemDeploymentNotFound)
+			f.co.Override(url, func(w http.ResponseWriter, _ *http.Request) {
+				synctest.WriteProblem(w, http.StatusNotFound, contract.ProblemDeploymentNotFound)
 			})
 
 			f.tick(losync.Unreachable)
 			f.requireUnchanged(before)
 
-			f.co.override(url, nil)
+			f.co.Override(url, nil)
 			f.tick(losync.Accepted)
 			if want := desired(2, tc.v2); !reflect.DeepEqual(f.state().Desired, mergeAdopted(want, before.Desired)) {
 				t.Errorf("after the CO is fixed, desired = %+v", f.state().Desired)
@@ -414,7 +416,7 @@ func TestSpec_17_3_InvalidManifestNotAccepted(t *testing.T) {
 			f := newFixture(t)
 			f.accept(1, yamls("1", idA))
 			before := f.state()
-			f.co.setManifestBody(tc.body(t, f.co.publish(2, yamls("2", idA, idB))))
+			f.co.SetManifestBody(tc.body(t, f.co.Publish(2, yamls("2", idA, idB))))
 
 			f.tick(losync.Unreachable)
 
@@ -451,14 +453,14 @@ func TestSpec_17_3_OnePollConvergesAfterOutage(t *testing.T) {
 	f := newFixture(t)
 	f.accept(1, yamls("1", idA, idB))
 
-	f.co.setDown(true)
-	f.co.publish(2, yamls("2", idA, idB))
+	f.co.SetDown(true)
+	f.co.Publish(2, yamls("2", idA, idB))
 	f.tick(losync.Unreachable)
-	f.co.publish(3, yamls("3", idB, idC))
+	f.co.Publish(3, yamls("3", idB, idC))
 	f.tick(losync.Unreachable)
 	v4 := yamls("4", idC, idD)
-	f.co.publish(4, v4)
-	f.co.setDown(false)
+	f.co.Publish(4, v4)
+	f.co.SetDown(false)
 
 	f.tick(losync.Accepted)
 
@@ -477,7 +479,7 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 	t.Run("rollback", func(t *testing.T) {
 		f := newFixture(t)
 		f.accept(3, v1)
-		f.co.publish(2, yamls("2", idA))
+		f.co.Publish(2, yamls("2", idA))
 		f.tick(losync.RejectedRollback)
 		requireFields(t, f.outcomeLine(), map[string]any{
 			"level": "WARN", "outcome": "RejectedRollback", "manifest_version": 2.0, "stored_manifest_version": 3.0,
@@ -486,9 +488,9 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 
 	t.Run("bundle digest", func(t *testing.T) {
 		f := newFixture(t)
-		m := f.co.publish(1, v1)
+		m := f.co.Publish(1, v1)
 		wrong := []byte("not the bundle")
-		f.co.override(m.Bundle.URL, respond(http.StatusOK, wrong))
+		f.co.Override(m.Bundle.URL, synctest.Respond(http.StatusOK, wrong))
 		f.tick(losync.AbortedDigestMismatch)
 		requireFields(t, f.outcomeLine(), map[string]any{
 			"level": "WARN", "outcome": "AbortedDigestMismatch",
@@ -499,10 +501,10 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 	t.Run("YAML digest", func(t *testing.T) {
 		f := newFixture(t)
 		f.accept(1, v1)
-		m := f.co.publish(2, with(v1, idB, "2"))
+		m := f.co.Publish(2, with(v1, idB, "2"))
 		wrong := []byte("tampered")
 		want := refOf(t, m, idB)
-		f.co.override(want.URL, respond(http.StatusOK, wrong))
+		f.co.Override(want.URL, synctest.Respond(http.StatusOK, wrong))
 		f.tick(losync.AbortedDigestMismatch)
 		requireFields(t, f.outcomeLine(), map[string]any{
 			"level": "WARN", "outcome": "AbortedDigestMismatch", "deployment_id": idB.String(),
@@ -512,13 +514,13 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 
 	t.Run("bundle entry digest", func(t *testing.T) {
 		f := newFixture(t)
-		m := f.co.publish(1, v1)
+		m := f.co.Publish(1, v1)
 		wrong := []byte("tampered")
 		b, err := contract.EncodeBundle([]contract.BundleFile{{DeploymentID: idA, YAML: v1[idA]}, {DeploymentID: idB, YAML: wrong}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.co.replaceBundle(b)
+		f.co.ReplaceBundle(b)
 		f.tick(losync.AbortedDigestMismatch)
 		digestB := refOf(t, m, idB).Digest
 		requireFields(t, f.outcomeLine(), map[string]any{
@@ -529,26 +531,26 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 
 	t.Run("bundle entry not in the manifest", func(t *testing.T) {
 		f := newFixture(t)
-		f.co.publish(1, v1)
+		f.co.Publish(1, v1)
 		b, err := contract.EncodeBundle([]contract.BundleFile{
-			{DeploymentID: idA, YAML: v1[idA]}, {DeploymentID: idB, YAML: v1[idB]}, {DeploymentID: idC, YAML: yamlOf(idC, "1")},
+			{DeploymentID: idA, YAML: v1[idA]}, {DeploymentID: idB, YAML: v1[idB]}, {DeploymentID: idC, YAML: synctest.YAMLOf(idC, "1")},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.co.replaceBundle(b)
+		f.co.ReplaceBundle(b)
 		f.tick(losync.AbortedDigestMismatch)
 		requireFields(t, f.outcomeLine(), map[string]any{"level": "WARN", "bundle_entry": idC.String() + ".yaml"})
 	})
 
 	t.Run("manifest deployment missing from the bundle", func(t *testing.T) {
 		f := newFixture(t)
-		m := f.co.publish(1, v1)
+		m := f.co.Publish(1, v1)
 		b, err := contract.EncodeBundle([]contract.BundleFile{{DeploymentID: idA, YAML: v1[idA]}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.co.replaceBundle(b)
+		f.co.ReplaceBundle(b)
 		f.tick(losync.AbortedDigestMismatch)
 		digestB := refOf(t, m, idB).Digest
 		requireFields(t, f.outcomeLine(), map[string]any{
@@ -558,9 +560,9 @@ func TestSpec_17_7_RollbackAndDigestMismatchLoggedWithOffendingValues(t *testing
 
 	t.Run("misnamed bundle entry", func(t *testing.T) {
 		f := newFixture(t)
-		f.co.publish(1, v1)
+		f.co.Publish(1, v1)
 		bad := strings.ToUpper(idB.String()) + ".yaml"
-		f.co.replaceBundle(tarGz(t,
+		f.co.ReplaceBundle(tarGz(t,
 			tarEntry{idA.String() + ".yaml", tar.TypeReg, v1[idA]}, tarEntry{bad, tar.TypeReg, v1[idB]}))
 		f.tick(losync.AbortedDigestMismatch)
 		l := f.outcomeLine()
@@ -589,33 +591,33 @@ func TestFailedRequestsAreUnreachable(t *testing.T) {
 		handler http.HandlerFunc // nil: transport error
 	}{
 		{"transport error", nil},
-		{"500", respond(http.StatusInternalServerError, nil)},
+		{"500", synctest.Respond(http.StatusInternalServerError, nil)},
 		{"503 problem", func(w http.ResponseWriter, _ *http.Request) {
-			writeProblem(w, http.StatusServiceUnavailable, contract.ProblemAboutBlank)
+			synctest.WriteProblem(w, http.StatusServiceUnavailable, contract.ProblemAboutBlank)
 		}},
 		{"401", func(w http.ResponseWriter, _ *http.Request) {
-			writeProblem(w, http.StatusUnauthorized, contract.ProblemAboutBlank)
+			synctest.WriteProblem(w, http.StatusUnauthorized, contract.ProblemAboutBlank)
 		}},
 		{"403 not-authorized", func(w http.ResponseWriter, _ *http.Request) {
-			writeProblem(w, http.StatusForbidden, contract.ProblemNotAuthorized)
+			synctest.WriteProblem(w, http.StatusForbidden, contract.ProblemNotAuthorized)
 		}},
 		{"406", func(w http.ResponseWriter, _ *http.Request) {
-			writeProblem(w, http.StatusNotAcceptable, contract.ProblemCannotGenerate)
+			synctest.WriteProblem(w, http.StatusNotAcceptable, contract.ProblemCannotGenerate)
 		}},
-		{"429", respond(http.StatusTooManyRequests, nil, "Retry-After", "10")},
-		{"404 with Retry-After", respond(http.StatusNotFound, nil, "Retry-After", "10")},
-		{"204", respond(http.StatusNoContent, nil)},
+		{"429", synctest.Respond(http.StatusTooManyRequests, nil, "Retry-After", "10")},
+		{"404 with Retry-After", synctest.Respond(http.StatusNotFound, nil, "Retry-After", "10")},
+		{"204", synctest.Respond(http.StatusNoContent, nil)},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.accept(1, yamls("1", idA))
 			before := f.state()
-			f.co.publish(2, yamls("2", idA))
+			f.co.Publish(2, yamls("2", idA))
 			if tc.handler == nil {
-				f.co.setDown(true)
+				f.co.SetDown(true)
 			} else {
-				f.co.override(manifestPath, tc.handler)
+				f.co.Override(manifestPath, tc.handler)
 			}
 
 			f.tick(losync.Unreachable)
@@ -634,16 +636,16 @@ func TestRedirectsAreNotFollowed(t *testing.T) {
 		for _, target := range []string{"manifest", "bundle"} {
 			t.Run(fmt.Sprintf("%d on the %s", status, target), func(t *testing.T) {
 				f := newFixture(t)
-				m := f.co.publish(1, yamls("1", idA))
+				m := f.co.Publish(1, yamls("1", idA))
 				path := manifestPath
 				if target == "bundle" {
 					path = m.Bundle.URL
 				}
-				f.co.override(path, respond(status, nil, "Location", elsewhere+path))
+				f.co.Override(path, synctest.Respond(status, nil, "Location", elsewhere+path))
 
 				f.tick(losync.Unreachable)
 
-				for _, r := range f.co.takeRequests() {
+				for _, r := range f.co.TakeRequests() {
 					if r.URL.Host != "co.test" {
 						t.Errorf("request to %s: the redirect was followed", r.URL)
 					}
@@ -657,7 +659,7 @@ func TestRedirectsAreNotFollowed(t *testing.T) {
 	t.Run("304", func(t *testing.T) {
 		f := newFixture(t)
 		f.accept(1, yamls("1", idA))
-		f.co.override(manifestPath, respond(http.StatusNotModified, nil))
+		f.co.Override(manifestPath, synctest.Respond(http.StatusNotModified, nil))
 		f.tick(losync.NotModified)
 	})
 }
@@ -668,38 +670,38 @@ func TestTokenSentOnlyInHeaderAndNeverLogged(t *testing.T) {
 	var all []*http.Request
 	step := func(want losync.Outcome) {
 		f.tick(want)
-		all = append(all, f.co.takeRequests()...)
+		all = append(all, f.co.TakeRequests()...)
 	}
 	v1 := yamls("1", idA, idB, idC)
-	f.co.publish(1, v1)
+	f.co.Publish(1, v1)
 	step(losync.Accepted) // bundle
 	step(losync.NotModified)
-	f.co.publish(2, with(v1, idA, "2"))
+	f.co.Publish(2, with(v1, idA, "2"))
 	step(losync.Accepted) // one YAML
-	f.co.publish(1, yamls("3", idA))
+	f.co.Publish(1, yamls("3", idA))
 	step(losync.RejectedRollback)
-	m := f.co.publish(3, with(v1, idB, "3"))
-	f.co.override(m.Bundle.URL, respond(http.StatusOK, []byte("tampered")))
+	m := f.co.Publish(3, with(v1, idB, "3"))
+	f.co.Override(m.Bundle.URL, synctest.Respond(http.StatusOK, []byte("tampered")))
 	step(losync.AbortedDigestMismatch)
-	f.co.override(manifestPath, func(w http.ResponseWriter, _ *http.Request) {
-		writeProblem(w, http.StatusUnauthorized, contract.ProblemAboutBlank)
+	f.co.Override(manifestPath, func(w http.ResponseWriter, _ *http.Request) {
+		synctest.WriteProblem(w, http.StatusUnauthorized, contract.ProblemAboutBlank)
 	})
 	step(losync.Unreachable)
-	f.co.setDown(true)
+	f.co.SetDown(true)
 	step(losync.Unreachable)
 
 	if len(all) == 0 {
 		t.Fatal("no requests")
 	}
 	for _, r := range all {
-		if got := r.Header.Get("Authorization"); got != "Bearer "+f.co.token {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+f.co.Token() {
 			t.Errorf("%s: Authorization header does not carry the site token", r.URL.Path)
 		}
-		if strings.Contains(r.URL.String(), f.co.token) {
+		if strings.Contains(r.URL.String(), f.co.Token()) {
 			t.Errorf("%s: the token is in the URL", r.URL.Path)
 		}
 	}
-	if strings.Contains(f.log.String(), f.co.token) {
+	if strings.Contains(f.log.String(), f.co.Token()) {
 		t.Errorf("the token appears in the log:\n%s", f.log)
 	}
 }
@@ -721,7 +723,7 @@ func TestVersionCommittedAfterReconcileStarts(t *testing.T) {
 	v1 := yamls("1", idA)
 	f.accept(1, v1)
 	v2 := with(v1, idB, "2")
-	f.co.publish(2, v2)
+	f.co.Publish(2, v2)
 	f.tick(losync.Accepted)
 	f.tick(losync.NotModified)
 
@@ -750,15 +752,15 @@ func TestEveryAttemptLogsOneOutcomeLine(t *testing.T) {
 		})
 	}
 	v1 := yamls("1", idA)
-	f.co.publish(1, v1)
+	f.co.Publish(1, v1)
 	check(losync.Accepted, 1)
 	check(losync.NotModified, 1)
-	f.co.publish(1, yamls("2", idA, idB))
+	f.co.Publish(1, yamls("2", idA, idB))
 	check(losync.RejectedRollback, 1)
-	m := f.co.publish(2, with(v1, idA, "2"))
-	f.co.override(m.Bundle.URL, respond(http.StatusOK, []byte("tampered")))
+	m := f.co.Publish(2, with(v1, idA, "2"))
+	f.co.Override(m.Bundle.URL, synctest.Respond(http.StatusOK, []byte("tampered")))
 	check(losync.AbortedDigestMismatch, 2)
-	f.co.setDown(true)
+	f.co.SetDown(true)
 	check(losync.Unreachable, 1)
 }
 
@@ -779,8 +781,8 @@ func TestRunTicksAtInterval(t *testing.T) {
 	clock := notifyClock{platformtest.NewFakeClock(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)), make(chan time.Duration)}
 	ticks := make(chan struct{}, 10)
 	f := newFixture(t, func(c *losync.Config) { c.Clock = clock })
-	f.co.publish(1, yamls("1", idA))
-	f.co.override(manifestPath, counting(f.co, ticks))
+	f.co.Publish(1, yamls("1", idA))
+	f.co.Override(manifestPath, counting(f.co, ticks))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -807,12 +809,12 @@ func TestRunTicksAtInterval(t *testing.T) {
 }
 
 // counting returns a manifest handler that reports each request on ticks, then serves it.
-func counting(co *fakeCO, ticks chan<- struct{}) http.HandlerFunc {
+func counting(co *synctest.CO, ticks chan<- struct{}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ticks <- struct{}{}
-		co.override(manifestPath, nil)
+		co.Override(manifestPath, nil)
 		co.ServeHTTP(w, r)
-		co.override(manifestPath, counting(co, ticks))
+		co.Override(manifestPath, counting(co, ticks))
 	}
 }
 
@@ -839,4 +841,60 @@ func refOf(t *testing.T, m contract.StateManifest, id uuid.UUID) contract.Deploy
 	}
 	t.Fatalf("deployment %s is not in the manifest", id)
 	return contract.DeploymentRef{}
+}
+
+// tarEntry is one entry of a hand-built bundle.
+type tarEntry struct {
+	name     string
+	typeflag byte
+	body     []byte
+}
+
+// tarGz builds a gzip tar of entries, which need not follow ADR 0012.
+func tarGz(t *testing.T, entries ...tarEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	for _, e := range entries {
+		h := &tar.Header{Name: e.name, Typeflag: e.typeflag, Mode: 0o644, Size: int64(len(e.body))}
+		if e.typeflag != tar.TypeReg {
+			h.Size = 0
+		}
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatalf("tar %s: %v", e.name, err)
+		}
+		if h.Size > 0 {
+			if _, err := tw.Write(e.body); err != nil {
+				t.Fatalf("tar %s: %v", e.name, err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// paths returns the URL paths of reqs.
+func paths(reqs []*http.Request) []string {
+	out := make([]string, len(reqs))
+	for i, r := range reqs {
+		out[i] = r.URL.Path
+	}
+	return out
+}
+
+// countPrefix counts the paths that start with prefix.
+func countPrefix(ps []string, prefix string) int {
+	n := 0
+	for _, p := range ps {
+		if strings.HasPrefix(p, prefix) {
+			n++
+		}
+	}
+	return n
 }

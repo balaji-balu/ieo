@@ -3,9 +3,11 @@ package sync_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,6 +15,7 @@ import (
 	"github.com/balaji-balu/ieo/internal/contract"
 	"github.com/balaji-balu/ieo/internal/lo/store"
 	losync "github.com/balaji-balu/ieo/internal/lo/sync"
+	"github.com/balaji-balu/ieo/internal/lo/sync/synctest"
 )
 
 // boltFile is a Bolt store file that a test can close and reopen, as an LO restart does. The open
@@ -67,20 +70,20 @@ func TestSpec_17_3_VersionAndETagSurviveRestart(t *testing.T) {
 
 	// The stored ETag is sent after the restart.
 	f.tick(losync.NotModified)
-	reqs := f.co.takeRequests()
+	reqs := f.co.TakeRequests()
 	if len(reqs) != 1 || reqs[0].Header.Get("If-None-Match") != before.ETag {
 		t.Errorf("requests = %v, want one manifest request with If-None-Match %q", paths(reqs), before.ETag)
 	}
 
 	// An equal, then a lower version, each after another restart.
 	for _, v := range []contract.ManifestVersion{2, 1} {
-		f.co.publish(v, yamls("3", idA, idB, idC)) // other content, so another ETag
+		f.co.Publish(v, yamls("3", idA, idB, idC)) // other content, so another ETag
 		f.useStore(file.reopen())
 		f.log.Reset()
 
 		f.tick(losync.RejectedRollback)
 
-		if got := paths(f.co.takeRequests()); !slices.Equal(got, []string{manifestPath}) {
+		if got := paths(f.co.TakeRequests()); !slices.Equal(got, []string{manifestPath}) {
 			t.Errorf("version %d: requests = %v, want only the manifest", v, got)
 		}
 		f.requireUnchanged(before)
@@ -102,10 +105,10 @@ func TestEmptyStoreResyncs(t *testing.T) {
 	f.useStore(newBoltFile(t).reopen()) // the store is lost
 	f.tick(losync.Accepted)
 
-	if got := paths(f.co.takeRequests()); countPrefix(got, bundlePrefix) != 1 {
+	if got := paths(f.co.TakeRequests()); countPrefix(got, bundlePrefix) != 1 {
 		t.Errorf("requests = %v, want the bundle, as on a first sync", got)
 	}
-	want := losync.State{Version: 3, ETag: contract.ETag(f.co.manifest), Desired: desired(3, v3)}
+	want := losync.State{Version: 3, ETag: contract.ETag(f.co.ManifestBody()), Desired: desired(3, v3)}
 	if got := f.state(); !reflect.DeepEqual(got, want) {
 		t.Errorf("state = %+v\nwant %+v", got, want)
 	}
@@ -152,7 +155,7 @@ func TestStoreFailureHasNoOutcome(t *testing.T) {
 			f.accept(1, v1)
 			before := f.state()
 			v2 := with(v1, idB, "2")
-			f.co.publish(2, v2)
+			f.co.Publish(2, v2)
 			failing := &failingStore{Store: mem, fail: method}
 			f.useStore(failing)
 
@@ -179,14 +182,77 @@ func TestStoreFailureHasNoOutcome(t *testing.T) {
 			}
 
 			failing.fail = ""
-			f.co.takeRequests()
+			f.co.TakeRequests()
 			f.tick(losync.Accepted)
-			if got := paths(f.co.takeRequests()); method == "CommitVersion" && !slices.Equal(got, []string{manifestPath}) {
+			if got := paths(f.co.TakeRequests()); method == "CommitVersion" && !slices.Equal(got, []string{manifestPath}) {
 				t.Errorf("requests = %v, want only the manifest: every digest is already held", got)
 			}
 			if st := f.state(); st.Version != 2 {
 				t.Errorf("after the retry: Version = %d, want 2", st.Version)
 			}
 		})
+	}
+}
+
+// blockingTransport passes requests to the CO, except those for a path with the prefix block,
+// which wait until their context ends. It reports each request it blocks on started.
+type blockingTransport struct {
+	co      *synctest.CO
+	block   string
+	started chan<- struct{}
+}
+
+func (b blockingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !strings.HasPrefix(req.URL.Path, b.block) {
+		return b.co.RoundTrip(req)
+	}
+	b.started <- struct{}{}
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
+// SPEC §14.2: "an attempt cut short by LO shutdown" ends with no §7.4 outcome and is not logged
+// as a failure; stored state stays as last committed.
+func TestShutdownDuringPollHasNoOutcome(t *testing.T) {
+	for _, block := range []string{manifestPath, bundlePrefix} {
+		for _, via := range []string{"Tick", "Run"} {
+			t.Run(via+" blocked on "+block, func(t *testing.T) {
+				started := make(chan struct{}, 1)
+				f := newFixture(t)
+				f.cfg.Transport = blockingTransport{co: f.co, block: block, started: started}
+				f.useStore(store.NewMemory())
+				f.co.Publish(1, yamls("1", idA, idB))
+
+				ctx, cancel := context.WithCancel(context.Background())
+				type ticked struct {
+					outcome losync.Outcome
+					err     error
+				}
+				done := make(chan ticked, 1)
+				go func() {
+					if via == "Tick" {
+						o, err := f.sync.Tick(ctx)
+						done <- ticked{o, err}
+						return
+					}
+					done <- ticked{err: f.sync.Run(ctx)}
+				}()
+				recv(t, started, "the blocked request")
+				cancel()
+				got := recv(t, done, via+" to return")
+
+				if got.outcome != "" || !errors.Is(got.err, context.Canceled) {
+					t.Errorf("%s = %q, %v; want no outcome and context.Canceled", via, got.outcome, got.err)
+				}
+				for _, l := range f.lines() {
+					if l["outcome"] != nil || l["level"] != "INFO" && l["level"] != "DEBUG" {
+						t.Errorf("log line %v: the shutdown is logged as an outcome or a failure", l)
+					}
+				}
+				if st := f.state(); st.Version != 0 || len(st.Desired) != 0 {
+					t.Errorf("state = %+v, want nothing accepted", st)
+				}
+			})
+		}
 	}
 }
