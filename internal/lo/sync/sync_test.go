@@ -46,24 +46,31 @@ type fixture struct {
 	t     *testing.T
 	ctx   context.Context
 	co    *fakeCO
-	store *store.Memory
+	cfg   losync.Config
+	store losync.Store
 	sync  *losync.Syncer
 	log   *bytes.Buffer
 }
 
 func newFixture(t *testing.T, change ...func(*losync.Config)) *fixture {
 	t.Helper()
-	f := &fixture{t: t, ctx: context.Background(), co: newFakeCO(t), store: store.NewMemory(), log: &bytes.Buffer{}}
-	cfg := losync.Config{
+	f := &fixture{t: t, ctx: context.Background(), co: newFakeCO(t), log: &bytes.Buffer{}}
+	f.cfg = losync.Config{
 		SiteID: site, COURL: coURL, Token: f.co.token, PollInterval: pollInterval, Transport: f.co,
 		Clock: platformtest.NewFakeClock(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)),
 		Log:   slog.New(slog.NewJSONHandler(f.log, nil)),
 	}
 	for _, c := range change {
-		c(&cfg)
+		c(&f.cfg)
 	}
-	f.sync = losync.New(cfg, f.store)
+	f.useStore(store.NewMemory())
 	return f
+}
+
+// useStore makes s the store, with a new Syncer for it, as an LO restart would.
+func (f *fixture) useStore(s losync.Store) {
+	f.store = s
+	f.sync = losync.New(f.cfg, s)
 }
 
 // tick runs one sync attempt and fails the test unless it ends in want.

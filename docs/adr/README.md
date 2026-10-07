@@ -19,6 +19,7 @@ one, write a new ADR that supersedes it.
 | [0011](0011-spec-test-traceability.md) | How a `TestSpec_` test names the §17 bullet it covers | Proposed |
 | [0012](0012-deployment-bundle-layout.md) | Deployment bundle layout and deterministic encoding | Proposed |
 | [0013](0013-co-store-schema-and-migrations.md) | CO store: own ent schema, embedded SQL migrations applied on open (refines 0004) | Proposed |
+| [0014](0014-lo-store-layout.md) | LO store: new bbolt store and its file layout (refines 0002) | Proposed |
 
 Older design notes in `docs/adr/era/` are superseded by 0002 and 0003 and kept for history.
 

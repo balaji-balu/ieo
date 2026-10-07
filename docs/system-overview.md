@@ -336,12 +336,12 @@ Design decisions:
 | Where | Store | Contents |
 | --- | --- | --- |
 | CO | Postgres | Apps and versions; sites and accepted-client policy; devices and latest capabilities; deployments (ID, current digest, target, parameters); immutable deployment YAML by digest; per-site manifest and `manifestVersion`; status history |
-| LO | BoltDB | Last accepted `manifestVersion` and ETag; desired deployments (YAML by digest); autonomous placement decisions; hosts (capabilities, last heartbeat); actual state per host (from inventory); status outbox |
+| LO | BoltDB (layout: ADR 0014) | Last accepted `manifestVersion` and ETag; desired deployments (digest, YAML, adopted version); autonomous placement decisions; hosts (capabilities, last heartbeat); actual state per host (from inventory); status outbox |
 | Site NATS (run by LO) | JetStream | DATA account: site topic stream `DATA_<site>`, object store `obj-<site>` (`docs/proposals/data-plane.md`) |
 | Hub | JetStream | Aggregated stream `DATA_ALL`; account configuration managed by the CO |
 | EN | BoltDB + container runtime | Host ID; deployments applied (ID, digest, Compose project names); last reported component states |
 
-The LO MUST persist `manifestVersion` and ETag durably so that rollback protection survives restarts. If the LO loses its local state, it resynchronizes from the CO (full manifest) and from ENs (inventories); the version it reports is then the one it resynchronized against.
+The LO MUST persist `manifestVersion` and ETag durably so that rollback protection survives restarts. If the LO loses its local state, it resynchronizes from the CO (full manifest) and from ENs (inventories); the version it reports is then the one it resynchronized against. A store it can open but not read is not "lost": the LO reports a store failure and keeps polling without accepting anything, so rollback protection is never reset by damage (§12).
 
 ## 8. Failure and offline behavior
 
