@@ -494,6 +494,9 @@ LO:
   Before it, only `lo.tls.ca_file` is read, OPTIONAL: it verifies the CO's certificate (§15.6)
 - `lo.co_insecure`: boolean, default `false` `[IEO, interim]`: allows an `http://` `lo.co_url`
   (§15.6)
+- `lo.site_token`: string, REQUIRED until Appendix B step 4 `[IEO, interim]`: the site's bearer
+  token (§15.6). Read only from the environment, never from a flag, so it stays out of process
+  listings (§15.4)
 - `lo.data_dir`: path, REQUIRED
 - `lo.poll.interval`: duration, default `60s` `[Margo: user-configurable]`
 - `lo.poll.hours`: list of hour ranges, default all hours `[Margo]`
@@ -1212,6 +1215,8 @@ and scoped NATS credentials) replaces them (ADR 0005):
     configuration error: the LO exits at startup (§6.1).
   - The LO follows no redirects on Margo API requests. A redirect (`301`, `302`, `303`, `307`,
     `308`) is `Unreachable` (§7.4); `304` stays `NotModified`.
+  - The LO sends Margo API requests directly to `lo.co_url`. It uses no HTTP proxy, whatever the
+    environment sets (`HTTP_PROXY`, `HTTPS_PROXY`): a proxy is another host the token would reach.
 - LO ↔ EN: ENs MUST authenticate to NATS with per-site username and password. Until scoped
   credentials land, these credentials are shared by the hosts of one site.
 - `edgectl` → CO: requests MUST carry the static operator token from configuration.

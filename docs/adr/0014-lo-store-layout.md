@@ -18,9 +18,13 @@ the LO's event loop, not to its store.
 - The LO store is `store.Bolt` in `internal/lo/store`, a new store that uses `go.etcd.io/bbolt`
   directly and implements the same `losync.Store` as `store.Memory`. It does not import
   `internal/lo/boltstore`, which is deleted with the legacy code that imports it.
+- The store file is `<lo.data_dir>/lo.db`. The LO creates `lo.data_dir` with mode `0700` if it does
+  not exist, and leaves an existing directory's mode as it is.
 - `OpenBolt(path)` creates the file with mode `0600` and waits at most 1 s for the file lock, so a
   second LO on the same file fails at startup instead of hanging. On Windows bbolt ignores the mode:
-  the file's access comes from the data directory's ACL, which C3's `lo.data_dir` setup owns.
+  the file's access comes from the data directory's ACL, which the operator sets.
+- The old, Git-based LO (`cmd/lo/legacy.go`, until roadmap slice E) keeps its own bolt file,
+  `<lo.data_dir>/db/bolt.db`, which this store would refuse.
 - Layout version 1:
 
   | Bucket | Key | Value |
