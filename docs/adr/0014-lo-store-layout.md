@@ -19,7 +19,8 @@ the LO's event loop, not to its store.
   directly and implements the same `losync.Store` as `store.Memory`. It does not import
   `internal/lo/boltstore`, which is deleted with the legacy code that imports it.
 - `OpenBolt(path)` creates the file with mode `0600` and waits at most 1 s for the file lock, so a
-  second LO on the same file fails at startup instead of hanging.
+  second LO on the same file fails at startup instead of hanging. On Windows bbolt ignores the mode:
+  the file's access comes from the data directory's ACL, which C3's `lo.data_dir` setup owns.
 - Layout version 1:
 
   | Bucket | Key | Value |

@@ -110,8 +110,8 @@ func TestBoltLoadFailsOnDamagedStore(t *testing.T) {
 			path, _ := committed(t)
 			rawUpdate(t, path, tc.damage)
 			b, err := store.OpenBolt(path)
-			if err != nil {
-				return // refusing to open is as good as refusing to load
+			if err != nil { // the damage is past the layout check: Load must catch it
+				t.Fatalf("OpenBolt: %v; want it to open and Load to fail", err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
 			if st, err := b.Load(t.Context()); err == nil {

@@ -3,7 +3,6 @@ package sync_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -66,30 +65,27 @@ func TestSpec_17_3_VersionAndETagSurviveRestart(t *testing.T) {
 	f.useStore(file.reopen())
 	f.requireUnchanged(before)
 
-	t.Run("stored ETag sent", func(t *testing.T) {
-		f.t = t
-		f.tick(losync.NotModified)
-		reqs := f.co.takeRequests()
-		if len(reqs) != 1 || reqs[0].Header.Get("If-None-Match") != before.ETag {
-			t.Errorf("requests = %v, want one manifest request with If-None-Match %q", paths(reqs), before.ETag)
-		}
-	})
+	// The stored ETag is sent after the restart.
+	f.tick(losync.NotModified)
+	reqs := f.co.takeRequests()
+	if len(reqs) != 1 || reqs[0].Header.Get("If-None-Match") != before.ETag {
+		t.Errorf("requests = %v, want one manifest request with If-None-Match %q", paths(reqs), before.ETag)
+	}
+
+	// An equal, then a lower version, each after another restart.
 	for _, v := range []contract.ManifestVersion{2, 1} {
-		t.Run(fmt.Sprint("version ", v, " after restart"), func(t *testing.T) {
-			f.t = t
-			f.co.publish(v, yamls("3", idA, idB, idC)) // other content, so another ETag
-			f.useStore(file.reopen())
-			f.log.Reset()
+		f.co.publish(v, yamls("3", idA, idB, idC)) // other content, so another ETag
+		f.useStore(file.reopen())
+		f.log.Reset()
 
-			f.tick(losync.RejectedRollback)
+		f.tick(losync.RejectedRollback)
 
-			if got := paths(f.co.takeRequests()); !slices.Equal(got, []string{manifestPath}) {
-				t.Errorf("requests = %v, want only the manifest", got)
-			}
-			f.requireUnchanged(before)
-			requireFields(t, f.outcomeLine(), map[string]any{
-				"level": "WARN", "manifest_version": float64(v), "stored_manifest_version": 2.0,
-			})
+		if got := paths(f.co.takeRequests()); !slices.Equal(got, []string{manifestPath}) {
+			t.Errorf("version %d: requests = %v, want only the manifest", v, got)
+		}
+		f.requireUnchanged(before)
+		requireFields(t, f.outcomeLine(), map[string]any{
+			"level": "WARN", "manifest_version": float64(v), "stored_manifest_version": 2.0,
 		})
 	}
 }

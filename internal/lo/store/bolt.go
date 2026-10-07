@@ -46,8 +46,8 @@ type Bolt struct {
 	db *bolt.DB
 }
 
-// OpenBolt opens the store file at path, creating it, readable only by its owner, if it does not
-// exist. It fails if another process has the file open, or if the file is not an LO store of a
+// OpenBolt opens the store file at path, creating it if it does not exist, with mode 0600 (on
+// Windows the file's access comes from its directory instead). It fails if another process has the file open, or if the file is not an LO store of a
 // layout this code knows.
 func OpenBolt(path string) (*Bolt, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: lockTimeout})
