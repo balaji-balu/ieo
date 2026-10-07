@@ -1062,6 +1062,9 @@ Rules:
 - The LO MUST persist `manifestVersion` and ETag durably, so rollback protection survives restart.
 - If the LO loses its store, it re-syncs from the CO (full manifest) and from ENs (inventories).
   The version it then reports is the one it re-synced against.
+- `[IEO]` A store the LO can open but not read in full (a damaged record, or a deployment YAML that
+  does not match its digest) is a store failure (§14.2), never an empty store: treating it as empty
+  would reset `accepted_manifest_version` and with it rollback protection.
 - `manifestVersion` at the CO MUST never decrease, including across database restore. A restore
   procedure MUST set each site's version above its last published value.
 - `[IEO]` The CO's database itself refuses any update that lowers a site's `manifestVersion`,
@@ -1129,6 +1132,7 @@ nothing else.
 | Planned downtime window | LO does not poll and ignores communication errors during the window. |
 | Site retired | LO stops polling; keeps current workloads running until an operator intervenes. |
 | `manifestVersion` ≤ stored | Reject; security log; keep previous desired state. |
+| `[IEO]` LO store failure during a sync attempt, or an attempt cut short by LO shutdown | The attempt ends with no §7.4 outcome: a store failure is logged at error level, a shutdown is not logged as a failure. Desired state, version and ETag stay as last committed; the next poll retries. |
 | Digest mismatch, or bundle not matching the manifest | Abort the whole update; keep previous desired state; retry next poll. |
 | Invalid archive | Component `failed` with `IEO-ARCHIVE-INVALID`; LO retries with backoff. |
 | EN offline | After missed-heartbeat window: no commands; its deployments `pending`. On return: inventory, then reconcile. |
