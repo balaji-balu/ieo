@@ -61,12 +61,16 @@ CO_PORT=9001                       # the old API, served only when set (until ro
 CO_METRICS_PORT=9201
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
 
-# --- LO ---
-LO_PORT=9010
+# --- LO --- (keys: deploy/README.md, "LO configuration")
+LO_SITE_ID=00000000-0000-4000-8000-000000000001   # a UUID while the old LO runs (until roadmap slice E)
+LO_CO_URL=http://localhost:9002     # the Margo API; no /api/v1 suffix, the LO adds it
+LO_CO_INSECURE=true                 # allows http:// on this machine; the LO logs a warning
+LO_DATA_DIR=data/lo                 # the LO store is data/lo/lo.db; the old LO uses data/lo/db/bolt.db
+LO_SITE_TOKEN=                      # printed by `go run ./cmd/co site add <LO_SITE_ID>` (step 4)
+LO_PORT=9010                        # the old LO, run only when set
 LO_METRICS_PORT=9202
 LO_NATS_URL=nats://localhost:4222
-LO_CO_URL=http://localhost:9001     # no /api/v1 suffix; the LO adds it
-# BOLTDB_PATH=                      # optional; defaults under %ProgramData%\lo (Windows)
+LO_LEGACY_CO_URL=http://localhost:9001   # the old CO API, where the old LO registers
 
 # --- EN ---
 IEO_EN_NATS_URL=nats://localhost:4222
@@ -83,9 +87,17 @@ Give the CO and LO metrics ports different values when both run on one machine.
 
 Each in its own terminal, waiting for the previous one to come up:
 
+The first time, add the LO's site and put the token it prints in `.env` as `LO_SITE_TOKEN`:
+
+```sh
+go run ./cmd/co site add 00000000-0000-4000-8000-000000000001
+```
+
+Then:
+
 ```sh
 go run ./cmd/co      # wait for: CO API running on : {"": "9001"} (old API) and "serving the Margo API"
-go run ./cmd/lo      # wait for: HTTP server started on : {"port": "9010"}
+go run ./cmd/lo      # wait for: "outcome":"Accepted" (the Margo sync) and HTTP server started on : {"port": "9010"}
 go run ./cmd/en      # expect:   LO {"siteid": "..."}
 go run ./cmd/edgectl --help
 ```
@@ -98,8 +110,10 @@ at startup; neither retries. If you start them out of order, restart the later o
 | Symptom | Cause |
 | --- | --- |
 | EN: `Post "http://localhost:9010/register" … actively refused` | LO not running, or `LO_PORT` unset (the LO then listens on a random port; check its `HTTP server started` line) |
-| LO: `unsupported protocol scheme ""` | `LO_CO_URL` unset |
-| LO: `Post "http://localhost:9001/api/v1/register" … actively refused` | CO not running; start it, then restart the LO |
+| LO: `invalid configuration` naming a variable | That variable is missing or invalid in `.env` |
+| LO: `"outcome":"Unreachable"` with `status 401` | `LO_SITE_TOKEN` is not the site's token; `go run ./cmd/co site rotate-token <LO_SITE_ID>` prints a new one |
+| LO: `unsupported protocol scheme ""` (old LO) | `LO_LEGACY_CO_URL` unset |
+| LO: `Post "http://localhost:9001/api/v1/register" … actively refused` (old LO) | CO not running; start it, then restart the LO |
 | LO: `CO rejected: {"error":"db query failed"}` | Schema missing; see step 2 |
 | LO: `CO rejected: {"error":"site already exists"}` | Harmless: the site was registered on an earlier run |
 | CO/LO: `clone failed: authentication required: Repository not found` | Git-based delivery without `GITHUB_TOKEN`; harmless for registration |

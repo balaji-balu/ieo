@@ -10,6 +10,29 @@ docker ps
 edgectl status
 
 
+### LO configuration
+
+The LO syncs with the CO's Margo API (SPEC §8.2). It reads these keys from the environment, or
+from the flag in brackets, which wins (SPEC §6.1, §6.3), and exits with code 2 if one is missing
+or invalid:
+
+| Variable | Flag | Key | |
+| --- | --- | --- | --- |
+| `LO_SITE_ID` | `--site-id` | `lo.site_id` | REQUIRED |
+| `LO_CO_URL` | `--co-url` | `lo.co_url` | REQUIRED; the CO's Margo API, `https://` |
+| `LO_SITE_TOKEN` | none | `lo.site_token` | REQUIRED; from `co site add` (SPEC §15.6). Environment only |
+| `LO_DATA_DIR` | `--data-dir` | `lo.data_dir` | REQUIRED; the store is `lo.db` in it |
+| `LO_TLS_CA_FILE` | `--tls-ca-file` | `lo.tls.ca_file` | optional; verifies the CO, instead of the system roots |
+| `LO_CO_INSECURE` | `--co-insecure` | `lo.co_insecure` | default `false`; `true` allows an `http://` `LO_CO_URL` |
+| `LO_POLL_INTERVAL` | `--poll-interval` | `lo.poll.interval` | default `60s` |
+
+The LO uses no HTTP proxy for the CO (SPEC §15.6). The old LO runs beside it while `LO_PORT` is
+set; it registers with the old CO API at `LO_LEGACY_CO_URL` (until roadmap slice E).
+
+The Compose bundle (`deploy/compose`) and the `ieo-lo` Helm chart do not set these keys yet, so
+an LO image built from current code exits at startup with them. `deploy/dev/compose.yaml` does
+(see `docs/dev-setup.md`).
+
 ### Database schema
 
 The CO does not create its tables at startup. Both bundles create them from a single SQL file
