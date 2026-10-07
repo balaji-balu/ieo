@@ -217,25 +217,28 @@ func TestSpec_17_7_LOSendsTokenOnlyOverHTTPSUnlessInsecure(t *testing.T) {
 		}
 	})
 
-	t.Run("http with lo.co_insecure", func(t *testing.T) {
-		co := publishedCO(t)
-		srv := plainCO(t, co)
-		l := startLO(t, loEnv(t, srv.URL, co.Token(), "LO_CO_INSECURE", "true"))
-		l.waitOutcome("Accepted")
-		l.stop()
-		warned := false
-		for _, line := range l.stderr.lines(t) {
-			if line["level"] == "WARN" && strings.Contains(fmt.Sprint(line), srv.URL) {
-				warned = true
+	for _, scheme := range []string{"http", "HTTP"} {
+		t.Run(scheme+" with lo.co_insecure", func(t *testing.T) {
+			co := publishedCO(t)
+			srv := plainCO(t, co)
+			coURL := scheme + strings.TrimPrefix(srv.URL, "http")
+			l := startLO(t, loEnv(t, coURL, co.Token(), "LO_CO_INSECURE", "true"))
+			l.waitOutcome("Accepted")
+			l.stop()
+			warned := false
+			for _, line := range l.stderr.lines(t) {
+				if line["level"] == "WARN" && strings.Contains(fmt.Sprint(line), coURL) {
+					warned = true
+				}
 			}
-		}
-		if !warned {
-			t.Errorf("no startup warning naming %s:\n%s", srv.URL, l.stderr)
-		}
-		if strings.Contains(l.stderr.String(), co.Token()) {
-			t.Error("the log contains the token")
-		}
-	})
+			if !warned {
+				t.Errorf("no startup warning naming %s:\n%s", coURL, l.stderr)
+			}
+			if strings.Contains(l.stderr.String(), co.Token()) {
+				t.Error("the log contains the token")
+			}
+		})
+	}
 
 	t.Run("redirect", func(t *testing.T) {
 		elsewhere := synctest.NewCO(t)

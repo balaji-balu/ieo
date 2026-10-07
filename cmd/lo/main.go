@@ -66,8 +66,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 // beside it when cfg.LegacyPort is set; when either stops, both do. It fails at startup if the
 // store cannot be opened, and never deletes or overwrites the file (SPEC §14.2).
 func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv func(string) string, base *slog.Logger) error {
-	log := base.With(slog.String("site_id", string(cfg.SiteID))) // SPEC §13.1
-	if strings.HasPrefix(cfg.COURL, "http://") {
+	log := base.With(slog.String("site_id", string(cfg.SiteID)))  // SPEC §13.1
+	if strings.HasPrefix(strings.ToLower(cfg.COURL), "http://") { // the scheme is case-insensitive
 		// SPEC §15.6: the URL, never the token.
 		log.Warn("lo.co_insecure is set: the site token is sent to the CO without TLS", "co_url", cfg.COURL)
 	}
