@@ -1,253 +1,111 @@
-// file: cmd/lo/main.go
+// Command lo is the Local Orchestrator (SPEC §3). It keeps its site's desired state in step with
+// the CO over the Margo API (SPEC §8.2) and stores it in <lo.data_dir>/lo.db (SPEC §12, ADR 0014).
+// Until roadmap slices C3b–E replace it, it also runs the old, Git-based LO when LO_PORT is set
+// (legacy.go).
+//
+// It is configured from the environment and flags, which win (SPEC §6.1, §6.3); a .env file in
+// the working directory sets variables that are not set. It logs JSON on stderr (SPEC §13.1) and
+// never logs the site token (SPEC §15.4). It exits 0 after SIGINT or SIGTERM, 1 on a failure, and
+// 2 on an invalid configuration.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
-	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
-	"github.com/balaji-balu/ieo/internal/lo"
-	"github.com/balaji-balu/ieo/pkg/logx"
-
-	//"github.com/balaji-balu/ieo/internal/config"
-	"github.com/balaji-balu/ieo/internal/gitmanager"
-	"github.com/balaji-balu/ieo/internal/natsbroker"
+	"github.com/balaji-balu/ieo/internal/lo/store"
+	losync "github.com/balaji-balu/ieo/internal/lo/sync"
 )
 
-type LOStorage struct {
-	BaseDir  string
-	SiteID   string
-	BoltPath string
-}
-
-func init() {
-	if err := godotenv.Load("./.env"); err != nil {
-		//log.Println("No .env file found, reading from system environment")
-	}
-}
-
-type LoConfig struct {
-	Port        string
-	MetricsPort string
-	NATS        struct {
-		URL string `koanf:"url"`
-	}
-	CO struct {
-		URL string `koanf:"url"`
-	}
-}
+// storeFile is the LO store's file name in lo.data_dir (ADR 0014).
+const storeFile = "lo.db"
 
 func main() {
+	_ = godotenv.Load() // no .env file is fine
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Getenv, os.Stderr)
+	stop()
+	os.Exit(code)
+}
 
-	// ------------------------------------------------------------
-	// 1️⃣ Context + Logger setup
-	// ------------------------------------------------------------
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := logx.Init(logx.Options{
-		Env: os.Getenv("APP_ENV"), // dev / prod
-		//Version: "0.1.0",
-	}); err != nil {
-		fmt.Fprintln(os.Stderr, "logger init failed:", err)
-		os.Exit(1)
+// run runs the LO with the flags args until ctx ends, and returns its exit code: 0 once ctx has
+// ended, 1 on a failure, 2 on an invalid configuration (SPEC §6.1).
+func run(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) int {
+	log := slog.New(slog.NewJSONHandler(stderr, nil))
+	cfg, err := loadConfig(args, getenv)
+	var transport *http.Transport
+	if err == nil {
+		if transport, err = newTransport(cfg.CAFile); err != nil {
+			err = configError(fmt.Sprintf("%s: %v", keyCAFile, err))
+		}
 	}
-	log := logx.New("lo")
-	log.Infow("LO starting", "pid", os.Getpid())
-
-	loStorage, err := InitLOStorage() //(getBaseDir("LO"), "site_id")
 	if err != nil {
-		log.Errorw("config load err", "err", err)
-		return
+		log.Error("invalid configuration", "error", err.Error())
+		return 2
 	}
-	log.Infow("lostorage", "", loStorage)
+	defer transport.CloseIdleConnections()
+	if err := serve(ctx, cfg, transport, getenv, log); err != nil {
+		log.Error("lo failed", "site_id", string(cfg.SiteID), "error", err.Error())
+		return 1
+	}
+	return 0
+}
 
-	// loader := config.New()
-	// var cfg LoConfig
-	// if err := loader.Load(&cfg); err != nil {
-	//     log.Errorw("config load err", "err", err)
-	// }
-	// log.Infow("Loaded LO config:", "config", cfg)
-	cfg := LoConfig{}
-	cfg.Port = os.Getenv("LO_PORT")
-	cfg.NATS.URL = os.Getenv("LO_NATS_URL")
-	cfg.MetricsPort = os.Getenv("LO_METRICS_PORT")
-	cfg.CO.URL = os.Getenv("LO_CO_URL")
-	boltdbpath := os.Getenv("BOLTDB_PATH")
-	if boltdbpath == "" {
-		boltdbpath = loStorage.BoltPath
+// serve opens the LO store and runs the sync loop until ctx ends (SPEC §16.2), with the old LO
+// beside it when cfg.LegacyPort is set; when either stops, both do. It fails at startup if the
+// store cannot be opened, and never deletes or overwrites the file (SPEC §14.2).
+func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv func(string) string, base *slog.Logger) error {
+	log := base.With(slog.String("site_id", string(cfg.SiteID))) // SPEC §13.1
+	if strings.HasPrefix(cfg.COURL, "http://") {
+		// SPEC §15.6: the URL, never the token.
+		log.Warn("lo.co_insecure is set: the site token is sent to the CO without TLS", "co_url", cfg.COURL)
 	}
-	log.Infow("Connecting to", "nats(url)", cfg.NATS.URL)
-	nc, err := natsbroker.New(cfg.NATS.URL)
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", keyDataDir, err)
+	}
+	s, err := store.OpenBolt(filepath.Join(cfg.DataDir, storeFile))
 	if err != nil {
-		log.Errorw("nats connect:", "err", err)
-		return
+		return err
 	}
-	log.Infow("connected to", "nats url", cfg.NATS.URL)
-
-	gitmgr := gitmanager.NewManager()
-	gitmgr.Register(gitmanager.RepoConfig{
-		Name:      "deployments",
-		Mode:      gitmanager.GitRemote, //, GitLocal
-		RemoteURL: "https://github.com/edge-orchestration-platform/deployments.git",
-		//LocalPath: "/home/balaji/local-deployments",
-		Branch:      "main",
-		Token:       os.Getenv("GITHUB_TOKEN"),
-		WorkingPath: "/tmp/deployments-lo",
-	})
-
-	// ------------------------------------------------------------
-	// 2️⃣ Setup orchestrator + FSM loader
-	// ------------------------------------------------------------
-
-	localorch := lo.NewLO(ctx,
-		loStorage.SiteID,
-		boltdbpath, //loStorage.BoltPath,
-		cfg.NATS.URL,
-		cfg.CO.URL,
-		"deployments", nc, gitmgr, cfg.MetricsPort, log)
-	if localorch == nil {
-		log.Errorw("localorch is nil")
-		return
-	}
-
-	log.Infow("🚀 Starting adaptive mode manager...")
-
-	// ------------------------------------------------------------
-	// 3️⃣ Setup Gin router
-	// ------------------------------------------------------------
-	r := gin.Default()
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-	r.GET("/hosts", localorch.HandlerGetHosts)
-	r.GET("/actual", localorch.HandlerGetActual)
-
-	r.POST("/register", localorch.RegisterEN)
-	//r.POST("/deployment_status", lo.DeployStatus)
-
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", cfg.Port),
-		Handler: r,
-	}
-
-	// ------------------------------------------------------------
-	// 4️⃣ Start orchestrator and HTTP server
-	// ------------------------------------------------------------
-	//go lo.StartModeLoop(ctx)
-	localorch.Start(cfg.CO.URL) // NetworkMonitor(ctx)
-
-	go func() {
-		log.Infow("🌐 HTTP server started on :", "port", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Errorw("HTTP server crashed", err)
-			return
+	defer func() {
+		if err := s.Close(); err != nil {
+			log.Warn("close LO store", "error", err.Error())
 		}
 	}()
+	syncer := losync.New(losync.Config{
+		SiteID: cfg.SiteID, COURL: cfg.COURL, Token: cfg.SiteToken, PollInterval: cfg.PollInterval,
+		Transport: transport, Log: base, // the Syncer adds site_id
+	}, s)
 
-	// ------------------------------------------------------------
-	// 5️⃣ Handle shutdown signals
-	// ------------------------------------------------------------
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	<-stop
-	log.Infow("🛑 Shutdown signal received...")
-	cancel() // broadcast cancel to all goroutines
-
-	// ------------------------------------------------------------
-	// 6️⃣ Gracefully stop HTTP server
-	// ------------------------------------------------------------
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalw("HTTP server forced to shutdown", "err", err)
-	} else {
-		log.Infow("HTTP server shutdown gracefully")
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, 2)
+	running := 1
+	go func() { errs <- syncer.Run(ctx) }() // SPEC §16.2: the first tick at delay 0
+	if cfg.LegacyPort != "" {
+		running++
+		go func() { errs <- legacy(ctx, cfg, getenv) }()
 	}
-
-	// ------------------------------------------------------------
-	// 7️⃣ Final cleanup
-	// ------------------------------------------------------------
-	time.Sleep(500 * time.Millisecond)
-	log.Infow("🧹 All systems stopped. Goodbye!")
-}
-
-func InitLOStorage() (*LOStorage, error) {
-	baseDir := LOBaseDir("lo") // cross-platform base dir (linux/macos/windows)
-
-	// 1. Ensure base directory exists
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		return nil, err
-	}
-
-	// 2. Load or create site_id
-	siteID, err := loadOrCreateID(baseDir, "site_id")
-	if err != nil {
-		return nil, err
-	}
-
-	// 3. Setup BoltDB directory
-	dbDir := filepath.Join(baseDir, "db")
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		return nil, err
-	}
-
-	boltPath := filepath.Join(dbDir, "bolt.db")
-
-	return &LOStorage{
-		BaseDir:  baseDir,
-		SiteID:   siteID,
-		BoltPath: boltPath,
-	}, nil
-}
-
-func loadOrCreateID(baseDir, name string) (string, error) {
-	idPath := filepath.Join(baseDir, name)
-
-	if data, err := os.ReadFile(idPath); err == nil {
-		id := strings.TrimSpace(string(data))
-		if id != "" {
-			return id, nil
+	log.Info("syncing with the CO", "co_url", cfg.COURL, "poll_interval", cfg.PollInterval.String())
+	var first error
+	for range running {
+		// The sync loop ends only with ctx; that is a stop, not a failure.
+		if err := <-errs; err != nil && !errors.Is(err, context.Canceled) && first == nil {
+			first = err
 		}
+		cancel() // one stopped: stop the other
 	}
-
-	id := uuid.New().String()
-
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		return "", fmt.Errorf("create %s: %w", baseDir, err)
-	}
-	if err := os.WriteFile(idPath, []byte(id), 0644); err != nil {
-		return "", fmt.Errorf("write %s: %w", idPath, err)
-	}
-
-	return id, nil
-}
-
-func LOBaseDir(app string) string {
-	if os.Getenv("APP_ENV") == "development" {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".lo")
-	}
-
-	switch runtime.GOOS {
-	case "windows":
-		return filepath.Join(os.Getenv("ProgramData"), app)
-	case "darwin":
-		return filepath.Join("/Library/Application Support", app)
-	default: // linux, unix, others
-		return filepath.Join("/var/lib", strings.ToLower(app))
-	}
+	log.Info("stopped")
+	return first
 }
