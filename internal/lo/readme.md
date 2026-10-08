@@ -1,23 +1,12 @@
-lo.start
-    in loop
-        - networkmodechange (given to dispatcher) -->
-          - push mode
-          - pull mode  
-            - watcher (+ gitmanager) : observes the git for desired changes for the this site
-            - any change, triggers gitpolled event(dispatcher call gitpolled event)
-          - offline mode
+lo.start (the old LO, run from cmd/lo/legacy.go while LO_PORT is set)
     nats : subscribe health receive from en 
         - host lifecycle. health monitoring. receives health from en. heartbeat monitor. 
     nats : subscribe status receive from en 
         - update the actual hash when status is success
 
-gitpolled event
-    - calculate hash for each component and store
-    - call reconcile, operations output
-      - call diff
-    - for each host in the selected list
-      - actuator execute is called
-        - send the request to en via nats 
+The Git watcher, its push/pull/offline mode handlers and the gitpolled event are gone (roadmap
+C3b, ADR 0002). Desired state now comes from the Margo sync loop in internal/lo/sync; reconciling
+it onto ENs is roadmap slice D.
 
 Schema: 
 ```
