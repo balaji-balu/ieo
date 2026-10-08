@@ -8,6 +8,9 @@
 package plan
 
 import (
+	"bytes"
+	"slices"
+
 	"github.com/google/uuid"
 
 	"github.com/balaji-balu/ieo/internal/contract"
@@ -40,5 +43,29 @@ type Command struct {
 // state. The result lists the Applies, then the Removes, each sorted by deployment ID; it is empty
 // when nothing needs to change. ForHost does not modify its arguments.
 func ForHost(want map[uuid.UUID]contract.Digest, have map[uuid.UUID]Actual) []Command {
-	return nil
+	var applies, removes []Command
+	for id, digest := range want {
+		a, ok := have[id]
+		if !ok || a.Digest != digest || anyFailed(a) { // SPEC §8.5 step 3
+			applies = append(applies, Command{Action: contract.ActionApply, DeploymentID: id, Digest: digest})
+		}
+	}
+	for id, a := range have {
+		if _, ok := want[id]; !ok { // SPEC §8.5 step 4
+			removes = append(removes, Command{Action: contract.ActionRemove, DeploymentID: id, Digest: a.Digest})
+		}
+	}
+	byID := func(x, y Command) int { return bytes.Compare(x.DeploymentID[:], y.DeploymentID[:]) }
+	slices.SortFunc(applies, byID)
+	slices.SortFunc(removes, byID)
+	return append(applies, removes...)
+}
+
+func anyFailed(a Actual) bool {
+	for _, state := range a.Components {
+		if state == contract.StateFailed {
+			return true
+		}
+	}
+	return false
 }
