@@ -1,9 +1,10 @@
 package main
 
-// The old, Git-based LO, run when LO_PORT is set until roadmap slices C3b–E replace it and delete
-// this file (ADR 0002). It is the old wiring unchanged, except that it uses lo.site_id instead of
-// a random site ID kept in a file, keeps its bolt file in lo.data_dir, registers with the CO at
-// LO_LEGACY_CO_URL, and stops with the LO.
+// The old LO, run when LO_PORT is set until roadmap slices D–E replace it and delete this file
+// (ADR 0002). It is the old wiring, except that it uses lo.site_id instead of a random site ID kept
+// in a file, keeps its bolt file in lo.data_dir, registers with the CO at LO_LEGACY_CO_URL, and stops
+// with the LO. Its Git watcher is gone (roadmap C3b): desired state comes only from the Margo sync
+// loop, and ENs don't receive it until slice D.
 
 import (
 	"context"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/balaji-balu/ieo/internal/gitmanager"
 	"github.com/balaji-balu/ieo/internal/lo"
 	"github.com/balaji-balu/ieo/internal/natsbroker"
 	"github.com/balaji-balu/ieo/pkg/logx"
@@ -45,20 +45,7 @@ func legacy(ctx context.Context, cfg config, getenv func(string) string) error {
 		return fmt.Errorf("legacy: connect to NATS: %w", err)
 	}
 
-	gitmgr := gitmanager.NewManager()
-	if err := gitmgr.Register(gitmanager.RepoConfig{
-		Name:        "deployments",
-		Mode:        gitmanager.GitRemote,
-		RemoteURL:   "https://github.com/edge-orchestration-platform/deployments.git",
-		Branch:      "main",
-		Token:       getenv("GITHUB_TOKEN"),
-		WorkingPath: "/tmp/deployments-lo",
-	}); err != nil {
-		log.Errorw("Git register failed", "err", err)
-	}
-
-	localorch := lo.NewLO(ctx, string(cfg.SiteID), boltPath, natsURL, coURL, "deployments", nc, gitmgr,
-		getenv("LO_METRICS_PORT"), log)
+	localorch := lo.NewLO(ctx, string(cfg.SiteID), boltPath, natsURL, coURL, nc, getenv("LO_METRICS_PORT"), log)
 	if localorch == nil {
 		return fmt.Errorf("legacy: start the LO with store %s", boltPath)
 	}

@@ -1,54 +1,26 @@
 package lo
 
 import (
-	"context"
-	"io"
-	"os"
-	"time"
-	"encoding/json"
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	
-	"github.com/balaji-balu/ieo/pkg/model"
-	"github.com/balaji-balu/ieo/internal/gitmanager"
-	"github.com/balaji-balu/ieo/internal/natsbroker"
-	"github.com/balaji-balu/ieo/internal/lo/heartbeat"
-	"github.com/balaji-balu/ieo/internal/lo/reconciler"
-	"github.com/balaji-balu/ieo/internal/lo/watcher"
-	"github.com/balaji-balu/ieo/internal/lo/boltstore"
-	"github.com/balaji-balu/ieo/internal/metrics"
+
 	"github.com/balaji-balu/ieo/internal/lo/actuators"
-	"github.com/balaji-balu/ieo/internal/lo/logger"	
+	"github.com/balaji-balu/ieo/internal/lo/boltstore"
+	"github.com/balaji-balu/ieo/internal/lo/heartbeat"
+	"github.com/balaji-balu/ieo/internal/metrics"
+	"github.com/balaji-balu/ieo/internal/natsbroker"
+	"github.com/balaji-balu/ieo/pkg/model"
 )
-
-type EventType string
-
-const (
-	EventGitPolled      = "EventGitPolled"
-	EventNetworkChange  = "EventNetworkChange"
-	EventDeployComplete = "EventDeployComplete"
-)
-
-type Event struct {
-	Name string
-	Data interface{}
-	Time time.Time
-}
-
-type GitPolledPayload struct {
-	Commit      string
-	//Deployments []gitobserver.DeploymentChange
-	Deployments []watcher.DeploymentChange
-}
 
 type LoConfig struct {
-	Owner   string
-	Repo    string
-	Token   string
-	Path    string
 	NatsUrl string
 	Site    string
 }
@@ -61,15 +33,9 @@ type LocalOrchestrator struct {
 	rb 			*ResultBus
 	RootCtx 	context.Context
 	nc      	*natsbroker.Broker
-	reconcile  	*reconciler.Reconciler
 	store 	*boltstore.StateStore
 	monitor 	*heartbeat.Monitor	
-	Mgr     	*gitmanager.Manager
-	Watcher 	*watcher.Watcher
-	eventCh     chan Event
 	log      *zap.SugaredLogger
-	currentMode string
-	cancelFunc  context.CancelFunc // for stopping running process
 }
 
 func NewLO(
@@ -77,12 +43,10 @@ func NewLO(
 	siteID string, 
 	boltDb string,
 	natsURL,
-	coUrl, 
-	repo string,
+	coURL string,
 	//boltz *bolt.DB,
 	//db *ent.Client,
 	nc *natsbroker.Broker,
-	gitmgr *gitmanager.Manager,
 	metrics_port string,
 	log *zap.SugaredLogger,
 ) *LocalOrchestrator {
@@ -91,7 +55,6 @@ func NewLO(
 	rb := NewResultBus()
 
 	log.Debugw("LocalOrchestrator.new enter ")
-	logger.InitLogger(true)
 
 	store, err:= boltstore.NewStateStore(boltDb)
 	if err != nil {
@@ -104,32 +67,25 @@ func NewLO(
 	metrics.Init("lo")
 	metrics.StartServer(metrics_port)
 
-	//inMemStore := reconciler.NewInMemoryStore()
-	na := actuators.NewNatsActuator(store, nc, coUrl, siteID, 30)
-	//r := localorch.NewHTTPReporter("api/v1/co/deploy/status", 30)
-	reconcile := reconciler.NewReconciler(store, na)
+	// The actuator records the status reports ENs send over NATS in the store. Only the Git path
+	// sent work to ENs through it; the Margo path reaches ENs in roadmap slice D.
+	actuators.NewNatsActuator(store, nc, coURL, siteID, 30)
 
 	log.Debugw("LocalOrchestrator.new exiting  ")
 	return &LocalOrchestrator{
 		Config: LoConfig{
-			//Owner: cfg..Owner,
-			Repo:    repo, //cfg.Git.Repo,
-			NatsUrl: natsURL,//cfg.NATS.URL,
-			Token:   os.Getenv("GITHUB_TOKEN"),
-			Site:    siteID, //cfg.Server.Site,
+			NatsUrl: natsURL, //cfg.NATS.URL,
+			Site:    siteID,  //cfg.Server.Site,
 		},
 		log: log,
 		rb:     rb,
-		eventCh: make(chan Event, 20),
 		RootCtx: ctx,
 		//db:      db,
 		nc:      nc,
-		Mgr: 	gitmgr,
-		reconcile: reconcile,
 		//Store: store,
 		monitor: monitor,
 		store: store,
-		CoUrl: coUrl,
+		CoUrl: coURL,
 		httpClient: &http.Client{
             Timeout: 10 * time.Second,
         },
@@ -142,10 +98,6 @@ func (l *LocalOrchestrator) Start(coURL string) {
 	if err := l.RegisterSite(); err != nil {
 		l.log.Errorw("err", err)
 	}
-
-	go l.StartEventDispatcher(l.RootCtx)
-
-	go l.StartNetworkMonitor(l.RootCtx)
 
 	l.MonitorHealthandStatusFromEN(l.monitor, coURL)
 }
