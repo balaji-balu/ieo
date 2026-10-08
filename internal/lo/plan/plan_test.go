@@ -23,13 +23,11 @@ var (
 	digest2 = contract.DigestOf([]byte("2"))
 )
 
-// actual is a reported deployment at digest whose components alternate name, state.
-func actual(digest contract.Digest, nameStates ...any) plan.Actual {
-	a := plan.Actual{Digest: digest, Components: map[string]contract.ComponentState{}}
-	for i := 0; i < len(nameStates); i += 2 {
-		a.Components[nameStates[i].(string)] = nameStates[i+1].(contract.ComponentState)
-	}
-	return a
+// components maps component names to states.
+type components = map[string]contract.ComponentState
+
+func actual(digest contract.Digest, c components) plan.Actual {
+	return plan.Actual{Digest: digest, Components: c}
 }
 
 func apply(id uuid.UUID, digest contract.Digest) plan.Command {
@@ -57,19 +55,19 @@ func TestSpec_17_4_DiffRules(t *testing.T) {
 		{
 			name: "present with other digest",
 			want: map[uuid.UUID]contract.Digest{idA: digest2},
-			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, "web", contract.StateInstalled)},
+			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, components{"web": contract.StateInstalled})},
 			cmds: []plan.Command{apply(idA, digest2)},
 		},
 		{
 			name: "present but not desired",
-			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, "web", contract.StateInstalled)},
+			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, components{"web": contract.StateInstalled})},
 			cmds: []plan.Command{remove(idA, digest1)},
 		},
 		{
 			name: "equal, all installed",
 			want: map[uuid.UUID]contract.Digest{idA: digest1},
 			have: map[uuid.UUID]plan.Actual{
-				idA: actual(digest1, "web", contract.StateInstalled, "db", contract.StateInstalled),
+				idA: actual(digest1, components{"web": contract.StateInstalled, "db": contract.StateInstalled}),
 			},
 		},
 		{
@@ -77,7 +75,7 @@ func TestSpec_17_4_DiffRules(t *testing.T) {
 			name: "equal with a failed component",
 			want: map[uuid.UUID]contract.Digest{idA: digest1},
 			have: map[uuid.UUID]plan.Actual{
-				idA: actual(digest1, "web", contract.StateInstalled, "db", contract.StateFailed),
+				idA: actual(digest1, components{"web": contract.StateInstalled, "db": contract.StateFailed}),
 			},
 			cmds: []plan.Command{apply(idA, digest1)},
 		},
@@ -85,7 +83,7 @@ func TestSpec_17_4_DiffRules(t *testing.T) {
 			name: "equal, pending and installing",
 			want: map[uuid.UUID]contract.Digest{idA: digest1},
 			have: map[uuid.UUID]plan.Actual{
-				idA: actual(digest1, "web", contract.StatePending, "db", contract.StateInstalling),
+				idA: actual(digest1, components{"web": contract.StatePending, "db": contract.StateInstalling}),
 			},
 		},
 		{
@@ -96,12 +94,20 @@ func TestSpec_17_4_DiffRules(t *testing.T) {
 		{
 			name: "other digest with a failed component",
 			want: map[uuid.UUID]contract.Digest{idA: digest2},
-			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, "web", contract.StateFailed)},
+			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, components{"web": contract.StateFailed})},
 			cmds: []plan.Command{apply(idA, digest2)},
 		},
 		{
+			// SPEC §8.5 step 3 names only failed; removed is not re-applied.
+			name: "equal, removing and removed",
+			want: map[uuid.UUID]contract.Digest{idA: digest1},
+			have: map[uuid.UUID]plan.Actual{
+				idA: actual(digest1, components{"web": contract.StateRemoving, "db": contract.StateRemoved}),
+			},
+		},
+		{
 			name: "not desired and removing",
-			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, "web", contract.StateRemoving)},
+			have: map[uuid.UUID]plan.Actual{idA: actual(digest1, components{"web": contract.StateRemoving})},
 			cmds: []plan.Command{remove(idA, digest1)},
 		},
 		{
@@ -137,11 +143,11 @@ func TestSpec_17_4_DiffRulesOrder(t *testing.T) {
 		idA: digest1, // equal → nothing
 	}
 	have := map[uuid.UUID]plan.Actual{
-		idE: actual(digest2, "web", contract.StateInstalled), // not desired → Remove
-		idB: actual(digest1, "web", contract.StateInstalled),
-		idD: actual(digest1, "web", contract.StateInstalled, "db", contract.StateFailed),
-		idA: actual(digest1, "web", contract.StateInstalled),
-		idC: actual(digest1, "web", contract.StateRemoving), // not desired → Remove
+		idE: actual(digest2, components{"web": contract.StateInstalled}), // not desired → Remove
+		idB: actual(digest1, components{"web": contract.StateInstalled}),
+		idD: actual(digest1, components{"web": contract.StateInstalled, "db": contract.StateFailed}),
+		idA: actual(digest1, components{"web": contract.StateInstalled}),
+		idC: actual(digest1, components{"web": contract.StateRemoving}), // not desired → Remove
 	}
 	wantBefore, haveBefore := maps.Clone(want), cloneHave(have)
 	cmds := []plan.Command{

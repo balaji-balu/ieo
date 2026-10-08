@@ -40,7 +40,8 @@ type Command struct {
 //   - nothing for the rest.
 //
 // want maps each deployment resolved to the host to its desired digest; have is the host's actual
-// state. The result lists the Applies, then the Removes, each sorted by deployment ID; it is empty
+// state. Every digest in both must be valid (from contract.ParseDigest or a decoded message);
+// ForHost copies them into the commands unchecked. The result lists the Applies, then the Removes, each sorted by deployment ID; it is empty
 // when nothing needs to change. ForHost does not modify its arguments.
 func ForHost(want map[uuid.UUID]contract.Digest, have map[uuid.UUID]Actual) []Command {
 	var applies, removes []Command
