@@ -134,6 +134,7 @@ Per the Margo Identity and Authorization Framework:
 - NATS runs with TLS and per-host credentials (NKEY or user JWT) in the **CONTROL** account, issued when a host joins the site.
 - Each EN may publish only on its own subjects (`site.<site-id>.host.<host-id>.>`) and subscribe only to its own command subject and to the site-wide inventory request (`site.<site-id>.inventory.request`). The LO has access to all host subjects of its site.
 - Workloads never receive CONTROL credentials. Their data-plane identity is described in `docs/proposals/data-plane.md` §1.6.
+- **[IEO, interim]** Until scoped credentials (Appendix B step 4), the site NATS server is external (on the laptop harness, a `nats` container), and the LO and every EN of a site share one username and password, read only from the environment. They use TLS unless explicitly configured to allow plain `nats://`, as on the laptop harness (SPEC §15.6). Every EN of the site can then reach every host's subjects.
 
 ## 5. End-to-end flows
 
@@ -198,8 +199,8 @@ The LO holds, per host, the **desired** set of deployments (from the manifest pl
    - Directed (`<site-id>/<host-id>`): the host is the target. An unknown host produces status `failed` with error code `101` (unknown child device ID).
    - Autonomous (`<site-id>/*`): the LO chooses a host (§5.6) and records the choice durably. A placement is kept for the life of the deployment unless its host is decommissioned or stops satisfying the constraints.
 2. **Evaluate constraints.** Before applying, the LO MUST evaluate `eligibilityRules` against the host's capabilities and SHOULD check `capacityRequirements`. A directed deployment whose host fails them gets status `failed`.
-3. **Diff per host.** For each host that is alive:
-   - deployment desired but not present, or present with a different digest → send **Apply**;
+3. **Diff per host.** For each host that is alive (**[IEO, interim]** until host liveness lands, a host that has published inventory since the LO started; SPEC §7.3):
+   - deployment desired but not present, present with a different digest, or present with a failed component → send **Apply**;
    - deployment present but not desired → send **Remove**;
    - otherwise nothing.
 4. **Skip offline hosts.** Hosts without a recent heartbeat receive nothing; their deployments are reported `pending` and the host is reconciled when it returns.
@@ -218,9 +219,9 @@ A gateway that cannot place autonomously MUST report error `103` (autonomous pla
 On **Apply** for a Compose deployment, the EN:
 
 1. Pulls each component's **Margo Compose Archive** from its `oci://` repository at tag `revision` (the revision is the tag; build metadata is written after `_`, SPEC §4.2). The OCI manifest has `artifactType: application/vnd.org.margo.component.compose+json` and a single layer of type `application/vnd.org.margo.component.compose.tar+gzip`. The EN MUST verify the layer's OCI digest before extracting.
-2. Validates the archive before extracting: exactly one top-level directory containing `compose.yaml` (other file names are invalid); no absolute paths, no `../`, no links pointing outside the top-level directory; setuid, setgid and sticky bits are stripped. A violation fails the component.
-3. Applies the deployment's parameters: for Compose, each target `pointer` is the **name of an environment variable** set for the listed components. **[IEO]** The EN writes them into the Compose project's environment file. Secrets are never taken from the archive; provisioning them is out of scope for phase 1.
-4. Injects the OpenTelemetry collector connection variables required by Margo into every container, and, for deployments that declare data-plane use, the data-plane settings and credentials file from the Apply command (`docs/proposals/data-plane.md` §1.6).
+2. Validates the archive before extracting: exactly one top-level directory containing `compose.yaml` (other file names are invalid); no absolute paths, no `../`, no links pointing outside the top-level directory; setuid, setgid and sticky bits are stripped. **[IEO]** Pulls and archives are size- and time-limited, so a hostile or broken package cannot exhaust the host (SPEC §5.2, §8.9). A violation fails the component.
+3. Applies the deployment's parameters: for Compose, each target `pointer` is the **name of an environment variable** set for the listed components. **[IEO]** The EN writes them into an environment file beside the archive (`ieo.env`) and adds that file to every service with a generated Compose override (`compose.ieo.yaml`), because a Compose `.env` file alone does not reach containers (SPEC §5.4). Secrets are never taken from the archive; provisioning them is out of scope for phase 1.
+4. Injects the OpenTelemetry collector connection variables required by Margo into every container (`HTTP_OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, and `GRPC_OTEL_EXPORTER_OTLP_ENDPOINT` when configured; SPEC §9.3) through the same file, and, for deployments that declare data-plane use, the data-plane settings and credentials file from the Apply command (`docs/proposals/data-plane.md` §1.6).
 5. Runs the components in the order listed, as one Compose project per component named `<deployment-id>-<component-name>`. When `wait` is true (the default, which Margo requires clients to support), it waits until all containers are running before starting the next component, failing the component if `timeout` elapses.
 6. Reports component states as they change: `installing` → `installed` or `failed` (with error code, source = component name, message).
 
@@ -336,10 +337,10 @@ Design decisions:
 | Where | Store | Contents |
 | --- | --- | --- |
 | CO | Postgres | Apps and versions; sites and accepted-client policy; devices and latest capabilities; deployments (ID, current digest, target, parameters); immutable deployment YAML by digest; per-site manifest and `manifestVersion`; status history |
-| LO | BoltDB (layout: ADR 0014) | Last accepted `manifestVersion` and ETag; desired deployments (digest, YAML, adopted version); autonomous placement decisions; hosts (capabilities, last heartbeat); actual state per host (from inventory); status outbox |
+| LO | BoltDB (layout: ADRs 0014, 0015) | Last accepted `manifestVersion` and ETag; desired deployments (digest, YAML, adopted version); autonomous placement decisions; hosts (capabilities, last heartbeat); actual state per host (from inventory); status outbox |
 | Site NATS (run by LO) | JetStream | DATA account: site topic stream `DATA_<site>`, object store `obj-<site>` (`docs/proposals/data-plane.md`) |
 | Hub | JetStream | Aggregated stream `DATA_ALL`; account configuration managed by the CO |
-| EN | BoltDB + container runtime | Host ID; deployments applied (ID, digest, Compose project names); last reported component states |
+| EN | BoltDB (layout: ADR 0016) + container runtime | Host ID; deployments applied (ID, digest, Compose project names); last reported component states |
 
 The LO MUST persist `manifestVersion` and ETag durably so that rollback protection survives restarts. If the LO loses its local state, it resynchronizes from the CO (full manifest) and from ENs (inventories); the version it reports is then the one it resynchronized against. A store it can open but not read is not "lost": the LO reports a store failure and keeps polling without accepting anything, so rollback protection is never reset by damage (§12).
 

@@ -23,6 +23,12 @@ ADR 0010). The pinned OpenAPI file lives in `api/margo/<commit>/`.
   `src/specification/applications/`, and `application-description.schema.json`, generated from it
   with `linkml` 1.11.1. The CO validates Application Descriptions against the generated schema
   (§5.3), with two generator defects worked around in memory; see the README there.
+- Not versioned by this pin (spec PR D0, balaji-balu/ieo#58): the workload OpenTelemetry variables
+  in SPEC §9.3 come from Margo's "Collecting Workload Observability Data" page
+  (`https://docs.margo.org/specification/observability/collecting-workload-observability-data/`,
+  read 2026-10-08). The page has no version and lists open action items. A later pin change
+  rechecks the four names (`HTTP_OTEL_EXPORTER_OTLP_ENDPOINT`, `GRPC_OTEL_EXPORTER_OTLP_ENDPOINT`,
+  `OTEL_EXPORTER_OTLP_CERTIFICATE`, `OTEL_EXPORTER_OTLP_PROTOCOL`) against the pinned commit.
 
 | Method | Path | Status | Note |
 | --- | --- | --- | --- |
