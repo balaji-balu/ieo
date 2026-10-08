@@ -34,13 +34,17 @@ not reset it.
   | `component_states` | deployment ID (nested bucket) | in the nested bucket: component name → JSON `{"name", "state", "error"}` (§4.1.9; `error` optional) |
 
 - An empty file gets every bucket above. A file with buckets but no `meta`, or another `schema`, is
-  refused at open. A record that does not decode, or a `component_states` entry with no `applied`
-  entry, fails `Load`. Either way the EN exits at startup with an error naming the file and never
-  deletes or overwrites it. Recovery is an operator action: bring down the host's IEO Compose
-  projects, then remove the file.
-- The Apply that records `applied` (§8.9 step 6) also writes that deployment's `component_states` in
-  the same transaction. Remove deletes both in one transaction. Each status the EN publishes is
-  written to `component_states` before it is published.
+  refused at open. A record that does not decode fails `Load`. Either way the EN exits at startup
+  with an error naming the file and never deletes or overwrites it. Recovery is an operator action:
+  bring down the host's IEO Compose projects, then remove the file.
+- A `component_states` entry with no `applied` entry is not damage. It is an Apply the EN stopped
+  before it recorded any project (a crash between `installing` and the first project record, SPEC
+  §8.9 step 4.4), so no project of it is up. At startup the EN deletes such entries before its first
+  inventory, so inventory never reports a deployment without a digest.
+- `applied` is written before each Compose project is brought up and again at the end of the Apply
+  (SPEC §8.9 steps 4.4 and 6), so no project runs without a record. Remove deletes a deployment's
+  `applied` and `component_states` in one transaction. Each status the EN publishes is written to
+  `component_states` before it is published.
 - A later change to a bucket's encoding raises `schema` and migrates in the open function, recorded
   in an ADR that refines this one.
 

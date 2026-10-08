@@ -389,8 +389,10 @@ On extraction the EN MUST strip setuid, setgid and sticky bits. Any violation fa
 
 `[IEO]` Limits: an archive with more than `en.archive.max_entries` entries, or whose regular files
 add up to more than `en.archive.max_extracted_bytes` once decompressed, is invalid. The EN counts
-as it reads and stops at the first entry over a limit, so it never writes more than the limit; it
-then deletes what it extracted (§8.9).
+as it reads and stops at the first entry over a limit, so it never writes more than the limit.
+
+`[IEO]` When an archive turns out invalid during extraction, for any rule above, the EN deletes
+everything it extracted for that component before it reports the failure.
 
 ### 5.3 Import Validation (CO)
 
@@ -415,25 +417,28 @@ succeed without changes.
 
 - Each parameter target `pointer` is the **name of an environment variable**.
 - The value is set for each component listed in the target.
-- The EN writes values into the Compose project's environment file for that component.
+- The EN writes values into the Compose project's override file for that component (below).
 - Secrets MUST NOT be read from the archive. Secret provisioning is out of scope (§15.4).
 
 How values reach containers: a Compose `.env` file only fills in `${…}` references in
-`compose.yaml`; it sets no container environment. So the EN, for each component:
+`compose.yaml`; it sets no container environment, and an `env_file:` loses to the archive's own
+`environment:`. So the EN, for each component:
 
-1. Writes the environment file `ieo.env` in the component's directory (§9.1). It holds the
-   component's parameter values and the OpenTelemetry variables (§9.3), one `NAME=value` per line,
-   and nothing else.
-2. Writes the override file `compose.ieo.yaml` in the same directory. For every service that
-   `compose config --services` lists for the archive's `compose.yaml`, it adds `env_file: [ieo.env]`
-   (by absolute path).
-3. Runs every Compose command for the project with both files, `compose.yaml` first and
-   `compose.ieo.yaml` second, so the values are set in every container whatever the archive
-   declares. A value the archive's `compose.yaml` also sets under `environment:` keeps the archive's
-   value (Compose precedence).
+1. Writes the override file `compose.ieo.yaml` in the component's directory (§9.1). For every
+   service that `compose config --services` lists for the archive's `compose.yaml`, it sets under
+   `environment:` the component's parameter values and the OpenTelemetry variables (§9.3), and
+   nothing else.
+   - Each value is written as a YAML double-quoted string, with every `$` doubled (`$$`) so Compose
+     does not interpolate it. A value is then set exactly, whatever characters it holds.
+   - A variable name that is not `[A-Za-z_][A-Za-z0-9_]*` fails the component with
+     `IEO-COMPOSE-FAILED`, before any Compose command runs.
+2. Runs every Compose command for the project with both files, `compose.yaml` first and
+   `compose.ieo.yaml` second. Compose merges a later file's `environment:` over an earlier one's, so
+   these values are set in every container, whatever the archive's `compose.yaml` sets for the same
+   names.
 
-Both files sit beside the archive's top-level directory, never inside it (§9.1), so archive content
-cannot replace them. The EN never writes tier credentials into either file (§9.2, §15.4).
+The override file sits beside the archive's top-level directory, never inside it (§9.1), so archive
+content cannot replace it. The EN never writes tier credentials into it (§9.2, §15.4).
 
 ### 5.5 Device Constraint Evaluation `[IEO]`
 
@@ -535,8 +540,8 @@ LO:
   environment, never from a flag
 - `lo.nats.ca_file`: path, OPTIONAL until Appendix B step 4 `[IEO, interim]`: verifies the NATS
   server's certificate for a `tls://` `lo.nats.url`; the system roots otherwise
-- `lo.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows a `nats://` (no TLS)
-  `lo.nats.url` (§15.6)
+- `lo.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows an `lo.nats.url` that does
+  not require TLS (any scheme but `tls://`) (§15.6)
 - `lo.nats.operator_key_file`: path, REQUIRED from Appendix B step 4 (scoped NATS credentials); not
   read before it. It signs per-host and, with the data-plane proposal
   `docs/proposals/data-plane.md`, per-workload credentials
@@ -561,8 +566,8 @@ EN:
 - `en.nats.username`, `en.nats.password`: strings, REQUIRED until Appendix B step 4
   `[IEO, interim]`: the site's NATS credentials (§15.6). The password is read only from the
   environment, never from a flag
-- `en.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows a `nats://` (no TLS)
-  `en.nats_url` (§15.6)
+- `en.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows an `en.nats_url` that does
+  not require TLS (any scheme but `tls://`) (§15.6)
 - `en.data_dir`: path, REQUIRED
 - `en.runtime`: `docker` or `podman`, default implementation-defined
 - `en.labels`: map string → string, default `{}`
@@ -638,7 +643,9 @@ Transitions:
 
 `[IEO, interim]` Until host liveness is implemented (roadmap slice I), a host is `Online` once it
 has published an `Inventory` since the LO started, and stays `Online` until the LO stops. A host
-that has not is `Unknown` and receives no commands. The LO does not report `pending` for it yet;
+that has not is `Unknown` and receives no commands. A host that goes away keeps receiving commands
+on every pass; each times out (`lo.command.ack_timeout`) and is logged. Slice I replaces this
+rule. The LO does not report `pending` for it yet;
 status reporting arrives with roadmap slice E.
 
 ### 7.4 Sync Attempt Outcomes (LO)
@@ -870,7 +877,8 @@ On **Apply** (deployment ID, digest, deployment YAML):
 1. If `applied[deployment_id].digest == digest` and all components are `installed`, ack
    `accepted: true` and do nothing else.
 2. Validate the command's `deployment`. It is valid only if it validates against the Margo
-   `ApplicationDeployment` schema of the pinned OpenAPI (header), its `id` equals the command's
+   deployment schema of the pinned OpenAPI (header; `components.schemas.appDeploymentManifest`),
+   its `id` equals the command's
    `deploymentId`, and its `spec.deploymentProfile.type` is `compose`. Invalid → ack
    `accepted: false` with error code `IEO-INVALID-COMMAND` (§10), and nothing else.
 3. Ack `accepted: true`. The rest runs asynchronously; outcomes are reported as status events.
@@ -883,8 +891,10 @@ On **Apply** (deployment ID, digest, deployment YAML):
    3. Validate and extract the archive (§5.2) into
       `<en.data_dir>/deployments/<deployment_id>/<digest>/<component>/`. Invalid, or over a §5.2
       limit → `failed` with `IEO-ARCHIVE-INVALID`.
-   4. Write the environment file and the override file (§5.4): parameter values for this component
-      plus the OpenTelemetry variables (§9.3).
+   4. Write the override file (§5.4): parameter values for this component plus the OpenTelemetry
+      variables (§9.3). Then durably add the project to `applied[deployment_id]`, keeping
+      the projects already recorded and setting its digest to this command's, before bringing it
+      up, so a project is never up without a record.
    5. Bring up the Compose project `<deployment_id>-<component>` with both Compose files (§5.4). If
       `wait` is true, wait until all containers are running or `timeout` elapses.
    6. Publish `installed`, or `failed` with an error and stop processing later components.
@@ -899,14 +909,19 @@ On **Remove** (deployment ID):
 2. Ack, publish `removing`, bring down all its Compose projects, delete its working directory,
    remove it from `applied`, publish `removed`.
 
+`[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
+command for a deployment with a command in flight waits for it (below), then checks `applied` as the
+in-flight command left it.
+
 Concurrency: the EN MUST process at most one command per deployment at a time. A new command for a
 deployment with a command in flight supersedes it after the in-flight step finishes.
 
 `[IEO]` A step is one component of Apply step 4 (from its `installing` to its `installed` or
 `failed`), or the whole of Remove step 2. When a superseded Apply's step finishes, the EN publishes
 that component's outcome, publishes nothing for later components, records `applied` (Apply step 6)
-with the projects brought up so far, and then runs the new command from its start. A new command is
-acked when it arrives, before the in-flight step finishes; if several arrive, only the latest runs.
+with the projects brought up so far, and then runs the new command from its start. A new command for
+a deployment with a command in flight is acked `accepted: true` when it arrives if it is valid (Apply
+step 2); its steps 1 run later, as above. If several arrive, only the latest runs.
 
 ### 8.10 EN: Monitoring
 
@@ -926,8 +941,7 @@ acked when it arrives, before the in-flight step finishes; if several arrive, on
   state.db                             embedded store (applied, component_states)
   deployments/<deployment_id>/<digest>/<component>/
       <top-level-dir>/compose.yaml     extracted archive
-      ieo.env                          parameters + injected variables (§5.4)
-      compose.ieo.yaml                 override adding ieo.env to every service (§5.4)
+      compose.ieo.yaml                 override: parameters + injected variables (§5.4)
   otel/config.yaml                     collector configuration
 ```
 
@@ -947,7 +961,7 @@ acked when it arrives, before the in-flight step finishes; if several arrive, on
 - The EN runs a collector with host-metrics and container-metrics receivers and an OTLP receiver.
 - No exporters are pre-configured. Operators add exporters.
 - The EN injects the collector connection variables required by Margo into every container
-  `[Margo]`, through the environment file (§5.4):
+  `[Margo]`, through the override file (§5.4):
   - `HTTP_OTEL_EXPORTER_OTLP_ENDPOINT` = `en.otel.http_endpoint`, always;
   - `OTEL_EXPORTER_OTLP_PROTOCOL` = `http/protobuf`, always;
   - `GRPC_OTEL_EXPORTER_OTLP_ENDPOINT` = `en.otel.grpc_endpoint`, only when it is set;
@@ -1099,6 +1113,9 @@ The normative schemas for these messages are the JSON Schemas (draft 2020-12) in
 - `CommandAck.error` is REQUIRED when `accepted` is `false` and MUST be absent when it is `true`.
 - `Inventory.deployments` and `Capabilities.labels` are present even when empty.
 
+`[IEO]` A `hostId` in a payload MUST equal the `<h>` of the subject it arrived on; the LO logs and
+drops a message where they differ, and it changes no state. The LO keys host state by `<h>`.
+
 Receivers MUST ignore unknown fields. A message that fails schema validation MUST be logged and
 dropped; it MUST NOT change state.
 
@@ -1138,7 +1155,7 @@ edgectl deployment status <id> [--watch]
 | --- | --- | --- | --- |
 | CO | Relational database | Apps and versions; sites; devices and latest capabilities; deployments (ID, current digest, target, parameters); immutable YAML by digest; per-site manifest and `manifestVersion`; status history | Deployment change + manifest version increment in one transaction |
 | LO | Embedded key-value store | `accepted_manifest_version`, `etag`, `desired`, `placements`, hosts, `outbox` | `desired` replaced atomically; version and ETag persisted after reconcile starts (§8.2) |
-| EN | Embedded key-value store | `host_id`, `applied`, `component_states` | `applied` updated after each Apply/Remove completes |
+| EN | Embedded key-value store | `host_id`, `applied`, `component_states` | `applied` updated after each Apply/Remove completes, and before each Compose project is brought up (§8.9) |
 
 Rules:
 
@@ -1303,11 +1320,12 @@ and scoped NATS credentials) replaces them (ADR 0005):
     `lo.nats.url`, as ENs do at `en.nats_url`. The LO and the ENs of a site use the same username
     and password (`lo.nats.username`/`password`, `en.nats.username`/`password`).
   - The passwords are read only from the environment, never from a flag, and never logged.
-  - The LO and the EN connect only to a `tls://` NATS URL, verifying the server's certificate
-    against `lo.nats.ca_file`/`en.nats.ca_file` when set, or the system roots otherwise. They
-    connect to a `nats://` URL only when `lo.nats_insecure`/`en.nats_insecure` is true, and then
-    log a warning at startup that names the URL, never the password. A `nats://` URL without it is a
-    configuration error: the tier exits at startup (§6.1).
+  - The LO and the EN require TLS: they use a `tls://` NATS URL and verify the server's certificate
+    against `lo.nats.ca_file`/`en.nats.ca_file` when set, or the system roots otherwise. A URL with
+    any other scheme (such as `nats://`) does not require TLS, so they accept one only when
+    `lo.nats_insecure`/`en.nats_insecure` is true, and then log a warning at startup that names the
+    URL, never the password. Such a URL without it is a configuration error: the tier exits at
+    startup (§6.1).
   - Every EN of a site can therefore publish and subscribe on every host's subjects. The §11.2
     permissions hold only from Appendix B step 4 (roadmap slice O).
   - The EN never passes these credentials into a workload (§9.2). Compose fills in `${…}` in
@@ -1498,7 +1516,8 @@ function apply_deployment(cmd):
     if sha256(layer.bytes) != layer.digest:   return fail(cmd, c, "IEO-DIGEST-MISMATCH")
     dir = safe_extract(layer, component_dir(cmd, c), cfg.archive)   # §5.2 rules and limits
     if dir failed:                            return fail(cmd, c, "IEO-ARCHIVE-INVALID")
-    write_env(dir, parameters_for(cmd, c) + otel_env())   # ieo.env + compose.ieo.yaml (§5.4)
+    write_override(dir, parameters_for(cmd, c) + otel_env())   # compose.ieo.yaml (§5.4)
+    store.put_applied(cmd.deploymentId, cmd.digest, project_names + [this project])
     r = compose_up(project_name(cmd.deploymentId, c.name), dir, wait=c.wait, timeout=c.timeout)
     if r timed out:                           return fail(cmd, c, "IEO-START-TIMEOUT")
     if r failed:                              return fail(cmd, c, "IEO-COMPOSE-FAILED")
@@ -1682,7 +1701,7 @@ endpoints (§11.3 holds IEO-specific operations).
 - Until mutual TLS, the LO sends its site token only to an `https://` CO URL unless
   `lo.co_insecure` is set, exits at startup on an `http://` URL without it, and follows no
   redirects (§15.6).
-- Until scoped NATS credentials, the LO and the EN connect to a `nats://` URL only when
+- Until scoped NATS credentials, the LO and the EN accept a NATS URL other than `tls://` only when
   `lo.nats_insecure`/`en.nats_insecure` is set and exit at startup on one without it; the NATS
   password reaches neither a workload nor the Compose CLI's environment (§15.6).
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.

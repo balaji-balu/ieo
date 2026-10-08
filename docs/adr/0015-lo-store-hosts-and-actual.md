@@ -18,9 +18,16 @@ so new buckets need a layout version and a migration.
   | `hosts` | host ID (§4.2) | JSON `{"capabilities", "labels", "lastHeartbeatAt"}`: `capabilities` is the §11.2 `Capabilities.capabilities` object or `null` if none has been received; `labels` an object, `{}` if none; `lastHeartbeatAt` RFC 3339 or `null` |
   | `actual` | host ID (§4.2) | JSON `{"reportedAt", "deployments"}`: `reportedAt` RFC 3339; `deployments` an array of §11.2 `Inventory` deployment entries (`deploymentId`, `digest`, `components` with `name`, `state` and optional `error`) |
 
+- Host IDs are the `<h>` of the subject a message arrived on; a payload `hostId` that differs is
+  dropped before it reaches the store (SPEC §11.2).
 - A host enters `hosts` with its first inventory, heartbeat or capabilities message, and leaves it
   only when it is decommissioned (§7.3, roadmap I). `actual[h]` is replaced whole by each
-  inventory from `h`, and a status event changes the one component it names (§7.5).
+  inventory from `h`.
+- A status event changes the one component it names (§7.5) when its digest is the digest
+  `actual[h]` holds for that deployment. An event at another digest, or for a deployment `actual[h]`
+  does not hold, replaces that deployment's entry with the event's digest and that one component.
+  Components with no report at the new digest are then absent, which the planner and status
+  mapping read as `pending` (SPEC §8.7). States from the old digest are never carried over.
 - `OpenBolt` migrates version 1 to 2 in one write transaction: it creates the empty `hosts` and
   `actual` buckets and sets `schema` to 2. A new file is created at version 2. A file at any other
   version is refused at open, as ADR 0014 says.
