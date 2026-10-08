@@ -387,6 +387,13 @@ An archive is valid only if all hold:
 
 On extraction the EN MUST strip setuid, setgid and sticky bits. Any violation fails the component.
 
+`[IEO]` Limits: an archive with more than `en.archive.max_entries` entries, or whose regular files
+add up to more than `en.archive.max_extracted_bytes` once decompressed, is invalid. The EN counts
+as it reads and stops at the first entry over a limit, so it never writes more than the limit.
+
+`[IEO]` When an archive turns out invalid during extraction, for any rule above, the EN deletes
+everything it extracted for that component before it reports the failure.
+
 ### 5.3 Import Validation (CO)
 
 The CO imports one version at a time: the tag of that version in the application's repository.
@@ -410,8 +417,28 @@ succeed without changes.
 
 - Each parameter target `pointer` is the **name of an environment variable**.
 - The value is set for each component listed in the target.
-- The EN writes values into the Compose project's environment file for that component.
+- The EN writes values into the Compose project's override file for that component (below).
 - Secrets MUST NOT be read from the archive. Secret provisioning is out of scope (§15.4).
+
+How values reach containers: a Compose `.env` file only fills in `${…}` references in
+`compose.yaml`; it sets no container environment, and an `env_file:` loses to the archive's own
+`environment:`. So the EN, for each component:
+
+1. Writes the override file `compose.ieo.yaml` in the component's directory (§9.1). For every
+   service that `compose config --services` lists for the archive's `compose.yaml`, it sets under
+   `environment:` the component's parameter values and the OpenTelemetry variables (§9.3), and
+   nothing else.
+   - Each value is written as a YAML double-quoted string, with every `$` doubled (`$$`) so Compose
+     does not interpolate it. A value is then set exactly, whatever characters it holds.
+   - A variable name that is not `[A-Za-z_][A-Za-z0-9_]*` fails the component with
+     `IEO-COMPOSE-FAILED`, before any Compose command runs.
+2. Runs every Compose command for the project with both files, `compose.yaml` first and
+   `compose.ieo.yaml` second. Compose merges a later file's `environment:` over an earlier one's, so
+   these values are set in every container, whatever the archive's `compose.yaml` sets for the same
+   names.
+
+The override file sits beside the archive's top-level directory, never inside it (§9.1), so archive
+content cannot replace it. The EN never writes tier credentials into it (§9.2, §15.4).
 
 ### 5.5 Device Constraint Evaluation `[IEO]`
 
@@ -502,9 +529,19 @@ LO:
 - `lo.poll.hours`: list of hour ranges, default all hours `[Margo]`
 - `lo.poll.downtime_windows`: list of time windows, default `[]` `[Margo]`
 - `lo.poll.max_backoff`: duration, default `10m`
-- `lo.nats.listen_addr`: string, default `:4222`
+- `lo.nats.listen_addr`: string, default `:4222`. Read only once the LO runs the site NATS server
+  (Appendix B step 4); before it the server is external (§15.6)
 - `lo.nats.tls.cert_file`, `lo.nats.tls.key_file`: paths, REQUIRED once the LO runs the site NATS
   server (§11.2); not read before it
+- `lo.nats.url`: string, REQUIRED until Appendix B step 4 `[IEO, interim]`: the external site NATS
+  server the LO connects to (§15.6)
+- `lo.nats.username`, `lo.nats.password`: strings, REQUIRED until Appendix B step 4
+  `[IEO, interim]`: the site's NATS credentials (§15.6). The password is read only from the
+  environment, never from a flag
+- `lo.nats.ca_file`: path, OPTIONAL until Appendix B step 4 `[IEO, interim]`: verifies the NATS
+  server's certificate for a `tls://` `lo.nats.url`; the system roots otherwise
+- `lo.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows an `lo.nats.url` that does
+  not require TLS (any scheme but `tls://`) (§15.6)
 - `lo.nats.operator_key_file`: path, REQUIRED from Appendix B step 4 (scoped NATS credentials); not
   read before it. It signs per-host and, with the data-plane proposal
   `docs/proposals/data-plane.md`, per-workload credentials
@@ -522,15 +559,33 @@ EN:
 - `en.site_id`: string, REQUIRED
 - `en.host_id`: string, OPTIONAL (generated and persisted on first start if absent)
 - `en.nats_url`: string, REQUIRED
-- `en.nats.creds_file`, `en.nats.ca_file`: paths, REQUIRED
+- `en.nats.creds_file`: path, REQUIRED from Appendix B step 4 (per-host scoped credentials); not
+  read before it
+- `en.nats.ca_file`: path, REQUIRED from Appendix B step 4. Before it, OPTIONAL: it verifies the
+  NATS server's certificate for a `tls://` `en.nats_url`; the system roots otherwise (§15.6)
+- `en.nats.username`, `en.nats.password`: strings, REQUIRED until Appendix B step 4
+  `[IEO, interim]`: the site's NATS credentials (§15.6). The password is read only from the
+  environment, never from a flag
+- `en.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows an `en.nats_url` that does
+  not require TLS (any scheme but `tls://`) (§15.6)
 - `en.data_dir`: path, REQUIRED
 - `en.runtime`: `docker` or `podman`, default implementation-defined
 - `en.labels`: map string → string, default `{}`
 - `en.heartbeat.interval`: duration, default `10s`
 - `en.inventory.interval`: duration, default `60s`
-- `en.otel.enabled`: boolean, default `true`
+- `en.otel.enabled`: boolean, default `true`: run the collector (§9.3). The OpenTelemetry variables
+  are injected either way
+- `en.otel.http_endpoint`: URL, REQUIRED: the value of `HTTP_OTEL_EXPORTER_OTLP_ENDPOINT` (§9.3), as
+  seen from inside a container
+- `en.otel.grpc_endpoint`: URL, OPTIONAL: the value of `GRPC_OTEL_EXPORTER_OTLP_ENDPOINT` (§9.3)
 - `en.registry.auth_file`: path, OPTIONAL (credentials for pulling Compose archives)
 - `en.registry.insecure`: boolean, default `false`
+- `en.pull.max_bytes`: size in bytes, default `268435456` (256 MiB): the most the EN reads of any one
+  registry response (manifest or layer) while pulling a Compose archive (§8.9)
+- `en.pull.timeout`: duration, default `5m`: the longest one component's pull may take (§8.9)
+- `en.archive.max_extracted_bytes`: size in bytes, default `1073741824` (1 GiB): the most one archive
+  may write when extracted, summed over its regular files (§5.2)
+- `en.archive.max_entries`: integer, default `10000`: the most entries one archive may hold (§5.2)
 - `en.metrics_listen_addr`: string, default `:9092`
 
 edgectl:
@@ -585,6 +640,13 @@ Transitions:
   report the host's deployments as `pending`.
 - any → `Decommissioned`: the LO sends `DELETE` capabilities for the host and re-places its
   autonomous deployments (§8.6).
+
+`[IEO, interim]` Until host liveness is implemented (roadmap slice I), a host is `Online` once it
+has published an `Inventory` since the LO started, and stays `Online` until the LO stops. A host
+that has not is `Unknown` and receives no commands. A host that goes away keeps receiving commands
+on every pass; each times out (`lo.command.ack_timeout`) and is logged. Slice I replaces this
+rule. The LO does not report `pending` for it yet;
+status reporting arrives with roadmap slice E.
 
 ### 7.4 Sync Attempt Outcomes (LO)
 
@@ -748,7 +810,7 @@ For each desired deployment:
 
 ### 8.5 LO: Host Reconciliation
 
-For one host that is `Online`:
+For one host that is `Online` (§7.3, including its interim rule):
 
 1. `want` = desired deployments resolved to this host (with digests).
 2. `have` = actual state for this host.
@@ -814,19 +876,27 @@ On **Apply** (deployment ID, digest, deployment YAML):
 
 1. If `applied[deployment_id].digest == digest` and all components are `installed`, ack
    `accepted: true` and do nothing else.
-2. Validate the deployment YAML (schema, profile type `compose`). Invalid → ack `accepted: false`
-   with error.
+2. Validate the command's `deployment`. It is valid only if it validates against the Margo
+   deployment schema of the pinned OpenAPI (header; `components.schemas.appDeploymentManifest`),
+   its `id` equals the command's
+   `deploymentId`, and its `spec.deploymentProfile.type` is `compose`. Invalid → ack
+   `accepted: false` with error code `IEO-INVALID-COMMAND` (§10), and nothing else.
 3. Ack `accepted: true`. The rest runs asynchronously; outcomes are reported as status events.
 4. For each component, in listed order:
    1. Publish `installing`.
    2. Pull the Compose Archive from `repository` at tag `revision` (§4.2 tag rule). Verify the layer
-      digest against the OCI manifest before extracting.
+      digest against the OCI manifest before extracting. `[IEO]` The EN reads at most
+      `en.pull.max_bytes` of any one registry response and stops reading there; the whole pull
+      takes at most `en.pull.timeout`. Either limit exceeded → `failed` with `IEO-PULL-FAILED`.
    3. Validate and extract the archive (§5.2) into
-      `<en.data_dir>/deployments/<deployment_id>/<digest>/<component>/`.
-   4. Write the environment file: parameter values for this component (§5.4) plus the OpenTelemetry
-      collector variables required by Margo.
-   5. Bring up the Compose project `<deployment_id>-<component>`. If `wait` is true, wait until all
-      containers are running or `timeout` elapses.
+      `<en.data_dir>/deployments/<deployment_id>/<digest>/<component>/`. Invalid, or over a §5.2
+      limit → `failed` with `IEO-ARCHIVE-INVALID`.
+   4. Write the override file (§5.4): parameter values for this component plus the OpenTelemetry
+      variables (§9.3). Then durably add the project to `applied[deployment_id]`, keeping
+      the projects already recorded and setting its digest to this command's, before bringing it
+      up, so a project is never up without a record.
+   5. Bring up the Compose project `<deployment_id>-<component>` with both Compose files (§5.4). If
+      `wait` is true, wait until all containers are running or `timeout` elapses.
    6. Publish `installed`, or `failed` with an error and stop processing later components.
 5. If the deployment previously ran at a different digest, bring down Compose projects of
    components that no longer exist.
@@ -839,8 +909,19 @@ On **Remove** (deployment ID):
 2. Ack, publish `removing`, bring down all its Compose projects, delete its working directory,
    remove it from `applied`, publish `removed`.
 
+`[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
+command for a deployment with a command in flight waits for it (below), then checks `applied` as the
+in-flight command left it.
+
 Concurrency: the EN MUST process at most one command per deployment at a time. A new command for a
 deployment with a command in flight supersedes it after the in-flight step finishes.
+
+`[IEO]` A step is one component of Apply step 4 (from its `installing` to its `installed` or
+`failed`), or the whole of Remove step 2. When a superseded Apply's step finishes, the EN publishes
+that component's outcome, publishes nothing for later components, records `applied` (Apply step 6)
+with the projects brought up so far, and then runs the new command from its start. A new command for
+a deployment with a command in flight is acked `accepted: true` when it arrives if it is valid (Apply
+step 2); its steps 1 run later, as above. If several arrive, only the latest runs.
 
 ### 8.10 EN: Monitoring
 
@@ -860,7 +941,7 @@ deployment with a command in flight supersedes it after the in-flight step finis
   state.db                             embedded store (applied, component_states)
   deployments/<deployment_id>/<digest>/<component>/
       <top-level-dir>/compose.yaml     extracted archive
-      .env                             parameters + injected variables
+      compose.ieo.yaml                 override: parameters + injected variables (§5.4)
   otel/config.yaml                     collector configuration
 ```
 
@@ -879,7 +960,17 @@ deployment with a command in flight supersedes it after the in-flight step finis
 
 - The EN runs a collector with host-metrics and container-metrics receivers and an OTLP receiver.
 - No exporters are pre-configured. Operators add exporters.
-- The EN injects the collector connection variables required by Margo into every container.
+- The EN injects the collector connection variables required by Margo into every container
+  `[Margo]`, through the override file (§5.4):
+  - `HTTP_OTEL_EXPORTER_OTLP_ENDPOINT` = `en.otel.http_endpoint`, always;
+  - `OTEL_EXPORTER_OTLP_PROTOCOL` = `http/protobuf`, always;
+  - `GRPC_OTEL_EXPORTER_OTLP_ENDPOINT` = `en.otel.grpc_endpoint`, only when it is set;
+  - `OTEL_EXPORTER_OTLP_CERTIFICATE` is not injected in phase 1 (no client certificates for
+    workloads).
+
+  The names come from Margo's "Collecting Workload Observability Data" page, which the pinned
+  commit does not version (`docs/margo-pins.md`). A parameter with one of these names is set to the
+  EN's value, never the parameter's.
 
 ## 10. Status Reporting Contract
 
@@ -894,9 +985,11 @@ This section collects the reporting rules in one place.
   - `102` gateway-generated error defined by Margo; see the Margo specification `[Margo]`
   - `103` autonomous placement not supported `[Margo]`
   - `IEO-NO-ELIGIBLE-HOST` no host satisfies constraints `[IEO]`
-  - `IEO-ARCHIVE-INVALID` archive failed §5.2 `[IEO]`
+  - `IEO-ARCHIVE-INVALID` archive failed §5.2, its limits included `[IEO]`
   - `IEO-DIGEST-MISMATCH` pulled layer digest did not match `[IEO]`
-  - `IEO-PULL-FAILED` registry unreachable or artifact missing `[IEO]`
+  - `IEO-PULL-FAILED` registry unreachable, artifact missing, or a pull limit exceeded (§8.9) `[IEO]`
+  - `IEO-INVALID-COMMAND` an Apply whose `deployment` failed validation (§8.9 step 2); a
+    `CommandAck` error code, never a component status `[IEO]`
   - `IEO-START-TIMEOUT` containers not running within `timeout` `[IEO]`
   - `IEO-COMPOSE-FAILED` the Compose command failed for another reason `[IEO]`
   - `IEO-CONTAINER-EXITED` container exited and did not recover `[IEO]`
@@ -961,7 +1054,8 @@ CO obligations:
 ### 11.2 LO ↔ EN: Site Messages `[IEO]`
 
 Transport: core NATS (not JetStream), TLS, per-host credentials, in the site server's `CONTROL`
-account. Payloads are JSON. `<s>` = site ID, `<h>` = host ID.
+account. Until Appendix B step 4, §15.6 applies instead: an external server and per-site
+credentials. Payloads are JSON. `<s>` = site ID, `<h>` = host ID.
 
 | Subject | Direction | Pattern | Payload |
 | --- | --- | --- | --- |
@@ -1019,6 +1113,9 @@ The normative schemas for these messages are the JSON Schemas (draft 2020-12) in
 - `CommandAck.error` is REQUIRED when `accepted` is `false` and MUST be absent when it is `true`.
 - `Inventory.deployments` and `Capabilities.labels` are present even when empty.
 
+`[IEO]` A `hostId` in a payload MUST equal the `<h>` of the subject it arrived on; the LO logs and
+drops a message where they differ, and it changes no state. The LO keys host state by `<h>`.
+
 Receivers MUST ignore unknown fields. A message that fails schema validation MUST be logged and
 dropped; it MUST NOT change state.
 
@@ -1058,7 +1155,7 @@ edgectl deployment status <id> [--watch]
 | --- | --- | --- | --- |
 | CO | Relational database | Apps and versions; sites; devices and latest capabilities; deployments (ID, current digest, target, parameters); immutable YAML by digest; per-site manifest and `manifestVersion`; status history | Deployment change + manifest version increment in one transaction |
 | LO | Embedded key-value store | `accepted_manifest_version`, `etag`, `desired`, `placements`, hosts, `outbox` | `desired` replaced atomically; version and ETag persisted after reconcile starts (§8.2) |
-| EN | Embedded key-value store | `host_id`, `applied`, `component_states` | `applied` updated after each Apply/Remove completes |
+| EN | Embedded key-value store | `host_id`, `applied`, `component_states` | `applied` updated after each Apply/Remove completes, and before each Compose project is brought up (§8.9) |
 
 Rules:
 
@@ -1219,6 +1316,22 @@ and scoped NATS credentials) replaces them (ADR 0005):
     environment sets (`HTTP_PROXY`, `HTTPS_PROXY`): a proxy is another host the token would reach.
 - LO ↔ EN: ENs MUST authenticate to NATS with per-site username and password. Until scoped
   credentials land, these credentials are shared by the hosts of one site.
+  - The site NATS server is external: the LO does not run it, and connects to it as a client at
+    `lo.nats.url`, as ENs do at `en.nats_url`. The LO and the ENs of a site use the same username
+    and password (`lo.nats.username`/`password`, `en.nats.username`/`password`).
+  - The passwords are read only from the environment, never from a flag, and never logged.
+  - The LO and the EN require TLS: they use a `tls://` NATS URL and verify the server's certificate
+    against `lo.nats.ca_file`/`en.nats.ca_file` when set, or the system roots otherwise. A URL with
+    any other scheme (such as `nats://`) does not require TLS, so they accept one only when
+    `lo.nats_insecure`/`en.nats_insecure` is true, and then log a warning at startup that names the
+    URL, never the password. Such a URL without it is a configuration error: the tier exits at
+    startup (§6.1).
+  - Every EN of a site can therefore publish and subscribe on every host's subjects. The §11.2
+    permissions hold only from Appendix B step 4 (roadmap slice O).
+  - The EN never passes these credentials into a workload (§9.2). Compose fills in `${…}` in
+    `compose.yaml` from its own process environment, so the EN runs the Compose CLI with an
+    environment that holds no tier credential: none of the EN's `en.*` settings, only what the CLI
+    needs to reach the engine.
 - `edgectl` → CO: requests MUST carry the static operator token from configuration.
 - Tokens and passwords come from configuration or the environment and follow §15.4; they MUST NOT
   appear in code or test fixtures.
@@ -1254,7 +1367,7 @@ function start_lo():
   cfg = load_and_validate_config() or exit(1)
   store = open_store(cfg.data_dir)
   state = store.load()          # version, etag, desired, placements, hosts, outbox
-  start_site_nats(cfg)
+  start_site_nats(cfg)          # until Appendix B step 4: connect to the external server (§15.6)
   subscribe("site.<s>.host.*.heartbeat",    on_heartbeat)
   subscribe("site.<s>.host.*.inventory",    on_inventory)
   subscribe("site.<s>.host.*.status",       on_status)
@@ -1386,7 +1499,8 @@ function on_command(cmd):
   if cmd.action == "apply":
     if applied.get(cmd.deploymentId).digest == cmd.digest and all_installed(cmd.deploymentId):
       return ack(accepted=true)
-    if not valid_deployment(cmd.deployment): return ack(accepted=false, error=...)
+    if not valid_deployment(cmd):             # schema, id, type compose (§8.9 step 2)
+      return ack(accepted=false, error={code: "IEO-INVALID-COMMAND", ...})
     ack(accepted=true)
     run_serialized(cmd.deploymentId, apply_deployment, cmd)
   else:
@@ -1396,12 +1510,14 @@ function on_command(cmd):
 function apply_deployment(cmd):
   for c in cmd.deployment.spec.deploymentProfile.components:
     publish_status(cmd, c.name, installing)
-    layer = oci_pull(c.repository, c.revision)   # revision is the tag (§4.2)
+    layer = oci_pull(c.repository, c.revision,   # revision is the tag (§4.2)
+                     max_bytes=cfg.pull.max_bytes, timeout=cfg.pull.timeout)
     if layer failed:                          return fail(cmd, c, "IEO-PULL-FAILED")
     if sha256(layer.bytes) != layer.digest:   return fail(cmd, c, "IEO-DIGEST-MISMATCH")
-    dir = safe_extract(layer, component_dir(cmd, c))
+    dir = safe_extract(layer, component_dir(cmd, c), cfg.archive)   # §5.2 rules and limits
     if dir failed:                            return fail(cmd, c, "IEO-ARCHIVE-INVALID")
-    write_env(dir, parameters_for(cmd, c) + otel_env())
+    write_override(dir, parameters_for(cmd, c) + otel_env())   # compose.ieo.yaml (§5.4)
+    store.put_applied(cmd.deploymentId, cmd.digest, project_names + [this project])
     r = compose_up(project_name(cmd.deploymentId, c.name), dir, wait=c.wait, timeout=c.timeout)
     if r timed out:                           return fail(cmd, c, "IEO-START-TIMEOUT")
     if r failed:                              return fail(cmd, c, "IEO-COMPOSE-FAILED")
@@ -1567,6 +1683,15 @@ endpoints (§11.3 holds IEO-specific operations).
 - After EN restart, inventory reflects the containers actually running.
 - Inventory is published on start and on every NATS reconnect.
 - Commands for the same deployment are processed one at a time.
+- A command for a deployment with an Apply in flight runs after the in-flight component finishes;
+  the superseded Apply starts no later component.
+- An Apply whose `deployment` fails validation (Margo schema, `id` other than `deploymentId`, profile
+  type not `compose`) acks `accepted: false` with `IEO-INVALID-COMMAND` and changes nothing.
+- A registry response larger than `en.pull.max_bytes`, or a pull that outlasts `en.pull.timeout`,
+  fails the component with `IEO-PULL-FAILED`, and the EN reads no more than the limit.
+- An archive with more than `en.archive.max_entries` entries, or whose files decompress to more than
+  `en.archive.max_extracted_bytes`, fails with `IEO-ARCHIVE-INVALID`; no more than the limit is
+  written, and nothing extracted is left behind.
 
 ### 17.7 Security, CLI, Observability
 
@@ -1576,6 +1701,9 @@ endpoints (§11.3 holds IEO-specific operations).
 - Until mutual TLS, the LO sends its site token only to an `https://` CO URL unless
   `lo.co_insecure` is set, exits at startup on an `http://` URL without it, and follows no
   redirects (§15.6).
+- Until scoped NATS credentials, the LO and the EN accept a NATS URL other than `tls://` only when
+  `lo.nats_insecure`/`en.nats_insecure` is set and exit at startup on one without it; the NATS
+  password reaches neither a workload nor the Compose CLI's environment (§15.6).
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
 - `edgectl site add` produces a certificate whose SPIFFE ID matches §4.2.
 - Every tier writes each log line as one JSON object.
@@ -1624,13 +1752,13 @@ Gaps. Every §17.1–§17.7 bullet supports at least one row. A change that adds
 | 1. Margo WM API, central and site tier | §8.1.3, §8.2, §8.3, §11.1 | §17.1 OpenAPI, IDs, device ID parsing; §17.2 ETag, `304`, `bundle: null`, cache headers, caller scoping, retired site, gateway order; §17.3 first sync | §17.9 both bullets |
 | 2. Immutable revisions by digest | §8.1, §12 | §17.2 create, update, byte-identical serving | §17.8 golden path |
 | 3. Site converged while center unreachable | §8.2, §8.5, §14.2 | §17.3 outage converges in one poll, `404` not removal; §17.4 diff rules, offline/online hosts, re-Apply after `failed`; §17.6 container exit and recovery | §17.8 site autonomy, host outage |
-| 4. Reject stale or tampered state | §8.2, §8.9, §15.3 | §17.3 rollback, digest mismatch, rollback after restart; §17.6 layer digest, archive rejection, setuid bits | — |
+| 4. Reject stale or tampered state | §8.2, §8.9, §15.3 | §17.3 rollback, digest mismatch, rollback after restart; §17.6 layer digest, archive rejection, setuid bits, invalid command, pull and archive limits | — |
 | 5. Deterministic placement | §8.4, §8.6 | §17.2 no eligible host; §17.4 most free memory, ties, durable, decommission, `IEO-NO-ELIGIBLE-HOST`, `103` | §17.8 autonomous |
-| 6. Idempotent Compose Apply/Remove | §5, §8.5, §8.9 | §17.1 Compose project names, tag comparison; §17.4 retries and backoff; §17.6 idempotent Apply and Remove, order, `wait`/`timeout`, parameters, OTel variables, update cleanup, one command at a time | §17.8 golden path |
+| 6. Idempotent Compose Apply/Remove | §5, §8.5, §8.9 | §17.1 Compose project names, tag comparison; §17.4 retries and backoff; §17.6 idempotent Apply and Remove, order, `wait`/`timeout`, parameters, OTel variables, update cleanup, one command at a time, superseded Apply | §17.8 golden path |
 | 7. Status host → site → center with buffering | §7.2, §8.1.2, §8.7, §8.8, §10 | §17.2 status history, `removed`; §17.5 all bullets | §17.8 outbox |
 | 8. Recovery from durable state, no replay | §12, §14 | §17.3 version and ETag survive restart; §17.4 placement survives, inventory request after restart; §17.5 outbox survives; §17.6 inventory after restart and reconnect | §17.8 LO restart, site autonomy |
 | 9. Structured logs and metrics | §7.4, §13 | §17.7 JSON log lines, log fields, sync outcome log, security-level log, metrics, log sink failure | — |
-| Cross-cutting: security (§15) | §11.2, §15 | §17.1 site messages; §17.7 client certificate, NATS scoping, no secrets in logs, SPIFFE ID | — |
+| Cross-cutting: security (§15) | §11.2, §15 | §17.1 site messages; §17.7 client certificate, NATS scoping, no secrets in logs, SPIFFE ID, interim token and NATS transport | — |
 | Cross-cutting: operator interface | §11.3 | §17.7 `edgectl` errors | §17.8 golden path |
 
 Gaps: none.

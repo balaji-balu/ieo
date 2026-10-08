@@ -20,6 +20,8 @@ one, write a new ADR that supersedes it.
 | [0012](0012-deployment-bundle-layout.md) | Deployment bundle layout and deterministic encoding | Proposed |
 | [0013](0013-co-store-schema-and-migrations.md) | CO store: own ent schema, embedded SQL migrations applied on open (refines 0004) | Proposed |
 | [0014](0014-lo-store-layout.md) | LO store: new bbolt store and its file layout (refines 0002) | Proposed |
+| [0015](0015-lo-store-hosts-and-actual.md) | LO store: `hosts` and `actual` buckets, layout version 2 (refines 0014) | Proposed |
+| [0016](0016-en-store-layout.md) | EN store: host ID file and a bbolt store for applied deployments | Proposed |
 
 Older design notes in `docs/adr/era/` are superseded by 0002 and 0003 and kept for history.
 
