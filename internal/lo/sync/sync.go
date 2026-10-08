@@ -106,10 +106,16 @@ func New(cfg Config, store Store) *Syncer {
 }
 
 // Tick runs one sync attempt (SPEC §16.3), logs its outcome on one line, and returns the outcome.
-// The error is non-nil only when the store fails; the attempt then has no outcome, and the next
-// attempt starts over.
+// The error is non-nil only when the store fails, or when ctx ends during a request; the attempt
+// then has no outcome, and the next attempt starts over. When ctx ends, the error is ctx's, and
+// the attempt is not logged as a failure (SPEC §14.2).
 func (s *Syncer) Tick(ctx context.Context) (Outcome, error) {
 	r, err := s.attempt(ctx)
+	if err == nil && r.requestFailed && ctx.Err() != nil {
+		// The request failed because the LO is shutting down, not because the CO is unreachable.
+		s.log.LogAttrs(ctx, slog.LevelDebug, "sync attempt stopped by shutdown", slog.Uint64("manifest_version", uint64(r.version)))
+		return "", ctx.Err()
+	}
 	if err != nil {
 		err = fmt.Errorf("sync attempt: store: %w", err)
 		s.log.LogAttrs(ctx, slog.LevelError, "sync attempt failed", slog.String("reason", err.Error()))
@@ -147,10 +153,15 @@ type result struct {
 	msg     string
 	version contract.ManifestVersion
 	attrs   []slog.Attr
+	// requestFailed is true when a request to the CO failed, which ends the attempt as Unreachable.
+	requestFailed bool
 }
 
 func unreachable(v contract.ManifestVersion, msg string, err *requestError, attrs ...slog.Attr) result {
-	return result{outcome: Unreachable, level: slog.LevelWarn, msg: msg, version: v, attrs: append(attrs, err.attrs()...)}
+	return result{
+		outcome: Unreachable, level: slog.LevelWarn, msg: msg, version: v, attrs: append(attrs, err.attrs()...),
+		requestFailed: true,
+	}
 }
 
 // mismatch is a security event, logged at warning level with the offending values (SPEC §13.1).

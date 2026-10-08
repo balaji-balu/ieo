@@ -103,8 +103,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COMPOSE: docker compose -f deploy/dev/compose.yaml
+      SITE_ID: 00000000-0000-4000-8000-000000000001 # LO_SITE_ID in compose.yaml
     steps:
       - uses: actions/checkout@v4
+
+      # The LO needs its site's token, which only the CO issues (docs/dev-setup.md).
+      - name: Start the CO
+        run: $COMPOSE up -d --build --wait --wait-timeout 300 co
+
+      - name: Add the site
+        run: |
+          token=$($COMPOSE exec -T co app site add "$SITE_ID")
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "LO_SITE_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Start the stack
         run: $COMPOSE up -d --build --wait --wait-timeout 300
@@ -127,6 +139,20 @@ jobs:
         run: |
           if $COMPOSE exec -T en2 wget -qO- -T 5 http://host1:2375/version; then
             echo "en2 reached host1's engine"; exit 1
+          fi
+
+      - name: The LO accepted the site's manifest
+        run: |
+          for i in $(seq 30); do
+            if $COMPOSE logs --no-color lo | grep '"outcome":"Accepted"'; then exit 0; fi
+            sleep 2
+          done
+          echo "no Accepted sync attempt"; $COMPOSE logs --no-color lo | tail -20; exit 1
+
+      - name: The token appears in no log (SPEC §15.4)
+        run: |
+          if $COMPOSE logs --no-color | grep -qF "$LO_SITE_TOKEN"; then
+            echo "a log contains the site token"; exit 1
           fi
 
       - name: A restarted EN registers again

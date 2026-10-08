@@ -1,12 +1,18 @@
 # Laptop harness (ADR 0009): 1 CO, 1 LO and 2 simulated hosts, plus NATS, Postgres and an OCI
-# registry. Works the same from PowerShell and bash, on Docker Desktop (WSL 2) and in CI:
+# registry. Works the same from PowerShell and bash, on Docker Desktop (WSL 2) and in CI. The LO
+# needs its site's token, which only the CO issues, so the stack starts in two steps
+# (docs/dev-setup.md):
 #
+#   docker compose -f deploy/dev/compose.yaml up -d --build --wait co
+#   docker compose -f deploy/dev/compose.yaml exec -T co app site add 00000000-0000-4000-8000-000000000001
+#     then put the printed token in deploy/dev/.env as LO_SITE_TOKEN=<token> (gitignored)
 #   docker compose -f deploy/dev/compose.yaml up -d --build --wait
 #   docker compose -f deploy/dev/compose.yaml down -v
 #
-# CO, LO and EN are built from this checkout (deploy/dev/Dockerfile). Until roadmap slices B–D
-# replace them they are the Git-based code: CO and LO clone public GitHub repos at startup and log
-# an error if that fails; EN runs a mock runtime and does not use its host's engine yet.
+# CO, LO and EN are built from this checkout (deploy/dev/Dockerfile). The LO syncs with the CO's
+# Margo API. Until roadmap slices C3b–E replace it, the old, Git-based code runs beside it: the CO
+# and LO clone public GitHub repos at startup and log an error if that fails, and EN runs a mock
+# runtime and does not use its host's engine yet.
 #
 # Each simulated host is two containers that act as one machine: hostN runs its own Docker engine
 # (docker:dind) and enN shares its network namespace, so enN reaches that engine, and only that
@@ -114,7 +120,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
-      # Both APIs: the LO still registers on 9001, once, at startup (until roadmap slice C).
+      # Both APIs: the old LO still registers on 9001, once, at startup (until roadmap slice E).
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9002/healthz && wget -qO- http://127.0.0.1:9001/api/v1/sites"]
       interval: 5s
       timeout: 3s
@@ -122,17 +128,26 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # Local Orchestrator for the one site. Registers with the CO once at startup.
+  # Local Orchestrator for the one site. It polls the CO's Margo API with the site's token, and
+  # keeps its store in /var/lib/lo/lo.db. The old LO (LO_PORT set) registers with the old CO API
+  # once at startup, which needs a UUID site ID until roadmap slice E.
   lo:
     build:
       <<: *ieo-build
       args: { CMD: lo }
     environment:
       APP_ENV: prod
+      LO_SITE_ID: 00000000-0000-4000-8000-000000000001
+      LO_CO_URL: http://co:9002
+      LO_CO_INSECURE: "true" # plain HTTP on the compose network; the LO logs a warning (SPEC §15.6)
+      LO_DATA_DIR: /var/lib/lo
+      # From deploy/dev/.env or the shell. Empty until the site is added: the LO then exits with a
+      # configuration error.
+      LO_SITE_TOKEN: ${LO_SITE_TOKEN:-}
       LO_PORT: "9010"
       LO_METRICS_PORT: "9200"
       LO_NATS_URL: nats://nats:4222
-      LO_CO_URL: http://co:9001
+      LO_LEGACY_CO_URL: http://co:9001
     ports: ["9010:9010"]
     volumes:
       - lo-data:/var/lib/lo
