@@ -816,7 +816,7 @@ For one host that is `Online` (§7.3, including its interim rule):
 2. `have` = actual state for this host.
 3. For each deployment in `want` not in `have`, in `have` with a different digest, or in `have` at the
    same digest with any component `failed` → **Apply**.
-4. For each deployment in `have` not in `want` → **Remove**.
+4. For each deployment in `have` not in `want` → **Remove**, carrying the digest in `have` `[IEO]`.
 5. Otherwise, nothing.
 6. Skip any `(host, deployment)` whose retry entry is not yet due.
 
@@ -903,11 +903,14 @@ On **Apply** (deployment ID, digest, deployment YAML):
 6. Durably record `applied[deployment_id] = {digest, compose_projects}` whether processing succeeded
    or failed, so inventory reports the digest with its component states and the LO can retry.
 
-On **Remove** (deployment ID):
+On **Remove** (deployment ID, digest):
 
 1. If the deployment is not in `applied`, ack `accepted: true`, publish `removed`, and stop.
 2. Ack, publish `removing`, bring down all its Compose projects, delete its working directory,
    remove it from `applied`, publish `removed`.
+
+`[IEO]` The status events of a Remove carry the digest in `applied` when the Remove runs (step 1),
+or the command's digest when the deployment is not in `applied` then.
 
 `[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
 command for a deployment with a command in flight waits for it (below), then checks `applied` as the
@@ -1079,6 +1082,8 @@ Messages:
 { "commandId": "uuid", "action": "apply" | "remove",
   "deploymentId": "uuid", "digest": "sha256:…",
   "deployment": { /* ApplicationDeployment; present only for "apply" */ } }
+// "digest": for "apply", the digest to run; for "remove", the digest the host last reported for
+// the deployment (§8.5 step 4)
 
 // CommandAck (EN → LO): acceptance only; outcomes arrive as status events
 { "commandId": "uuid", "accepted": true,
@@ -1455,7 +1460,7 @@ function reconcile_host(state, host):
       send_command(host, "apply", id, digest, state.desired[id].yaml)
   for id in keys(have):
     if id not in want and retry_due(host.id, id):
-      send_command(host, "remove", id)
+      send_command(host, "remove", id, have[id].digest)
 
 function send_command(host, action, id, digest=null, yaml=null):
   ack = nats_request("site.<s>.host.<h>.cmd", Command(...), timeout=cfg.command.ack_timeout)
@@ -1506,6 +1511,16 @@ function on_command(cmd):
   else:
     ack(accepted=true)
     run_serialized(cmd.deploymentId, remove_deployment, cmd)
+
+function remove_deployment(cmd):
+  a = applied.get(cmd.deploymentId)          # read when the Remove runs (§8.9)
+  digest = a.digest if a else cmd.digest     # every status event of this Remove uses it
+  if a is null:
+    return publish_removal(cmd, digest, removed)   # status events as §8.9 Remove
+  publish_removal(cmd, digest, removing)
+  compose_down(a.compose_projects); delete_dir(deployment_dir(cmd.deploymentId))
+  store.delete_applied(cmd.deploymentId)
+  publish_removal(cmd, digest, removed)
 
 function apply_deployment(cmd):
   for c in cmd.deployment.spec.deploymentProfile.components:
@@ -1634,7 +1649,7 @@ endpoints (§11.3 holds IEO-specific operations).
 ### 17.4 LO: Reconciliation and Placement
 
 - Desired but absent → Apply sent; present with other digest → Apply sent; present but not desired
-  → Remove sent; equal → nothing sent.
+  → Remove sent with the reported digest; equal → nothing sent.
 - Offline hosts receive no commands and their deployments are reported `pending`.
 - A host returning online is reconciled after its inventory arrives.
 - Sending a command does not change actual state; only EN reports do.
@@ -1667,7 +1682,10 @@ endpoints (§11.3 holds IEO-specific operations).
 ### 17.6 EN: Execution and Safety
 
 - Apply of an already installed digest does nothing and acks `accepted: true`.
-- Remove of an unknown deployment acks `accepted: true` and reports `removed`.
+- Remove of an unknown deployment acks `accepted: true` and reports `removed` with the command's
+  digest.
+- Remove of a deployment applied at another digest than the command's reports `removing` and
+  `removed` with the applied digest.
 - Components are started in listed order; a failure stops later components.
 - `wait: true` waits for running containers; exceeding `timeout` fails with `IEO-START-TIMEOUT`.
 - Parameter values appear as environment variables only in the listed components.

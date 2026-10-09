@@ -305,6 +305,7 @@ Messages:
   "deploymentId": "uuid", "digest": "sha256:…",
   "deployment": { /* ApplicationDeployment, present for "apply" */ },
   "dataPlane": { "url": "tls://…", "creds": "…" } }   // present only if the deployment declares data-plane use (data-plane proposal §1.6)
+// "digest": for "apply", the digest to run; for "remove", the digest the host last reported (SPEC §8.5)
 
 // CommandAck (EN → LO): acceptance only; outcomes arrive as status events
 { "commandId": "uuid", "accepted": true, "error": { "code": "…", "message": "…" } }
