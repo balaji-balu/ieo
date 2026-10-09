@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -130,5 +131,42 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := fi.Mode() & (os.ModeDir | os.ModePerm); got != want {
 		t.Errorf("%s has mode %v, want %v", path, got, want)
+	}
+}
+
+// A configured ID that is not a valid host ID is refused before anything is written (SPEC §4.1.2).
+func TestHostIDInvalidConfigured(t *testing.T) {
+	dataDir := t.TempDir()
+	if _, err := store.HostID(dataDir, "edge 01"); err == nil {
+		t.Fatal("HostID with an invalid en.host_id succeeded, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, store.HostIDFile)); !os.IsNotExist(err) {
+		t.Errorf("host.id was written for an invalid en.host_id: %v", err)
+	}
+}
+
+// ENs starting at once on one directory never end up with different IDs: each either gets the ID
+// in the file or fails.
+func TestHostIDConcurrentFirstStart(t *testing.T) {
+	dataDir := t.TempDir()
+	const n = 8
+	ids := make(chan contract.HostID, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if id, err := store.HostID(dataDir, ""); err == nil {
+				ids <- id
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	want := strings.TrimSuffix(readFile(t, filepath.Join(dataDir, store.HostIDFile)), "\n")
+	for id := range ids {
+		if id.String() != want {
+			t.Errorf("an EN got ID %q, but host.id holds %q", id, want)
+		}
 	}
 }

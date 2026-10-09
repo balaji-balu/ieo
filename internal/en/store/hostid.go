@@ -26,28 +26,35 @@ const HostIDFile = "host.id"
 // written with mode 0600 and synced to disk before HostID returns, so it is never lost once used.
 // With a file, its ID is returned. A file that does not hold a valid host ID, or whose ID differs
 // from a non-empty configured, is a configuration error (SPEC §6.1, §6.2): HostID fails with an
-// error naming the file, and never rewrites it.
+// error naming the file, and never rewrites it. So does a configured that is not a valid host ID.
+// Of ENs starting at once on one directory, every one that succeeds gets the same ID.
 func HostID(dataDir string, configured contract.HostID) (contract.HostID, error) {
+	if configured != "" {
+		if _, err := contract.ParseHostID(configured.String()); err != nil {
+			return "", fmt.Errorf("en.host_id: %w", err)
+		}
+	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return "", fmt.Errorf("create EN data directory: %w", err)
 	}
 	path := filepath.Join(dataDir, HostIDFile)
-	b, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		id := configured
-		if id == "" {
-			id = contract.HostID(uuid.NewString()) // lowercase, and only unreserved characters
-		}
-		if err := writeSynced(path, []byte(id.String()+"\n")); err != nil {
-			return "", fmt.Errorf("write host ID file %s: %w", path, err)
-		}
+	id := configured
+	if id == "" {
+		id = contract.HostID(uuid.NewString()) // lowercase, and only unreserved characters
+	}
+	err := createSynced(path, []byte(id.String()+"\n"))
+	if err == nil {
 		return id, nil
 	}
+	if !errors.Is(err, fs.ErrExist) {
+		return "", fmt.Errorf("write host ID file %s: %w", path, err)
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read host ID file %s: %w", path, err)
 	}
 	line := strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
-	id, err := contract.ParseHostID(line)
+	id, err = contract.ParseHostID(line)
 	if err != nil {
 		return "", fmt.Errorf("host ID file %s: %w; remove it to choose a new identity (SPEC §6.2)", path, err)
 	}
@@ -57,37 +64,30 @@ func HostID(dataDir string, configured contract.HostID) (contract.HostID, error)
 	return id, nil
 }
 
-// writeSynced creates path with content, so that after a crash path holds either all of it or
-// nothing: it writes a temporary file beside path, syncs it and renames it into place.
-func writeSynced(path string, content []byte) (err error) {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+// createSynced creates path with mode 0600 and writes content, synced to disk. It fails with
+// fs.ErrExist, and changes nothing, if path exists, so of two ENs starting on one directory only
+// one writes its ID. A crash while writing leaves a file HostID refuses, naming it; no ID has been
+// used yet, so the operator can remove it.
+func createSynced(path string, content []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmp.Name()) // best effort; the error being returned is the one that matters
-		}
-	}()
-	if _, err := tmp.Write(content); err != nil { // CreateTemp made it with mode 0600
-		_ = tmp.Close()
-		return err
+	_, err = f.Write(content)
+	if err == nil {
+		err = f.Sync()
 	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
+	if cerr := f.Close(); err == nil {
+		err = cerr
 	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err != nil {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
 }
 
-// syncDir makes a rename in dir durable. Windows cannot sync a directory handle; NTFS journals the
-// rename itself.
+// syncDir makes a new entry in dir durable. Windows cannot sync a directory handle; NTFS journals
+// the change itself.
 func syncDir(dir string) error {
 	if runtime.GOOS == "windows" {
 		return nil

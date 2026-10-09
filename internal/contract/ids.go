@@ -169,11 +169,35 @@ func (d *Digest) UnmarshalText(b []byte) error {
 // [a-z0-9_-] replaced by `-`.
 func ComposeProjectName(deploymentID uuid.UUID, component string) string {
 	return strings.Map(func(r rune) rune {
-		if 'a' <= r && r <= 'z' || '0' <= r && r <= '9' || r == '_' || r == '-' {
+		if projectNameRune(r) {
 			return r
 		}
 		return '-'
 	}, strings.ToLower(deploymentID.String()+"-"+component))
+}
+
+// IsComposeProjectName reports whether s has the form ComposeProjectName produces for a non-empty
+// component name (SPEC §4.2): a lowercase deployment ID, `-`, then one or more of [a-z0-9_-].
+// The EN refuses any other project name, so none can come from archive content (SPEC §9.2).
+func IsComposeProjectName(s string) bool {
+	const idLen = 36 // canonical UUID
+	if len(s) <= idLen+1 || s[idLen] != '-' {
+		return false
+	}
+	if id, err := uuid.Parse(s[:idLen]); err != nil || id.String() != s[:idLen] {
+		return false
+	}
+	for _, r := range s[idLen+1:] {
+		if !projectNameRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// projectNameRune reports whether r may appear in a Compose project name: [a-z0-9_-] (SPEC §4.2).
+func projectNameRune(r rune) bool {
+	return 'a' <= r && r <= 'z' || '0' <= r && r <= '9' || r == '_' || r == '-'
 }
 
 // RevisionSemVer returns a component revision as SemVer 2.0: Margo writes build metadata after

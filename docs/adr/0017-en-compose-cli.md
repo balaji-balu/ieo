@@ -20,14 +20,22 @@ D3 (balaji-balu/ieo#58) builds it. The spec leaves these points open:
 - Commands, for project `<name>` with files `compose.yaml` and `compose.ieo.yaml` (SPEC §5.4):
   - `compose -p <name> -f compose.yaml -f compose.ieo.yaml --project-directory <dir> config --services`;
   - `… up -d`, plus `--wait --wait-timeout <seconds, rounded up>` when `wait` is true;
-  - `compose -p <name> down --remove-orphans`. It never passes `-v`: named volumes are workload
-    data, and no spec rule deletes them.
-- The project name must match `[a-z0-9][a-z0-9_-]*`, the form `contract.ComposeProjectName`
-  produces (SPEC §4.2). Any other name is refused before a command runs (SPEC §9.2).
-- Start timeout: with `wait`, the whole `up` runs under a deadline of `timeout`.
-  - If it fails once the timeout has elapsed, the cause is `ErrStartTimeout`, which the EN reports
-    as `IEO-START-TIMEOUT`. A failure before the timeout is `IEO-COMPOSE-FAILED`.
+  - `compose -p <name> -f - down --remove-orphans`, with `services: {}` on stdin. Compose finds the
+    project's containers and networks by its name; the explicit empty file stops it loading a
+    `compose.yaml` or `.env` from the working directory or a parent of it, which it otherwise
+    searches. It never passes `-v`: named volumes are workload data, and no spec rule deletes them.
+- The project name must have the form `contract.ComposeProjectName` produces
+  (`contract.IsComposeProjectName`, SPEC §4.2). Any other name is refused before a command runs
+  (SPEC §9.2).
+- Start timeout, with `wait`:
+  - If `up` fails once `timeout` has elapsed since it started, the cause is `ErrStartTimeout`,
+    which the EN reports as `IEO-START-TIMEOUT`. A failure before then is `IEO-COMPOSE-FAILED`.
+  - Compose's own `--wait-timeout` normally ends the command. If it still runs 30 s after
+    `timeout`, the EN stops it.
   - Without `wait`, `timeout` is ignored. `timeout` 0 means no deadline.
+- Stopping a command (timeout, or the EN cancelling): the EN sends an interrupt, so the `docker`
+  front end can pass it on to the Compose plugin it runs, and kills the process 5 s later. On
+  Windows, which has no interrupt for a process, it kills it at once.
 - Environment: the CLI gets only the variables below, compared without regard to case. Everything
   else is dropped, including every `en.*` setting, NATS credentials, the site token and proxy
   variables:
@@ -44,8 +52,11 @@ D3 (balaji-balu/ieo#58) builds it. The spec leaves these points open:
   only the variables above, plus what the EN writes to `compose.ieo.yaml`.
 - A host that reaches its registry or engine only through a proxy must configure the proxy in
   the engine (Docker daemon or Podman settings), not in the EN's environment.
-- Image pulls count against `timeout` when `wait` is true, because the deadline covers the whole
-  `up`.
+- Image pulls count against `timeout` when `wait` is true, because the timeout counts from the
+  start of `up`.
+- A hard kill stops only the front end. A Compose plugin it started may run on and bring
+  containers up after the EN has reported the component `failed`. The project is in `applied`
+  (SPEC §8.9 step 4.4), so a later Remove or retried Apply brings it down or up again.
 - Podman's `compose` delegates to an external provider. `--wait` works only with providers that
   support it; the laptop harness uses Docker.
 

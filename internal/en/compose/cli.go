@@ -7,11 +7,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/balaji-balu/ieo/internal/contract"
 )
 
 // CLIConfig selects the Compose command.
@@ -34,9 +35,6 @@ var _ Runner = (*CLI)(nil)
 // maxOutput is how much of a command's output an error carries (ADR 0017).
 const maxOutput = 64 << 10
 
-// projectName is the form of contract.ComposeProjectName (SPEC §4.2).
-var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
-
 // NewCLI returns a CLI for cfg after checking that `<runtime> compose version` runs, so a host
 // without the Compose CLI fails at EN startup (ADR 0003).
 func NewCLI(ctx context.Context, cfg CLIConfig) (*CLI, error) {
@@ -57,7 +55,7 @@ func NewCLI(ctx context.Context, cfg CLIConfig) (*CLI, error) {
 		path = p
 	}
 	c := &CLI{path: path}
-	if _, err := c.run(ctx, "", "compose", "version"); err != nil {
+	if err := c.run(ctx, "", nil, nil, "compose", "version"); err != nil {
 		return nil, fmt.Errorf("check the %s compose CLI: %w", rt, err)
 	}
 	return c, nil
@@ -69,12 +67,12 @@ func (c *CLI) Services(ctx context.Context, p Project) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := c.run(ctx, p.Dir, append(args, "config", "--services")...)
-	if err != nil {
+	var out bytes.Buffer
+	if err := c.run(ctx, p.Dir, nil, &out, append(args, "config", "--services")...); err != nil {
 		return nil, fmt.Errorf("list services of compose project %s: %w", p.Name, err)
 	}
 	var services []string
-	for line := range strings.Lines(string(out)) {
+	for line := range strings.Lines(out.String()) {
 		if s := strings.TrimSpace(line); s != "" {
 			services = append(services, s)
 		}
@@ -82,54 +80,71 @@ func (c *CLI) Services(ctx context.Context, p Project) ([]string, error) {
 	return services, nil
 }
 
-// Up runs `compose up -d`, with `--wait` when o.Wait is set (SPEC §8.9 step 4.5). With a timeout,
-// the whole command runs under that deadline, and a failure once it has passed is a start
-// timeout: Compose's exit status does not tell the two apart (ADR 0017).
+// Up runs `compose up -d`, with `--wait --wait-timeout` when o.Wait is set (SPEC §8.9 step 4.5).
+// A failure once o.Timeout has elapsed is a start timeout: Compose's exit status does not tell
+// the two apart. Compose's own --wait-timeout normally ends the command; killGrace later, Up stops
+// it (ADR 0017).
 func (c *CLI) Up(ctx context.Context, p Project, o UpOptions) error {
 	args, err := projectArgs(p)
 	if err != nil {
 		return err
 	}
 	args = append(args, "up", "-d")
+	timed := o.Wait && o.Timeout > 0
 	runCtx := ctx
 	if o.Wait {
 		args = append(args, "--wait")
-		if o.Timeout > 0 {
-			secs := int64((o.Timeout + time.Second - 1) / time.Second)
-			args = append(args, "--wait-timeout", strconv.FormatInt(secs, 10))
-			var cancel context.CancelFunc
-			runCtx, cancel = context.WithTimeout(ctx, o.Timeout)
-			defer cancel()
-		}
 	}
-	_, err = c.run(runCtx, p.Dir, args...)
+	if timed {
+		secs := int64((o.Timeout + time.Second - 1) / time.Second)
+		args = append(args, "--wait-timeout", strconv.FormatInt(secs, 10))
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, o.Timeout+killGrace)
+		defer cancel()
+	}
+	start := time.Now()
+	err = c.run(runCtx, p.Dir, nil, nil, args...)
 	switch {
 	case err == nil:
 		return nil
 	case ctx.Err() != nil: // the caller gave up; that is not the project's timeout
 		return fmt.Errorf("bring up compose project %s: %w", p.Name, err)
-	case o.Wait && o.Timeout > 0 && runCtx.Err() != nil:
+	case timed && time.Since(start) >= o.Timeout:
 		return fmt.Errorf("bring up compose project %s within %v: %w: %w", p.Name, o.Timeout, ErrStartTimeout, err)
 	default:
 		return fmt.Errorf("bring up compose project %s: %w", p.Name, err)
 	}
 }
 
+// emptyModel is the Compose file Down reads from stdin. Down finds a project's containers and
+// networks by its name; giving it an explicit file keeps Compose from loading a compose.yaml or
+// .env from the working directory or its parents (ADR 0017).
+const emptyModel = "services: {}\n"
+
 // Down runs `compose down --remove-orphans` on the named project. Volumes are kept (ADR 0017).
 func (c *CLI) Down(ctx context.Context, project string) error {
-	if !projectName.MatchString(project) {
-		return fmt.Errorf("compose project name %q is not of the form SPEC §4.2 derives", project)
+	if err := checkName(project); err != nil {
+		return err
 	}
-	if _, err := c.run(ctx, "", "compose", "-p", project, "down", "--remove-orphans"); err != nil {
+	err := c.run(ctx, "", strings.NewReader(emptyModel), nil, "compose", "-p", project, "-f", "-", "down", "--remove-orphans")
+	if err != nil {
 		return fmt.Errorf("bring down compose project %s: %w", project, err)
+	}
+	return nil
+}
+
+// checkName refuses a project name not derived as SPEC §4.2 says (SPEC §9.2).
+func checkName(project string) error {
+	if !contract.IsComposeProjectName(project) {
+		return fmt.Errorf("compose project name %q is not of the form SPEC §4.2 derives", project)
 	}
 	return nil
 }
 
 // projectArgs returns the arguments that select p's project and files (SPEC §5.4 step 2).
 func projectArgs(p Project) ([]string, error) {
-	if !projectName.MatchString(p.Name) {
-		return nil, fmt.Errorf("compose project name %q is not of the form SPEC §4.2 derives", p.Name)
+	if err := checkName(p.Name); err != nil {
+		return nil, err
 	}
 	if len(p.Files) == 0 || p.Dir == "" {
 		return nil, fmt.Errorf("compose project %s: no files or project directory", p.Name)
@@ -141,29 +156,49 @@ func projectArgs(p Project) ([]string, error) {
 	return append(args, "--project-directory", p.Dir), nil
 }
 
-// run runs the CLI with args in dir (the EN's working directory if empty) and the allowlisted
-// environment. It returns stdout; a failure's error carries the combined output, capped. A run
-// stopped by ctx wraps ctx's error.
-func (c *CLI) run(ctx context.Context, dir string, args ...string) ([]byte, error) {
+// killGrace is how long after a start timeout Up waits for Compose to end before stopping it.
+// A variable so tests can shorten it.
+var killGrace = 30 * time.Second
+
+// stopDelay is how long a stopped command has to exit after an interrupt before it is killed.
+const stopDelay = 5 * time.Second
+
+// run runs the CLI with args in dir (the EN's working directory if empty), the allowlisted
+// environment, and stdin if not nil; stdout, if not nil, receives the command's stdout. A
+// failure's error carries the combined output, capped.
+//
+// When ctx is done, the command is interrupted rather than killed, so the `docker` front end can
+// pass the signal on to the Compose plugin it runs, and only killed stopDelay later. A run stopped
+// by ctx wraps ctx's error.
+func (c *CLI) run(ctx context.Context, dir string, stdin io.Reader, stdout io.Writer, args ...string) error {
 	cmd := exec.CommandContext(ctx, c.path, args...)
 	cmd.Dir = dir
 	cmd.Env = cliEnv(os.Environ())
-	cmd.WaitDelay = 5 * time.Second // after a kill, don't wait on pipes a grandchild holds open
-	var stdout bytes.Buffer
+	cmd.Stdin = stdin
+	cmd.Cancel = func() error {
+		if err := cmd.Process.Signal(os.Interrupt); err != nil { // not supported on Windows
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = stopDelay
 	combined := &capped{max: maxOutput}
-	cmd.Stdout = io.MultiWriter(&stdout, combined)
+	cmd.Stdout = combined
+	if stdout != nil {
+		cmd.Stdout = io.MultiWriter(stdout, combined)
+	}
 	cmd.Stderr = combined
 	err := cmd.Run()
 	if err == nil {
-		return stdout.Bytes(), nil
+		return nil
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = fmt.Errorf("%w: %w", ctxErr, err)
 	}
 	if out := bytes.TrimSpace(combined.bytes()); len(out) > 0 {
-		return nil, fmt.Errorf("%w: %s", err, out)
+		return fmt.Errorf("%w: %s", err, out)
 	}
-	return nil, err
+	return err
 }
 
 // capped keeps the first max bytes written to it and drops the rest. Stdout and stderr are copied

@@ -33,9 +33,10 @@ type fakeStep struct {
 
 // fakeCall is one recorded run of the fake.
 type fakeCall struct {
-	Args []string `json:"args"`
-	Env  []string `json:"env"`
-	Dir  string   `json:"dir"`
+	Args  []string `json:"args"`
+	Stdin string   `json:"stdin"` // read only for `-f -`
+	Env   []string `json:"env"`
+	Dir   string   `json:"dir"`
 }
 
 var subcommands = []string{"version", "config", "up", "down"}
@@ -56,7 +57,11 @@ func runFake() int {
 	}
 	dir := filepath.Dir(exe)
 	wd, _ := os.Getwd() // recorded only; the tests check it when they care
-	call, _ := json.Marshal(fakeCall{Args: os.Args[1:], Env: os.Environ(), Dir: wd})
+	var stdin []byte
+	if slices.Contains(os.Args, "-") {
+		stdin, _ = io.ReadAll(os.Stdin) // recorded only; the tests check it
+	}
+	call, _ := json.Marshal(fakeCall{Args: os.Args[1:], Stdin: string(stdin), Env: os.Environ(), Dir: wd})
 	f, err := os.OpenFile(filepath.Join(dir, "calls.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fake:", err)
@@ -245,7 +250,7 @@ func TestCLIArguments(t *testing.T) {
 		{"up wait timeout rounds up", func() error { return c.Up(ctx, p, compose.UpOptions{Wait: true, Timeout: 1500 * time.Millisecond}) },
 			append(slices.Clone(base), "up", "-d", "--wait", "--wait-timeout", "2")},
 		{"up timeout without wait", func() error { return c.Up(ctx, p, compose.UpOptions{Timeout: time.Minute}) }, append(slices.Clone(base), "up", "-d")},
-		{"down", func() error { return c.Down(ctx, p.Name) }, []string{"compose", "-p", p.Name, "down", "--remove-orphans"}},
+		{"down", func() error { return c.Down(ctx, p.Name) }, []string{"compose", "-p", p.Name, "-f", "-", "down", "--remove-orphans"}},
 	}
 	for _, tc := range cases {
 		if err := tc.run(); err != nil {
@@ -257,8 +262,11 @@ func TestCLIArguments(t *testing.T) {
 		}
 	}
 	for _, call := range f.calls() {
-		if slices.Contains(call.Args, "-f") && !sameDir(call.Dir, p.Dir) {
+		if slices.Contains(call.Args, "--project-directory") && !sameDir(call.Dir, p.Dir) {
 			t.Errorf("%q ran in %s, want the project directory %s", call.Args, call.Dir, p.Dir)
+		}
+		if slices.Contains(call.Args, "down") && call.Stdin != "services: {}\n" {
+			t.Errorf("down read %q from stdin, want an empty model so no file from the working directory is loaded", call.Stdin)
 		}
 	}
 }
@@ -328,22 +336,39 @@ func TestCLIUpStartTimeout(t *testing.T) {
 	f := newFake(t, "docker", nil)
 	c := newCLI(t, f)
 	p := project(t)
+	timeout := 200 * time.Millisecond
 
-	f.script(map[string]fakeStep{"up": {Sleep: time.Minute}})
-	start := time.Now()
-	err := c.Up(context.Background(), p, compose.UpOptions{Wait: true, Timeout: 200 * time.Millisecond})
-	if !errors.Is(err, compose.ErrStartTimeout) {
-		t.Errorf("Up of a project still starting at the timeout = %v, want ErrStartTimeout", err)
-	}
-	if d := time.Since(start); d > 30*time.Second {
-		t.Errorf("Up returned after %v, want it stopped at the timeout", d)
-	}
-
-	// Compose's own --wait-timeout ends the command first, with an exit status.
+	// Compose's own --wait-timeout ends the command, with an exit status: Up does not stop it.
 	f.script(map[string]fakeStep{"up": {Sleep: 300 * time.Millisecond, Exit: 1, Stderr: "container app-1 is unhealthy"}})
-	err = c.Up(context.Background(), p, compose.UpOptions{Wait: true, Timeout: 200 * time.Millisecond})
+	start := time.Now()
+	err := c.Up(context.Background(), p, compose.UpOptions{Wait: true, Timeout: timeout})
 	if !errors.Is(err, compose.ErrStartTimeout) {
 		t.Errorf("Up failing after the timeout = %v, want ErrStartTimeout", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "is unhealthy") {
+		t.Errorf("Up = %v, want Compose's own failure in it: the command was stopped instead", err)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("Up returned after %v, want it to end with Compose", d)
+	}
+
+	// A Compose that hangs past the timeout is stopped killGrace later.
+	defer compose.SetKillGrace(100 * time.Millisecond)()
+	f.script(map[string]fakeStep{"up": {Sleep: time.Minute}})
+	start = time.Now()
+	err = c.Up(context.Background(), p, compose.UpOptions{Wait: true, Timeout: timeout})
+	if !errors.Is(err, compose.ErrStartTimeout) {
+		t.Errorf("Up of a project still starting after the timeout = %v, want ErrStartTimeout", err)
+	}
+	if d := time.Since(start); d > 30*time.Second {
+		t.Errorf("Up returned after %v, want it stopped after the grace period", d)
+	}
+
+	// A failure before the timeout is not a start timeout.
+	f.script(map[string]fakeStep{"up": {Exit: 1, Stderr: "invalid compose file"}})
+	err = c.Up(context.Background(), p, compose.UpOptions{Wait: true, Timeout: time.Minute})
+	if err == nil || errors.Is(err, compose.ErrStartTimeout) {
+		t.Errorf("Up failing at once = %v, want an error that is not ErrStartTimeout", err)
 	}
 
 	// Without wait there is no timeout.
