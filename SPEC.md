@@ -816,7 +816,7 @@ For one host that is `Online` (§7.3, including its interim rule):
 2. `have` = actual state for this host.
 3. For each deployment in `want` not in `have`, in `have` with a different digest, or in `have` at the
    same digest with any component `failed` → **Apply**.
-4. For each deployment in `have` not in `want` → **Remove**, carrying the digest in `have`.
+4. For each deployment in `have` not in `want` → **Remove**, carrying the digest in `have` `[IEO]`.
 5. Otherwise, nothing.
 6. Skip any `(host, deployment)` whose retry entry is not yet due.
 
@@ -909,8 +909,8 @@ On **Remove** (deployment ID, digest):
 2. Ack, publish `removing`, bring down all its Compose projects, delete its working directory,
    remove it from `applied`, publish `removed`.
 
-`[IEO]` The status events of a Remove carry the digest in `applied`, or the command's digest when
-the deployment is not in `applied`.
+`[IEO]` The status events of a Remove carry the digest in `applied` when the Remove runs (step 1),
+or the command's digest when the deployment is not in `applied` then.
 
 `[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
 command for a deployment with a command in flight waits for it (below), then checks `applied` as the
@@ -1512,6 +1512,16 @@ function on_command(cmd):
     ack(accepted=true)
     run_serialized(cmd.deploymentId, remove_deployment, cmd)
 
+function remove_deployment(cmd):
+  a = applied.get(cmd.deploymentId)          # read when the Remove runs (§8.9)
+  digest = a.digest if a else cmd.digest     # every status event of this Remove uses it
+  if a is null:
+    return publish_removal(cmd, digest, removed)   # status events as §8.9 Remove
+  publish_removal(cmd, digest, removing)
+  compose_down(a.compose_projects); delete_dir(deployment_dir(cmd.deploymentId))
+  store.delete_applied(cmd.deploymentId)
+  publish_removal(cmd, digest, removed)
+
 function apply_deployment(cmd):
   for c in cmd.deployment.spec.deploymentProfile.components:
     publish_status(cmd, c.name, installing)
@@ -1674,6 +1684,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - Apply of an already installed digest does nothing and acks `accepted: true`.
 - Remove of an unknown deployment acks `accepted: true` and reports `removed` with the command's
   digest.
+- Remove of a deployment applied at another digest than the command's reports `removing` and
+  `removed` with the applied digest.
 - Components are started in listed order; a failure stops later components.
 - `wait: true` waits for running containers; exceeding `timeout` fails with `IEO-START-TIMEOUT`.
 - Parameter values appear as environment variables only in the listed components.
