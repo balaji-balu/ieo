@@ -174,6 +174,9 @@ func newCLI(t *testing.T, f *fake) *compose.CLI {
 
 func project(t *testing.T) compose.Project {
 	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "app"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return compose.Project{
 		Name:  "0b4f5c1e-6a0e-4d7c-9a51-3f2f8c1d2e01-web",
 		Files: []string{filepath.Join(dir, "app", "compose.yaml"), filepath.Join(dir, "compose.ieo.yaml")},
