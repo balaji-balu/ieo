@@ -39,7 +39,7 @@ func remove(id uuid.UUID, digest contract.Digest) plan.Command {
 }
 
 // SPEC §17.4: "Desired but absent → Apply sent; present with other digest → Apply sent; present
-// but not desired → Remove sent; equal → nothing sent."
+// but not desired → Remove sent with the reported digest; equal → nothing sent."
 func TestSpec_17_4_DiffRules(t *testing.T) {
 	tests := []struct {
 		name string
@@ -133,7 +133,7 @@ func TestSpec_17_4_DiffRules(t *testing.T) {
 }
 
 // SPEC §17.4: "Desired but absent → Apply sent; present with other digest → Apply sent; present
-// but not desired → Remove sent; equal → nothing sent." The commands of a host with every case come
+// but not desired → Remove sent with the reported digest; equal → nothing sent." The commands of a host with every case come
 // in SPEC §8.5 step order (Applies, then Removes), each sorted by deployment ID, on every call.
 func TestSpec_17_4_DiffRulesOrder(t *testing.T) {
 	want := map[uuid.UUID]contract.Digest{
