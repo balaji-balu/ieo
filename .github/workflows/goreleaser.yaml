@@ -1,9 +1,10 @@
 name: Release (GoReleaser)
 
+# Manual only: started from the Actions tab or `gh workflow run`, on a tag ref.
+# An `on:` with nothing under it makes the file invalid, and GitHub then
+# reports a failed run on every push.
 on:
-  # push:
-  #   tags:
-  #     - 'v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: write
