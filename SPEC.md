@@ -190,6 +190,7 @@ Fields:
 - `site_id` (string)
   - REQUIRED. Also the LO's Margo device ID.
   - MUST use only RFC 3986 unreserved characters (`A–Z a–z 0–9 . _ ~ -`).
+  - `[IEO]` MUST NOT contain `.` (§4.2, message subjects).
   - The value `any` is reserved and MUST be rejected.
 - `state` (enum: `active`, `retired`)
 - `client_identity` (string) — the SPIFFE ID of the LO's certificate (§4.2).
@@ -202,8 +203,8 @@ A machine at a site that runs workloads. Runs exactly one EN.
 Fields:
 
 - `host_id` (string)
-  - REQUIRED. Unreserved characters only. Stable for the life of the host: the EN generates it on
-    first start (unless configured) and persists it.
+  - REQUIRED. Unreserved characters only, and `[IEO]` no `.` (§4.2, message subjects). Stable for
+    the life of the host: the EN generates it on first start (unless configured) and persists it.
 - `device_id` (string) — `<site_id>/<host_id>`. The Margo device ID of the host.
 - `capabilities` (DeviceCapabilities, §4.1.3)
 - `labels` (map string → string)
@@ -361,6 +362,10 @@ Single authoritative state owned by the LO. Durable fields MUST survive restart.
   - LO: `spiffe://<trust-domain>/margo/wfm/<wfm-id>/client/<site_id>`
 - `Message subjects` `[IEO]`
   - `site.<site_id>.host.<host_id>.<kind>` (§11.2).
+  - `.` separates the parts of a subject, so a site ID or host ID MUST NOT contain one: with one,
+    the subject has more parts, the LO's subscriptions do not match it, and the host ID cannot be
+    read back from it. Every tier rejects such an ID where it rejects any other invalid ID: the CO
+    when a site is added, the LO and the EN at startup as a configuration error (§6.1).
 
 ## 5. Application Package Contract
 
@@ -594,8 +599,13 @@ EN:
 - `en.otel.http_endpoint`: URL, REQUIRED: the value of `HTTP_OTEL_EXPORTER_OTLP_ENDPOINT` (§9.3), as
   seen from inside a container
 - `en.otel.grpc_endpoint`: URL, OPTIONAL: the value of `GRPC_OTEL_EXPORTER_OTLP_ENDPOINT` (§9.3)
-- `en.registry.auth_file`: path, OPTIONAL (credentials for pulling Compose archives)
-- `en.registry.insecure`: boolean, default `false`
+- `en.registry.auth_file`: path, OPTIONAL (credentials for pulling Compose archives). `[IEO]` A
+  file in the Docker `config.json` format, of which only the `auths` entries are read; the EN runs
+  no credential helper. A file that is set but cannot be read or decoded is a configuration error
+  (§6.1). Its contents follow §15.4 (ADR 0021)
+- `en.registry.insecure`: boolean, default `false`. `[IEO]` When true the EN reaches registries over
+  plain HTTP, and logs a warning at startup; otherwise it uses HTTPS and verifies the registry's
+  certificate against the system roots (ADR 0021)
 - `en.pull.max_bytes`: size in bytes, default `268435456` (256 MiB): the most the EN reads of any one
   registry response (manifest or layer) while pulling a Compose archive (§8.9)
 - `en.pull.timeout`: duration, default `5m`: the longest one component's pull may take (§8.9)
@@ -700,6 +710,18 @@ backoff and security handling differ.
 - `Reconcile Safety Timer Fired` → reconcile all hosts.
 - `Heartbeat Window Elapsed` → host `Offline`.
 - `CO Reachable Again` → flush outbox (§8.8).
+
+`[IEO, interim]` Until command retries are implemented (roadmap slice K), there are no retry
+entries (§8.5 step 6), so a `failed` component that reconciled its host would be applied again at
+once, and again each time it failed. Until then:
+
+- A `Component Status Event` updates actual state as above, but schedules no retry and does not
+  reconcile the host.
+- The host is reconciled on its next `Inventory`, on `Manifest Accepted` and on the safety timer.
+  A deployment with a `failed` component is therefore applied again within `en.inventory.interval`.
+- `Command Rejected or Ack Timeout` is logged; the next pass for the host sends the command again.
+
+Slice K replaces this rule.
 
 ### 7.6 Idempotency and Recovery Rules
 
@@ -846,6 +868,8 @@ it is not acknowledged within `lo.command.ack_timeout`, or when the host later r
 of it `failed`. Retries use exponential backoff from `lo.reconcile.retry_base` up to
 `lo.reconcile.retry_max`. A retry entry is cleared when the
 host reports the desired digest `installed` or the deployment is no longer wanted.
+`[IEO, interim]` Until roadmap slice K there are no retry entries, and step 6 skips nothing; §7.5
+says what triggers a pass until then.
 
 Operations are whole-deployment. Converging the components inside a deployment is the EN's job.
 
@@ -1177,6 +1201,17 @@ drops a message where they differ, and it changes no state. The LO keys host sta
 Receivers MUST ignore unknown fields. A message that fails schema validation MUST be logged and
 dropped; it MUST NOT change state.
 
+`[IEO]` Connection (ADR 0020):
+
+- A tier that cannot reach the site NATS server keeps trying, at startup and after a connection is
+  lost, and logs each failure. It does not exit: the LO goes on syncing with the CO, and the EN
+  keeps its workloads running.
+- A message a tier cannot send while it is disconnected is not kept for later. It is logged, and
+  state carries it (§7.6): the EN publishes its `Inventory` on every (re)connect, and the LO
+  publishes `site.<s>.inventory.request` on every (re)connect.
+- A command the server cannot deliver to any subscriber is handled like one that is not
+  acknowledged within `lo.command.ack_timeout` (§8.5).
+
 ### 11.3 edgectl ↔ CO: Operator API `[IEO]`
 
 JSON over HTTPS. Phase 1 authenticates with a static bearer token (`co.operator_token`).
@@ -1438,6 +1473,11 @@ function start_lo():
   event_loop(state)                          # single authority for state mutations
 ```
 
+`[IEO, interim]` Roadmap slice D implements the store, the NATS connection, the `inventory` and
+`status` subscriptions, the inventory request (also sent on every reconnect, §11.2), the sync tick
+and the reconcile safety timer. The `heartbeat` subscription and `check_liveness` arrive with slice
+I, and the `capabilities` subscription and `report_capabilities_with_retry` with slice H.
+
 ### 16.3 LO: Sync Tick
 
 ```text
@@ -1620,6 +1660,15 @@ function start_en():
   start_otel_collector()
 ```
 
+`[IEO]` Before it subscribes, the EN removes what an earlier run left unfinished: every file in
+`<en.data_dir>/pull/`, and every unfinished extraction under `<en.data_dir>/deployments/` (ADR 0018,
+ADR 0019). When it stops, it stops receiving commands first, and then waits for the commands in
+flight to end (§8.9).
+
+`[IEO, interim]` Roadmap slice D implements the steps above except these: `publish_capabilities`
+(slice H); `publish_heartbeat` (slice I); `refresh_component_states_from_runtime` and
+`start_container_event_watch` (slice L); `start_otel_collector` (slice M).
+
 ## 17. Test and Validation Matrix
 
 A conforming implementation SHOULD include tests that cover the behaviors in this specification.
@@ -1652,6 +1701,7 @@ endpoints (§11.3 holds IEO-specific operations).
   are dropped without state change.
 - Site IDs and host IDs with characters outside RFC 3986 unreserved are rejected; `any` is rejected
   as a site ID.
+- A site ID or host ID that contains `.` is rejected (§4.2).
 - Device ID parsing splits on the first `/` only.
 - Compose project names follow §4.2 for component names with mixed case and symbols.
 - Tag-to-SemVer conversion turns `_` into `+`; tag and revision compare as exact strings.
@@ -1836,7 +1886,7 @@ Gaps. Every §17.1–§17.7 bullet supports at least one row. A change that adds
 | 7. Status host → site → center with buffering | §7.2, §8.1.2, §8.7, §8.8, §10 | §17.2 status history, `removed`; §17.5 all bullets | §17.8 outbox |
 | 8. Recovery from durable state, no replay | §12, §14 | §17.3 version and ETag survive restart; §17.4 placement survives, inventory request after restart; §17.5 outbox survives; §17.6 inventory after restart and reconnect | §17.8 LO restart, site autonomy |
 | 9. Structured logs and metrics | §7.4, §13 | §17.7 JSON log lines, log fields, sync outcome log, security-level log, metrics, log sink failure | — |
-| Cross-cutting: security (§15) | §11.2, §15 | §17.1 site messages; §17.7 client certificate, NATS scoping, no secrets in logs, SPIFFE ID, interim token and NATS transport | — |
+| Cross-cutting: security (§15) | §11.2, §15 | §17.1 site messages, IDs without `.`; §17.7 client certificate, NATS scoping, no secrets in logs, SPIFFE ID, interim token and NATS transport | — |
 | Cross-cutting: operator interface | §11.3 | §17.7 `edgectl` errors | §17.8 golden path |
 
 Gaps: none.
