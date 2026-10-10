@@ -141,28 +141,9 @@ func decodeHosts(hosts, actual records) (map[contract.HostID]HostState, error) {
 		if err != nil {
 			return fmt.Errorf("hosts key %q: %w", k, err)
 		}
-		var keys map[string]json.RawMessage
-		if err := json.Unmarshal(v, &keys); err != nil {
+		h, err := decodeHost(v)
+		if err != nil {
 			return fmt.Errorf("host %s: %w", id, err)
-		}
-		for _, name := range []string{"capabilities", "labels", "lastHeartbeatAt"} {
-			if _, ok := keys[name]; !ok {
-				return fmt.Errorf("host %s: no %s", id, name)
-			}
-		}
-		var r hostRecord
-		if err := json.Unmarshal(v, &r); err != nil {
-			return fmt.Errorf("host %s: %w", id, err)
-		}
-		if r.Labels == nil {
-			return fmt.Errorf("host %s: no labels", id)
-		}
-		if r.Capabilities != nil && r.Capabilities.ID.Site == "" {
-			return fmt.Errorf("host %s: capabilities without a device ID", id)
-		}
-		h := Host{Capabilities: r.Capabilities, Labels: r.Labels}
-		if r.LastHeartbeatAt != nil {
-			h.LastHeartbeatAt = r.LastHeartbeatAt.UTC()
 		}
 		out[id] = HostState{Host: h}
 		return nil
@@ -176,19 +157,11 @@ func decodeHosts(hosts, actual records) (map[contract.HostID]HostState, error) {
 		if !ok { // ADR 0015: `actual` never holds a host that `hosts` does not
 			return fmt.Errorf("actual state for host %q, which is not in hosts", k)
 		}
-		var r actualRecord
-		if err := json.Unmarshal(v, &r); err != nil {
+		a, err := decodeActual(v)
+		if err != nil {
 			return fmt.Errorf("actual state of host %s: %w", id, err)
 		}
-		if err := checkActual(r); err != nil {
-			return fmt.Errorf("actual state of host %s: %w", id, err)
-		}
-		for _, d := range r.Deployments {
-			if d.Components == nil {
-				return fmt.Errorf("actual state of host %s: deployment %s: no list of components", id, d.DeploymentID)
-			}
-		}
-		state.Actual = &HostActual{ReportedAt: r.ReportedAt.UTC(), Deployments: r.Deployments}
+		state.Actual = &a
 		out[id] = state
 		return nil
 	})
@@ -196,4 +169,49 @@ func decodeHosts(hosts, actual records) (map[contract.HostID]HostState, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// decodeHost decodes one record of the hosts bucket.
+func decodeHost(v []byte) (Host, error) {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(v, &keys); err != nil {
+		return Host{}, err
+	}
+	for _, name := range []string{"capabilities", "labels", "lastHeartbeatAt"} {
+		if _, ok := keys[name]; !ok {
+			return Host{}, fmt.Errorf("no %s", name)
+		}
+	}
+	var r hostRecord
+	if err := json.Unmarshal(v, &r); err != nil {
+		return Host{}, err
+	}
+	if r.Labels == nil {
+		return Host{}, errors.New("no labels")
+	}
+	if r.Capabilities != nil && r.Capabilities.ID.Site == "" {
+		return Host{}, errors.New("capabilities without a device ID")
+	}
+	h := Host{Capabilities: r.Capabilities, Labels: r.Labels}
+	if r.LastHeartbeatAt != nil {
+		h.LastHeartbeatAt = r.LastHeartbeatAt.UTC()
+	}
+	return h, nil
+}
+
+// decodeActual decodes one record of the actual bucket.
+func decodeActual(v []byte) (HostActual, error) {
+	var r actualRecord
+	if err := json.Unmarshal(v, &r); err != nil {
+		return HostActual{}, err
+	}
+	if err := checkActual(r); err != nil {
+		return HostActual{}, err
+	}
+	for _, d := range r.Deployments {
+		if d.Components == nil {
+			return HostActual{}, fmt.Errorf("deployment %s: no list of components", d.DeploymentID)
+		}
+	}
+	return HostActual{ReportedAt: r.ReportedAt.UTC(), Deployments: r.Deployments}, nil
 }
