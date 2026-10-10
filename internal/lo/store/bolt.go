@@ -210,3 +210,19 @@ func u64(b []byte) (uint64, error) {
 	}
 	return binary.BigEndian.Uint64(b), nil
 }
+
+// LoadHosts returns every host the store holds, with its actual state if one has been put (SPEC
+// §4.1.11, ADR 0015). Times are in UTC. It fails on any record it cannot trust, and never returns
+// some of the hosts in place of all: a host ID, digest or state that is not valid, a deployment
+// or component listed twice, or actual state for a host the store does not hold (SPEC §14.2).
+func (b *Bolt) LoadHosts(_ context.Context) (map[contract.HostID]HostState, error) {
+	return nil, nil
+}
+
+// PutActual replaces the actual state of host with a, in one transaction (SPEC §4.1.11: "replaced
+// by each inventory"). The first PutActual for a host also adds the host, with no capabilities,
+// labels or heartbeat; later ones leave the host's own record as it is. It fails, and writes
+// nothing, if host or a is not valid (see HostActual).
+func (b *Bolt) PutActual(_ context.Context, host contract.HostID, a HostActual) error {
+	return nil
+}

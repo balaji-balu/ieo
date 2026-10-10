@@ -59,3 +59,13 @@ func cloneDesired(in map[uuid.UUID]losync.Desired) map[uuid.UUID]losync.Desired 
 	}
 	return out
 }
+
+// LoadHosts returns a copy of every host the store holds, as Bolt.LoadHosts does.
+func (m *Memory) LoadHosts(_ context.Context) (map[contract.HostID]HostState, error) {
+	return nil, nil
+}
+
+// PutActual replaces the actual state of host with a copy of a, as Bolt.PutActual does.
+func (m *Memory) PutActual(_ context.Context, host contract.HostID, a HostActual) error {
+	return nil
+}

@@ -129,7 +129,7 @@ func TestBoltRefusesUnknownLayout(t *testing.T) {
 	}{
 		{"newer schema", func(t *testing.T, path string) {
 			committedAt(t, path)
-			rawUpdate(t, path, func(tx *bolt.Tx) error { return tx.Bucket(bucketMeta).Put(keySchema, u64(2)) })
+			rawUpdate(t, path, func(tx *bolt.Tx) error { return tx.Bucket(bucketMeta).Put(keySchema, u64(3)) })
 		}},
 		{"schema not 8 bytes", func(t *testing.T, path string) {
 			committedAt(t, path)
