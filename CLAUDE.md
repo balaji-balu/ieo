@@ -77,7 +77,8 @@ go build $(scripts/go-packages.sh)
 go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
 # CO store tests also run against Postgres when this is set (CI sets it; see docs/contributing.md):
 #   IEO_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
-# gofmt, goimports, govet, … on changed lines only:
+# gofmt, goimports, govet, … on changed lines only. CI passes the same lines as a patch that
+# ignores CR at end of line, so a line-ending-only change is not "new" (.gitattributes keeps Go LF):
 golangci-lint run --new-from-merge-base=origin/main $(scripts/go-packages.sh test)
 golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-packages.sh no-test)
 # §17 bullets without a TestSpec_ test (report only; -strict fails on gaps, ADR 0011):

@@ -82,6 +82,7 @@ unspecified behavior still goes through stage 2 first.
 | `CLAUDE.md` | Agent rules, repo map, commands to run |
 | `docs/coding-guidelines.md` | Rules applied at Plan, Implement and Review |
 | `REVIEW.md` | Guides `/code-review`: what to check, severity, red flags |
+| `.gitattributes` | LF working copies on every platform, so local gofmt and lint results match CI (ADR 0009) |
 | `.github/workflows/ci.yaml` | PR gate: build, `go test -race`, golangci-lint (incl. vet, gofmt) on changed lines; skips broken packages listed in `scripts/go-packages.sh` |
 | `.claude/settings.json` SessionStart hook (`tools/sessionstart`) | Cloud sessions can run the same checks |
 | `.github/pull_request_template.md` | Definition of done as checkboxes |
