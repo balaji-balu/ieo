@@ -39,6 +39,10 @@ func TestSpec_17_1_SiteMessagesValidateAgainstSchemas(t *testing.T) {
 	status := `{"deploymentId":"` + testUUID2 + `","digest":"` + testDigest +
 		`","component":"web","state":"failed","error":{"code":"IEO-PULL-FAILED","source":"en","message":"m"},` +
 		`"at":"2026-10-01T12:00:00Z"}`
+	removal := func(state string) string {
+		return `{"deploymentId":"` + testUUID2 + `","digest":"` + testDigest + `","state":"` + state +
+			`","at":"2026-10-01T12:00:00Z"}`
+	}
 	inventory := `{"hostId":"host-03","at":"2026-10-01T12:00:00Z","deployments":[{"deploymentId":"` + testUUID2 +
 		`","digest":"` + testDigest + `","components":[{"name":"web","state":"installed"}]}]}`
 	heartbeat := `{"hostId":"host-03","at":"2026-10-01T12:00:00+02:00","uptimeSeconds":12345}`
@@ -77,6 +81,17 @@ func TestSpec_17_1_SiteMessagesValidateAgainstSchemas(t *testing.T) {
 		{"status bad state", decodeAs[contract.ComponentStatusEvent](), strings.Replace(status, `"failed"`, `"running"`, 1), false},
 		{"status bad time", decodeAs[contract.ComponentStatusEvent](), strings.Replace(status, "2026-10-01T12:00:00Z", "yesterday", 1), false},
 		{"status missing component", decodeAs[contract.ComponentStatusEvent](), strings.Replace(status, `"component"`, `"comp"`, 1), false},
+		// SPEC §11.2: a removal event holds for the whole deployment and names no component.
+		{"status removed without component", decodeAs[contract.ComponentStatusEvent](), removal("removed"), true},
+		{"status removing without component", decodeAs[contract.ComponentStatusEvent](), removal("removing"), true},
+		{"status removed with component", decodeAs[contract.ComponentStatusEvent](),
+			withField(removal("removed"), `"component":"web"`), false},
+		{"status removing with component", decodeAs[contract.ComponentStatusEvent](),
+			withField(removal("removing"), `"component":"web"`), false},
+		{"status installed without component", decodeAs[contract.ComponentStatusEvent](),
+			strings.Replace(removal("removed"), `"removed"`, `"installed"`, 1), false},
+		{"status empty component", decodeAs[contract.ComponentStatusEvent](),
+			strings.Replace(status, `"component":"web"`, `"component":""`, 1), false},
 
 		{"inventory", decodeAs[contract.Inventory](), inventory, true},
 		{"inventory empty", decodeAs[contract.Inventory](), `{"hostId":"host-03","at":"2026-10-01T12:00:00Z","deployments":[]}`, true},
@@ -142,6 +157,51 @@ func TestSpec_17_1_SiteMessagesValidateAgainstSchemas(t *testing.T) {
 
 // TestSiteMessageRoundTrip checks that EncodeSiteMessage produces what DecodeSiteMessage accepts,
 // and that it refuses to encode a message its schema rejects.
+// A sender can't publish a status event receivers would drop: a removal event with a component,
+// or any other without one (SPEC §11.2).
+func TestEncodeStatusEventComponentRule(t *testing.T) {
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	event := func(state contract.ComponentState, component string) contract.ComponentStatusEvent {
+		return contract.ComponentStatusEvent{
+			DeploymentID: uuid.MustParse(testUUID2), Digest: testDigest, Component: component, State: state, At: at,
+		}
+	}
+	cases := []struct {
+		name  string
+		event contract.ComponentStatusEvent
+		valid bool
+	}{
+		{"removed, whole deployment", event(contract.StateRemoved, ""), true},
+		{"removing, whole deployment", event(contract.StateRemoving, ""), true},
+		{"removed, one component", event(contract.StateRemoved, "web"), false},
+		{"removing, one component", event(contract.StateRemoving, "web"), false},
+		{"installed, one component", event(contract.StateInstalled, "web"), true},
+		{"installed, no component", event(contract.StateInstalled, ""), false},
+		{"installing, no component", event(contract.StateInstalling, ""), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b, err := contract.EncodeSiteMessage(c.event)
+			if c.valid != (err == nil) {
+				t.Fatalf("EncodeSiteMessage error = %v, want valid = %v", err, c.valid)
+			}
+			if !c.valid {
+				if !errors.Is(err, contract.ErrInvalidMessage) {
+					t.Errorf("error = %v, want one wrapping contract.ErrInvalidMessage", err)
+				}
+				return
+			}
+			got, err := contract.DecodeSiteMessage[contract.ComponentStatusEvent](b)
+			if err != nil {
+				t.Fatalf("decode what was encoded: %v", err)
+			}
+			if got.Component != c.event.Component || got.State != c.event.State {
+				t.Errorf("round trip gave %+v, want %+v", got, c.event)
+			}
+		})
+	}
+}
+
 func TestSiteMessageRoundTrip(t *testing.T) {
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	inv := contract.Inventory{HostID: mustHost(t, "host-03"), At: at}

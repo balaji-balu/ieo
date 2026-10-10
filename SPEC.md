@@ -690,7 +690,10 @@ backoff and security handling differ.
 - `Manifest Accepted` → reconcile all hosts.
 - `Heartbeat` → update liveness; if the host was not `Online`, reconcile it.
 - `Inventory` → replace the host's actual state; reconcile the host.
-- `Component Status Event` → update actual state; enqueue DeploymentStatus in the outbox; if a
+- `Component Status Event` → update actual state: the component it names; for `removing`, every
+  component the LO holds for that deployment on that host; for `removed`, the deployment leaves the
+  host's actual state and is reported with every component `removed`. Then enqueue
+  DeploymentStatus in the outbox; if a
   component became `failed`, schedule a retry for that `(host, deployment)`; reconcile the host.
 - `Command Rejected or Ack Timeout` → schedule per-deployment retry (§8.5).
 - `Retry Timer Fired` → reconcile that host.
@@ -932,7 +935,8 @@ On **Remove** (deployment ID, digest):
    remove it from `applied`, publish `removed`.
 
 `[IEO]` The status events of a Remove carry the digest in `applied` when the Remove runs (step 1),
-or the command's digest when the deployment is not in `applied` then.
+or the command's digest when the deployment is not in `applied` then. They name no component
+(§11.2): each is one event for the whole deployment.
 
 `[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
 command for a deployment with a command in flight waits for it (below), then checks `applied` as the
@@ -1116,7 +1120,8 @@ Messages:
   "error": { "code": "…", "message": "…" } }          // present only when accepted is false
 
 // ComponentStatusEvent (EN → LO)
-{ "deploymentId": "uuid", "digest": "sha256:…", "component": "name",
+{ "deploymentId": "uuid", "digest": "sha256:…",
+  "component": "name",                                 // absent for "removing" and "removed"
   "state": "pending|installing|installed|removing|removed|failed",
   "error": { "code": "…", "source": "…", "message": "…" },   // OPTIONAL
   "at": "RFC 3339" }
@@ -1142,6 +1147,9 @@ The normative schemas for these messages are the JSON Schemas (draft 2020-12) in
   `ComponentState` (§4.1.9).
 - `Command.deployment` is REQUIRED when `action` is `apply` and MUST be absent when it is `remove`.
 - `CommandAck.error` is REQUIRED when `accepted` is `false` and MUST be absent when it is `true`.
+- `ComponentStatusEvent.component` MUST be absent when `state` is `removing` or `removed`, and is
+  REQUIRED otherwise. An event without it holds for the whole deployment on that host: a Remove
+  carries no deployment, so the EN may not know the names of its components (§8.9).
 - `Inventory.deployments` and `Capabilities.labels` are present even when empty.
 
 `[IEO]` A `hostId` in a payload MUST equal the `<h>` of the subject it arrived on; the LO logs and

@@ -94,11 +94,13 @@ type AckError struct {
 	Message string `json:"message"`
 }
 
-// ComponentStatusEvent reports a state change of one component (EN → LO).
+// ComponentStatusEvent reports a state change of one component (EN → LO). Component is empty
+// exactly when State is StateRemoving or StateRemoved: the event then holds for the whole
+// deployment on the host (SPEC §11.2).
 type ComponentStatusEvent struct {
 	DeploymentID uuid.UUID      `json:"deploymentId"`
 	Digest       Digest         `json:"digest"`
-	Component    string         `json:"component"`
+	Component    string         `json:"component,omitempty"`
 	State        ComponentState `json:"state"`
 	Error        *StatusError   `json:"error,omitempty"`
 	At           time.Time      `json:"at"`
