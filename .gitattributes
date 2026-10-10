@@ -7,4 +7,6 @@
 # and docs); Go files are always stored and checked out with LF.
 * text=auto eol=lf
 *.go text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
 *.png binary
