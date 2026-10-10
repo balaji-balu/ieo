@@ -1259,7 +1259,7 @@ edgectl deployment status <id> [--watch]
 | Tier | Store | Contents | Durability rule |
 | --- | --- | --- | --- |
 | CO | Relational database | Apps and versions; sites; devices and latest capabilities; deployments (ID, current digest, target, parameters); immutable YAML by digest; per-site manifest and `manifestVersion`; status history | Deployment change + manifest version increment in one transaction |
-| LO | Embedded key-value store | `accepted_manifest_version`, `etag`, `desired`, `placements`, hosts, `outbox` | `desired` replaced atomically; version and ETag persisted after reconcile starts (§8.2) |
+| LO | Embedded key-value store | `accepted_manifest_version`, `etag`, `desired`, `placements`, `hosts`, `actual`, `outbox` | `desired` replaced atomically; version and ETag persisted after reconcile starts (§8.2) |
 | EN | Embedded key-value store | `host_id`, `applied`, `component_states` | `applied` updated after each Apply/Remove completes, and before each Compose project is brought up (§8.9) |
 
 Rules:

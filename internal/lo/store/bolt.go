@@ -17,18 +17,21 @@ import (
 
 var _ losync.Store = (*Bolt)(nil)
 
-// The layout of the store file (ADR 0014). Later slices add buckets beside these.
+// The layout of the store file (ADR 0014, ADR 0015). Later slices add buckets beside these.
 var (
 	bucketMeta    = []byte("meta")
 	bucketSync    = []byte("sync")
 	bucketDesired = []byte("desired")
+	bucketHosts   = []byte("hosts")   // since layout version 2: host ID → hostRecord
+	bucketActual  = []byte("actual")  // since layout version 2: host ID → actualRecord
 	keySchema     = []byte("schema")  // in meta: the layout version, 8 bytes big-endian
 	keyVersion    = []byte("version") // in sync: accepted_manifest_version, 8 bytes big-endian
 	keyETag       = []byte("etag")    // in sync: the accepted manifest's ETag
 )
 
-// schema is the layout version this code reads and writes.
-const schema = 1
+// schema is the layout version this code reads and writes. A file at version 1 is migrated when
+// it is opened (ADR 0015).
+const schema = 2
 
 // lockTimeout is how long OpenBolt waits for another process to release the file.
 const lockTimeout = time.Second
@@ -43,25 +46,44 @@ type record struct {
 // Bolt is the LO's durable store: an embedded bbolt file laid out as ADR 0014 says (SPEC §12).
 // It is safe for concurrent use. Every write is one transaction, synced to disk when it commits.
 type Bolt struct {
-	db *bolt.DB
+	db           *bolt.DB
+	migratedFrom uint64 // the layout version OpenBolt migrated the file from; 0 if it did not
 }
 
 // OpenBolt opens the store file at path, creating it if it does not exist, with mode 0600 (on
-// Windows the file's access comes from its directory instead). It fails if another process has the file open, or if the file is not an LO store of a
-// layout this code knows.
+// Windows the file's access comes from its directory instead). A file of layout version 1 is
+// migrated to this one, keeping what it holds. It fails if another process has the file open, or
+// if the file is not an LO store of a layout this code knows.
 func OpenBolt(path string) (*Bolt, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: lockTimeout})
 	if err != nil {
 		return nil, fmt.Errorf("open LO store %s: %w", path, err)
 	}
-	if err := db.Update(initLayout); err != nil {
+	var found uint64 // the file's layout version; 0 for a new file
+	err = db.Update(func(tx *bolt.Tx) error {
+		if meta := tx.Bucket(bucketMeta); meta != nil {
+			found, _ = u64(meta.Get(keySchema)) // initLayout reports a version it cannot read
+		}
+		return initLayout(tx)
+	})
+	if err != nil {
 		_ = db.Close() // the layout error is the one to report
 		return nil, fmt.Errorf("open LO store %s: %w", path, err)
 	}
-	return &Bolt{db: db}, nil
+	b := &Bolt{db: db}
+	if found != 0 && found != schema {
+		b.migratedFrom = found
+	}
+	return b, nil
 }
 
-// initLayout creates the layout in an empty file, and checks it in any other.
+// MigratedFrom returns the layout version the store file had when OpenBolt migrated it to the
+// one this code writes, or 0 if OpenBolt did not migrate it. A migration cannot be undone, and an
+// LO that knows only the earlier layout refuses the file (ADR 0015), so the caller logs it.
+func (b *Bolt) MigratedFrom() uint64 { return b.migratedFrom }
+
+// initLayout creates the layout in an empty file, migrates a file of layout version 1, and checks
+// the version of any other.
 func initLayout(tx *bolt.Tx) error {
 	meta := tx.Bucket(bucketMeta)
 	if meta == nil {
@@ -76,10 +98,25 @@ func initLayout(tx *bolt.Tx) error {
 	if err != nil {
 		return fmt.Errorf("layout version: %w", err)
 	}
-	if v != schema {
-		return fmt.Errorf("layout version %d, but this LO reads only version %d (ADR 0014)", v, schema)
+	switch v {
+	case schema:
+		return nil
+	case 1:
+		return migrate1(tx, meta)
+	default:
+		return fmt.Errorf("layout version %d, but this LO reads only versions 1 and %d (ADR 0014)", v, schema)
 	}
-	return nil
+}
+
+// migrate1 turns a file of layout version 1 into version 2 by adding its two buckets, empty (ADR
+// 0015). It runs in the transaction that opens the store, so the file is one version or the other.
+func migrate1(tx *bolt.Tx, meta *bolt.Bucket) error {
+	for _, name := range [][]byte{bucketHosts, bucketActual} {
+		if _, err := tx.CreateBucket(name); err != nil {
+			return fmt.Errorf("migrate layout version 1: bucket %s: %w", name, err)
+		}
+	}
+	return meta.Put(keySchema, binary.BigEndian.AppendUint64(nil, schema))
 }
 
 // create writes the layout of an empty store. The version and ETag are written too, so that a
@@ -93,8 +130,10 @@ func create(tx *bolt.Tx) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.CreateBucket(bucketDesired); err != nil {
-		return err
+	for _, name := range [][]byte{bucketDesired, bucketHosts, bucketActual} {
+		if _, err := tx.CreateBucket(name); err != nil {
+			return err
+		}
 	}
 	return errors.Join(
 		meta.Put(keySchema, binary.BigEndian.AppendUint64(nil, schema)),
@@ -209,4 +248,51 @@ func u64(b []byte) (uint64, error) {
 		return 0, fmt.Errorf("%d bytes, want 8", len(b))
 	}
 	return binary.BigEndian.Uint64(b), nil
+}
+
+// LoadHosts returns every host the store holds, with its actual state if one has been put (SPEC
+// §4.1.11, ADR 0015). Times are in UTC. It fails on any record it cannot trust, and never returns
+// some of the hosts in place of all: a host ID, digest or state that is not valid, a deployment
+// or component listed twice, or actual state for a host the store does not hold (SPEC §14.2).
+func (b *Bolt) LoadHosts(_ context.Context) (map[contract.HostID]HostState, error) {
+	var out map[contract.HostID]HostState
+	err := b.db.View(func(tx *bolt.Tx) error {
+		hosts, actual := tx.Bucket(bucketHosts), tx.Bucket(bucketActual)
+		if hosts == nil || actual == nil {
+			return errors.New("a bucket is missing")
+		}
+		var err error
+		out, err = decodeHosts(hosts.ForEach, actual.ForEach)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load hosts from the LO store: %w", err)
+	}
+	return out, nil
+}
+
+// PutActual replaces the actual state of host with a, in one transaction (SPEC §4.1.11: "replaced
+// by each inventory"). The first PutActual for a host also adds the host, with no capabilities,
+// labels or heartbeat; later ones leave the host's own record as it is. It fails, and writes
+// nothing, if host or a is not valid (see HostActual).
+func (b *Bolt) PutActual(_ context.Context, host contract.HostID, a HostActual) error {
+	key, value, err := encodeActual(host, a)
+	if err == nil {
+		err = b.db.Update(func(tx *bolt.Tx) error {
+			hosts, actual := tx.Bucket(bucketHosts), tx.Bucket(bucketActual)
+			if hosts == nil || actual == nil {
+				return errors.New("a bucket is missing")
+			}
+			if hosts.Get(key) == nil { // ADR 0015: a host enters `hosts` with its first inventory
+				if err := hosts.Put(key, newHostRecord()); err != nil {
+					return err
+				}
+			}
+			return actual.Put(key, value)
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("put actual state of host %q: %w", host, err)
+	}
+	return nil
 }
