@@ -27,7 +27,7 @@ jobs:
 
     strategy:
       matrix:
-        component: [co, lo, en]
+        component: [co, lo, en] # keep the same as in "publish"
 
     steps:
       - name: Checkout repository
@@ -44,14 +44,18 @@ jobs:
           push: false
 
   publish:
-    if: github.event_name != 'pull_request'
+    # Only the events named here publish; a trigger added later does not by default.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
       packages: write
 
+    # One image at a time, in matrix order, and a failure cancels the ones after it,
+    # as when this was one job: a broken CO build moves no :latest tag.
     strategy:
+      max-parallel: 1
       matrix:
         component: [co, lo, en]
 
