@@ -29,8 +29,10 @@ with the Git-based LO (ADR 0002).
   The ID types in `internal/contract` do not change: an ID with `.` still parses, and the CO, the
   stores and the Margo payloads are not affected.
 - **URL.** One server URL per tier (`lo.nats.url`, `en.nats_url`).
-  - The scheme must be `tls://`, unless the tier's `nats_insecure` is true (SPEC §15.6). With it, a
-    warning at startup names the URL.
+  - The scheme must be `tls://`, or `nats://` when the tier's `nats_insecure` is true (SPEC §15.6).
+    With `nats://`, a warning at startup names the URL. Every other scheme the client library
+    knows (`ws://`, `wss://`) is refused: none is needed, and each is another transport to secure.
+  - The URL holds a host and an optional port, and no path, query or fragment.
   - A URL with user information (`user:pass@host`) is a configuration error, with or without
     `nats_insecure`: the password comes only from the environment (SPEC §15.4), and a URL is
     logged.
