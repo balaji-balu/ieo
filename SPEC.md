@@ -598,6 +598,8 @@ EN:
 - `en.archive.max_extracted_bytes`: size in bytes, default `1073741824` (1 GiB): the most one archive
   may write when extracted, summed over its regular files (§5.2)
 - `en.archive.max_entries`: integer, default `10000`: the most entries one archive may hold (§5.2)
+- `en.start_timeout`: duration, default `5m`, MUST be greater than zero: how long the EN waits for
+  a component that has `wait` true and no `timeout` of its own (§8.9)
 - `en.metrics_listen_addr`: string, default `:9092`
 
 edgectl:
@@ -910,7 +912,9 @@ On **Apply** (deployment ID, digest, deployment YAML):
       the projects already recorded and setting its digest to this command's, before bringing it
       up, so a project is never up without a record.
    5. Bring up the Compose project `<deployment_id>-<component>` with both Compose files (§5.4). If
-      `wait` is true, wait until all containers are running or `timeout` elapses.
+      `wait` is true, wait until all containers are running or `timeout` elapses. `[IEO]` A
+      component with `wait` true and no `timeout` is given `en.start_timeout`, so no wait is
+      without end. Without `wait`, `timeout` and `en.start_timeout` are not used.
    6. Publish `installed`, or `failed` with an error and stop processing later components.
 5. If the deployment previously ran at a different digest, bring down Compose projects of
    components that no longer exist.
@@ -1009,7 +1013,8 @@ This section collects the reporting rules in one place.
     or a pull limit exceeded (§8.9) `[IEO]`
   - `IEO-INVALID-COMMAND` an Apply whose `deployment` failed validation (§8.9 step 2); a
     `CommandAck` error code, never a component status `[IEO]`
-  - `IEO-START-TIMEOUT` containers not running within `timeout` `[IEO]`
+  - `IEO-START-TIMEOUT` containers not running within `timeout`, or within `en.start_timeout` for a
+    component without one (§8.9) `[IEO]`
   - `IEO-COMPOSE-FAILED` the Compose command failed for another reason `[IEO]`
   - `IEO-CONTAINER-EXITED` container exited and did not recover `[IEO]`
 
@@ -1549,7 +1554,8 @@ function apply_deployment(cmd):
     if dir failed:                            return fail(cmd, c, "IEO-ARCHIVE-INVALID")
     write_override(dir, parameters_for(cmd, c) + otel_env())   # compose.ieo.yaml (§5.4)
     store.put_applied(cmd.deploymentId, cmd.digest, project_names + [this project])
-    r = compose_up(project_name(cmd.deploymentId, c.name), dir, wait=c.wait, timeout=c.timeout)
+    r = compose_up(project_name(cmd.deploymentId, c.name), dir, wait=c.wait,
+                   timeout=c.timeout or cfg.start_timeout)
     if r timed out:                           return fail(cmd, c, "IEO-START-TIMEOUT")
     if r failed:                              return fail(cmd, c, "IEO-COMPOSE-FAILED")
     publish_status(cmd, c.name, installed)
@@ -1704,6 +1710,7 @@ endpoints (§11.3 holds IEO-specific operations).
   `removed` with the applied digest.
 - Components are started in listed order; a failure stops later components.
 - `wait: true` waits for running containers; exceeding `timeout` fails with `IEO-START-TIMEOUT`.
+- `wait: true` with no `timeout` fails with `IEO-START-TIMEOUT` once `en.start_timeout` elapses.
 - Parameter values appear as environment variables only in the listed components.
 - Margo OpenTelemetry variables are present in every container.
 - Archives are rejected for: two top-level directories; missing `compose.yaml`; `docker-compose.yml`
