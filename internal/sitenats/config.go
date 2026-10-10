@@ -1,8 +1,13 @@
 package sitenats
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
 )
 
 // Config is how a tier reaches the site NATS server until Appendix B step 4 (SPEC §15.6): an
@@ -51,6 +56,12 @@ func (e *ConfigError) Error() string { return fmt.Sprintf("site NATS %s: %s", e.
 // Unwrap returns ErrConfig.
 func (e *ConfigError) Unwrap() error { return ErrConfig }
 
+// The URL schemes a tier accepts (SPEC §15.6).
+const (
+	schemeTLS   = "tls"  // requires TLS
+	schemePlain = "nats" // does not; only with Insecure
+)
+
 // Check reports whether a tier may connect with c (SPEC §15.6, ADR 0020). It tries no
 // connection; it reads CAFile if one is set. The error is a *ConfigError for the first setting
 // that is missing or not valid:
@@ -60,5 +71,69 @@ func (e *ConfigError) Unwrap() error { return ErrConfig }
 //   - no username or no password;
 //   - a CAFile that cannot be read or holds no certificate.
 func (c Config) Check() error {
+	if reason := checkURL(c.URL, c.Insecure); reason != "" {
+		return &ConfigError{Field: FieldURL, Reason: reason}
+	}
+	if c.Username == "" {
+		return &ConfigError{Field: FieldUsername, Reason: "not set"}
+	}
+	if c.Password == "" {
+		return &ConfigError{Field: FieldPassword, Reason: "not set"}
+	}
+	if _, err := c.rootCAs(); err != nil {
+		return &ConfigError{Field: FieldCAFile, Reason: err.Error()}
+	}
 	return nil
+}
+
+// checkURL returns why u is not a server URL a tier may use, or "" if it is one. The reason
+// never repeats u: a URL is where a password ends up when someone puts one there (SPEC §15.4).
+func checkURL(u string, insecure bool) string {
+	if u == "" {
+		return "not set"
+	}
+	p, err := url.Parse(u)
+	if err != nil {
+		return "not a URL" // the parse error repeats u
+	}
+	switch strings.ToLower(p.Scheme) {
+	case schemeTLS:
+	case schemePlain:
+		if !insecure {
+			return "a nats:// URL does not require TLS: use tls://, or allow it with the tier's nats_insecure setting"
+		}
+	default:
+		return "the URL must start with tls:// (or nats://, with the tier's nats_insecure setting)"
+	}
+	switch {
+	case p.User != nil:
+		return "the URL must not hold a user name or password"
+	case p.Hostname() == "":
+		return "the URL has no host"
+	case p.Path != "" || p.RawQuery != "" || p.ForceQuery || p.Fragment != "" || strings.Contains(u, "#"):
+		return "the URL must hold only a scheme, a host and a port"
+	}
+	if port := p.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return "the URL's port is not between 1 and 65535"
+		}
+	}
+	return ""
+}
+
+// rootCAs returns the certificates of CAFile, or nil, which means the system roots, if none is
+// set.
+func (c Config) rootCAs() (*x509.CertPool, error) {
+	if c.CAFile == "" {
+		return nil, nil
+	}
+	pem, err := os.ReadFile(c.CAFile)
+	if err != nil {
+		return nil, err // names the file
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s holds no certificate", c.CAFile)
+	}
+	return pool, nil
 }

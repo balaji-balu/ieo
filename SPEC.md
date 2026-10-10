@@ -569,7 +569,7 @@ LO:
 - `lo.nats.ca_file`: path, OPTIONAL until Appendix B step 4 `[IEO, interim]`: verifies the NATS
   server's certificate for a `tls://` `lo.nats.url`; the system roots otherwise
 - `lo.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows an `lo.nats.url` that does
-  not require TLS (any scheme but `tls://`) (§15.6)
+  not require TLS (a `nats://` URL) (§15.6)
 - `lo.nats.operator_key_file`: path, REQUIRED from Appendix B step 4 (scoped NATS credentials); not
   read before it. It signs per-host and, with the data-plane proposal
   `docs/proposals/data-plane.md`, per-workload credentials
@@ -595,7 +595,7 @@ EN:
   `[IEO, interim]`: the site's NATS credentials (§15.6). The password is read only from the
   environment, never from a flag
 - `en.nats_insecure`: boolean, default `false` `[IEO, interim]`: allows an `en.nats_url` that does
-  not require TLS (any scheme but `tls://`) (§15.6)
+  not require TLS (a `nats://` URL) (§15.6)
 - `en.data_dir`: path, REQUIRED
 - `en.runtime`: `docker` or `podman`, default implementation-defined
 - `en.labels`: map string → string, default `{}`
@@ -1427,11 +1427,16 @@ and scoped NATS credentials) replaces them (ADR 0005):
     and password (`lo.nats.username`/`password`, `en.nats.username`/`password`).
   - The passwords are read only from the environment, never from a flag, and never logged.
   - The LO and the EN require TLS: they use a `tls://` NATS URL and verify the server's certificate
-    against `lo.nats.ca_file`/`en.nats.ca_file` when set, or the system roots otherwise. A URL with
-    any other scheme (such as `nats://`) does not require TLS, so they accept one only when
+    against `lo.nats.ca_file`/`en.nats.ca_file` when set, or the system roots otherwise. A
+    `nats://` URL does not require TLS, so they accept one only when
     `lo.nats_insecure`/`en.nats_insecure` is true, and then log a warning at startup that names the
     URL, never the password. Such a URL without it is a configuration error: the tier exits at
     startup (§6.1).
+  - No other scheme is accepted, with or without the insecure setting. The URL names one server
+    and holds only a scheme, a host and an optional port: a user name or password, a path, a query
+    or a fragment in it is a configuration error (§15.4).
+  - The username and password are REQUIRED (§6.3): a tier without one exits at startup. So does
+    one whose CA file is set but cannot be read or holds no certificate.
   - Every EN of a site can therefore publish and subscribe on every host's subjects. The §11.2
     permissions hold only from Appendix B step 4 (roadmap slice O).
   - The EN never passes these credentials into a workload (§9.2). Compose fills in `${…}` in
