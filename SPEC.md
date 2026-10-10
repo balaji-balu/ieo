@@ -900,6 +900,8 @@ On **Apply** (deployment ID, digest, deployment YAML):
       digest against the OCI manifest before extracting. `[IEO]` The EN reads at most
       `en.pull.max_bytes` of any one registry response and stops reading there; the whole pull
       takes at most `en.pull.timeout`. Either limit exceeded → `failed` with `IEO-PULL-FAILED`.
+      `[IEO]` So does a tag that holds anything but a Margo Compose Archive (§5.1). The EN keeps
+      the layer in `<en.data_dir>/pull/` while it verifies and extracts it, and deletes it after.
    3. Validate and extract the archive (§5.2) into
       `<en.data_dir>/deployments/<deployment_id>/<digest>/<component>/`. Invalid, or over a §5.2
       limit → `failed` with `IEO-ARCHIVE-INVALID`.
@@ -954,6 +956,7 @@ step 2); its steps 1 run later, as above. If several arrive, only the latest run
 <en.data_dir>/
   host.id                              persisted host ID
   state.db                             embedded store (applied, component_states)
+  pull/                                layers being pulled; each is deleted once extracted (§8.9)
   deployments/<deployment_id>/<digest>/<component>/
       <top-level-dir>/compose.yaml     extracted archive
       compose.ieo.yaml                 override: parameters + injected variables (§5.4)
@@ -1002,7 +1005,8 @@ This section collects the reporting rules in one place.
   - `IEO-NO-ELIGIBLE-HOST` no host satisfies constraints `[IEO]`
   - `IEO-ARCHIVE-INVALID` archive failed §5.2, its limits included `[IEO]`
   - `IEO-DIGEST-MISMATCH` pulled layer digest did not match `[IEO]`
-  - `IEO-PULL-FAILED` registry unreachable, artifact missing, or a pull limit exceeded (§8.9) `[IEO]`
+  - `IEO-PULL-FAILED` registry unreachable, artifact missing or not a Margo Compose Archive (§5.1),
+    or a pull limit exceeded (§8.9) `[IEO]`
   - `IEO-INVALID-COMMAND` an Apply whose `deployment` failed validation (§8.9 step 2); a
     `CommandAck` error code, never a component status `[IEO]`
   - `IEO-START-TIMEOUT` containers not running within `timeout` `[IEO]`
@@ -1710,6 +1714,8 @@ endpoints (§11.3 holds IEO-specific operations).
   that leaves the directory only through another link; a hard link to a path no earlier entry holds.
 - setuid, setgid and sticky bits are cleared after extraction.
 - A layer whose bytes do not match its digest is not extracted.
+- A tag that holds anything but a Margo Compose Archive (§5.1) fails the component with
+  `IEO-PULL-FAILED`.
 - Updating to a new digest removes Compose projects of components that no longer exist.
 - A container that exits and does not recover moves its component to `failed`; recovery moves it
   back to `installed`.

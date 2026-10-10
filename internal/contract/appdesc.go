@@ -20,6 +20,10 @@ const (
 	AppPackageArtifactType = "application/vnd.margo.app.v1+json"
 	// AppDescriptionMediaType is the media type of the layer holding the Application Description.
 	AppDescriptionMediaType = "application/vnd.margo.app.description.v1+yaml"
+	// ComposeArchiveArtifactType is the artifactType of a Margo Compose Archive's image manifest.
+	ComposeArchiveArtifactType = "application/vnd.org.margo.component.compose+json"
+	// ComposeArchiveMediaType is the media type of the layer holding the Compose archive.
+	ComposeArchiveMediaType = "application/vnd.org.margo.component.compose.tar+gzip"
 )
 
 // ProfileTypeCompose is the deployment profile type IEO runs in phase 1 (SPEC §4.1.4).

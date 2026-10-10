@@ -24,6 +24,7 @@ one, write a new ADR that supersedes it.
 | [0016](0016-en-store-layout.md) | EN store: host ID file and a bbolt store for applied deployments | Proposed |
 | [0017](0017-en-compose-cli.md) | EN Compose CLI: commands, start timeout and environment (refines 0003) | Proposed |
 | [0018](0018-en-archive-extraction.md) | EN archive extraction: staging, containment and links (refines 0009) | Proposed |
+| [0019](0019-en-pull.md) | EN pull: spool file, what is read and what counts as a mismatch | Proposed |
 
 Older design notes in `docs/adr/era/` are superseded by 0002 and 0003 and kept for history.
 
