@@ -94,13 +94,13 @@ func (s Site) hostSubject(host, kind string) string {
 }
 
 // HostOf returns the host a message belongs to, from the subject it arrived on. ok is false if
-// subject is not `site.<s>.host.<h>.<kind>` for this site and a valid host ID; the message is
-// then not one of this site's host messages. The LO keys host state by this ID, never by an ID in
+// subject is not `site.<s>.host.<h>.<kind>` for this site, a valid host ID and a kind that is
+// not a wildcard; the message is then not one of this site's host messages. The LO keys host state by this ID, never by an ID in
 // the payload (SPEC §11.2).
 func (s Site) HostOf(subject string) (h contract.HostID, ok bool) {
 	parts := strings.Split(subject, separator)
 	if s.id == "" || len(parts) != hostParts ||
-		parts[0] != partSite || parts[1] != s.id.String() || parts[2] != partHost || parts[4] == "" {
+		parts[0] != partSite || parts[1] != s.id.String() || parts[2] != partHost || parts[4] == "" || strings.ContainsAny(parts[4], "*>") {
 		return "", false
 	}
 	h, err := contract.ParseHostID(parts[3]) // refuses `*` and the empty part

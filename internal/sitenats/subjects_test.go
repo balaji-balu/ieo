@@ -26,10 +26,11 @@ func host(t *testing.T, s sitenats.Site, id contract.HostID) sitenats.Host {
 	return h
 }
 
-// SPEC §17.1: "A site ID or host ID that contains `.` is refused at startup by the LO and the EN,
-// and is still accepted wherever it is not used in a message subject (§4.2)." This is the subject
-// half: no subject can be built from such an ID. The startup half is in cmd/lo and cmd/en.
-func TestSpec_17_1_IDWithDotIsRefusedInSubjects(t *testing.T) {
+// SPEC §4.2: an ID used in a subject must not contain `.`, and such an ID stays valid everywhere
+// else. No subject can be built from one. This is the rule under the §17.1 bullet on IDs with `.`;
+// the bullet's own TestSpec_ tests are in cmd/lo and cmd/en, where a tier refuses to start
+// (roadmap D5.4, D5.6).
+func TestIDWithDotIsRefusedInSubjects(t *testing.T) {
 	for _, id := range []string{"plant.north", ".site", "site.", "a..b"} {
 		if _, err := contract.ParseSiteID(id); err != nil {
 			t.Errorf("contract.ParseSiteID(%q): %v; want it accepted outside subjects", id, err)
@@ -106,6 +107,8 @@ func TestHostOf(t *testing.T) {
 		"site.site-1.host.host-03.status.extra",  // too many parts
 		"site.site-1.host.press.03.status",       // a host ID with a dot has too many parts
 		"site.site-1.host.*.status",              // a wildcard is not a host
+		"site.site-1.host.host-03.*",             // nor a kind: this is a subscription, not a message
+		"site.site-1.host.host-03.>",             // likewise
 		"site.site-1.host.a b.status",            // not a host ID
 		"SITE.site-1.host.host-03.status",        // subjects are case-sensitive
 		"site.site-1.hosts.host-03.status",       // not `host`

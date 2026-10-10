@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strconv"
@@ -19,7 +20,7 @@ type Config struct {
 	// It holds no user name or password, and no path, query or fragment.
 	URL string
 	// Username and Password are the site's credentials. Both are required. The password is never
-	// logged or put in an error (SPEC §15.4).
+	// logged or put in an error (SPEC §15.4): printing or logging a Config leaves it out.
 	Username, Password string
 	// CAFile is a PEM file of the certificates that may sign the server's certificate. Empty means
 	// the system roots.
@@ -27,6 +28,39 @@ type Config struct {
 	// Insecure allows a `nats://` URL, which does not require TLS. It never turns verification
 	// of a certificate off.
 	Insecure bool
+}
+
+// String returns c without its password, so that a Config can be printed (SPEC §15.4). A URL
+// that holds a user name or password, which Check refuses, is not shown either.
+func (c Config) String() string {
+	password := "not set"
+	if c.Password != "" {
+		password = "set, not shown"
+	}
+	return fmt.Sprintf("{URL: %s, Username: %q, Password: (%s), CAFile: %q, Insecure: %t}",
+		c.printableURL(), c.Username, password, c.CAFile, c.Insecure)
+}
+
+// GoString returns what String does: `%#v` shows no password either.
+func (c Config) GoString() string { return c.String() }
+
+// LogValue returns c without its password, so that a Config can be logged (SPEC §15.4).
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("url", c.printableURL()),
+		slog.String("username", c.Username),
+		slog.String("ca_file", c.CAFile),
+		slog.Bool("insecure", c.Insecure),
+	)
+}
+
+// printableURL returns the URL if it can hold no credential, and a note in its place otherwise.
+func (c Config) printableURL() string {
+	p, err := url.Parse(c.URL)
+	if err != nil || p.User != nil || p.Path != "" || p.RawQuery != "" || p.Fragment != "" || p.Opaque != "" {
+		return "(not shown: not a plain scheme://host:port)"
+	}
+	return c.URL
 }
 
 // ErrConfig is what every error of Config.Check wraps: the tier cannot run with this
@@ -110,6 +144,8 @@ func checkURL(u string, insecure bool) string {
 		return "the URL must not hold a user name or password"
 	case p.Hostname() == "":
 		return "the URL has no host"
+	case strings.HasSuffix(p.Host, ":"):
+		return "the URL has a `:` after the host but no port"
 	case p.Path != "" || p.RawQuery != "" || p.ForceQuery || p.Fragment != "" || strings.Contains(u, "#"):
 		return "the URL must hold only a scheme, a host and a port"
 	}

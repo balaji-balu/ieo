@@ -1849,8 +1849,8 @@ endpoints (§11.3 holds IEO-specific operations).
   `lo.co_insecure` is set, exits at startup on an `http://` URL without it, and follows no
   redirects (§15.6).
 - Until scoped NATS credentials, the LO and the EN accept a NATS URL other than `tls://` only when
-  `lo.nats_insecure`/`en.nats_insecure` is set and exit at startup on one without it; the NATS
-  password reaches neither a workload nor the Compose CLI's environment (§15.6).
+  it is a `nats://` URL and `lo.nats_insecure`/`en.nats_insecure` is set, and exit at startup on
+  any other; the NATS password reaches neither a workload nor the Compose CLI's environment (§15.6).
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
 - `edgectl site add` produces a certificate whose SPIFFE ID matches §4.2.
 - Every tier writes each log line as one JSON object.

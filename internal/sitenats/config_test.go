@@ -8,6 +8,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -35,10 +37,10 @@ func field(err error) sitenats.Field {
 	return ce.Field
 }
 
-// SPEC §17.7: "Until scoped NATS credentials, the LO and the EN accept a NATS URL other than
-// `tls://` only when `lo.nats_insecure`/`en.nats_insecure` is set and exit at startup on one
-// without it" (§15.6). This is the rule itself; the exit is in cmd/lo and cmd/en.
-func TestSpec_17_7_NATSURLWithoutTLSNeedsInsecure(t *testing.T) {
+// SPEC §15.6: a `tls://` URL, or a `nats://` URL only with the insecure setting, and no other
+// scheme. This is the rule under the §17.7 bullet on NATS URLs; the bullet's own TestSpec_ tests
+// are in cmd/lo and cmd/en, where a tier exits at startup (roadmap D5.4, D5.6).
+func TestNATSURLWithoutTLSNeedsInsecure(t *testing.T) {
 	tests := []struct {
 		url      string
 		insecure bool
@@ -48,6 +50,8 @@ func TestSpec_17_7_NATSURLWithoutTLSNeedsInsecure(t *testing.T) {
 		{"tls://nats.site.example", false, true},
 		{"TLS://nats.site.example:4222", false, true}, // a scheme is case-insensitive
 		{"tls://[::1]:4222", false, true},
+		{"tls://nats:1", false, true},
+		{"tls://nats:65535", false, true},
 		{"tls://nats.site.example:4222", true, true}, // insecure allows, it does not require
 		{"nats://nats:4222", true, true},
 		{"NATS://nats:4222", true, true},
@@ -82,6 +86,10 @@ func TestCheckRefusesURL(t *testing.T) {
 		"tls://",
 		"tls://:4222",
 		"tls://nats:port",
+		"tls://nats:", // a colon and no port, as when a variable expands to nothing
+		"tls://nats:0",
+		"tls://nats:65536",
+		"tls://nats:99999",
 		"tls://nats:4222/",
 		"tls://nats:4222/path",
 		"tls://nats:4222?tls=false",
@@ -170,6 +178,32 @@ func TestCheckCAFile(t *testing.T) {
 		if err := cfg.Check(); field(err) != sitenats.FieldCAFile {
 			t.Errorf("%s: Check error = %v; want a ConfigError about the CA file", name, err)
 		}
+	}
+}
+
+// SPEC §15.4: a Config can be printed and logged, and its password never is, not even one that
+// was put in the URL.
+func TestConfigPrintsNoPassword(t *testing.T) {
+	configs := []sitenats.Config{
+		config("tls://nats:4222"),
+		config("tls://site-1:" + testPassword + "@nats:4222"),
+		config("://" + testPassword),
+	}
+	for _, cfg := range configs {
+		var logged strings.Builder
+		slog.New(slog.NewJSONHandler(&logged, nil)).Info("connecting", "nats", cfg, "again", &cfg)
+		slog.New(slog.NewTextHandler(&logged, nil)).Info("connecting", "nats", cfg)
+		printed := fmt.Sprintf("%v %+v %#v %s %q %v %+v", cfg, cfg, cfg, cfg, cfg, &cfg, []sitenats.Config{cfg})
+		for where, text := range map[string]string{"log": logged.String(), "fmt": printed} {
+			if strings.Contains(text, testPassword) {
+				t.Errorf("%s output holds the password: %s", where, text)
+			}
+		}
+	}
+	// What is not secret is still there to read.
+	cfg := config("tls://nats:4222")
+	if got := cfg.String(); !strings.Contains(got, "tls://nats:4222") || !strings.Contains(got, "site-1") {
+		t.Errorf("String = %q, want the URL and the username in it", got)
 	}
 }
 
