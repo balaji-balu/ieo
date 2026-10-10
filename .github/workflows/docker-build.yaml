@@ -1,3 +1,7 @@
+# Builds the CO, LO and EN images from dockerfile.co, dockerfile.lo and dockerfile.en.
+#  - Pull requests only build them (job "build"): no registry login, no push and no
+#    packages permission, so unmerged code never reaches GHCR.
+#  - Pushes to main and v* tags publish them (job "publish") as :latest and :<sha>.
 name: Build & Push EdgeOrch Images
 
 # on:
@@ -9,17 +13,51 @@ on:
       - "v*"
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}
 
 jobs:
   build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        component: [co, lo, en] # keep the same as in "publish"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.component }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfile.${{ matrix.component }}
+          push: false
+
+  publish:
+    # Only the events named here publish; a trigger added later does not by default.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
       packages: write
+
+    # One image at a time, in matrix order, and a failure cancels the ones after it,
+    # as when this was one job: a broken CO build moves no :latest tag.
+    strategy:
+      max-parallel: 1
+      matrix:
+        component: [co, lo, en]
 
     steps:
       - name: Checkout repository
@@ -35,35 +73,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---------- CO ----------
-      - name: Build & push CO
+      - name: Build & push ${{ matrix.component }}
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: dockerfile.co
+          file: dockerfile.${{ matrix.component }}
           push: true
           tags: |
-            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-co:latest
-            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-co:${{ github.sha }}
-
-      # ---------- LO ----------
-      - name: Build & push LO
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: dockerfile.lo
-          push: true
-          tags: |
-            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-lo:latest
-            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-lo:${{ github.sha }}
-
-      # ---------- EN ----------
-      - name: Build & push EN
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: dockerfile.en
-          push: true
-          tags: |
-            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-en:latest
-            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-en:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-${{ matrix.component }}:latest
+            ghcr.io/${{ env.IMAGE_PREFIX }}/ieo-${{ matrix.component }}:${{ github.sha }}
