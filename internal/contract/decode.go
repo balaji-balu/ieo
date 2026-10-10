@@ -128,7 +128,8 @@ var wfmSchemas = sync.OnceValue(func() map[string]*jsonschema.Schema {
 		panic(fmt.Sprintf("Margo OpenAPI file: %v", err))
 	}
 	schemas := map[string]*jsonschema.Schema{}
-	for _, name := range []string{"DeviceCapabilitiesManifest", "DeploymentStatusManifest", "UnsignedAppStateManifest"} {
+	for _, name := range []string{"DeviceCapabilitiesManifest", "DeploymentStatusManifest", "UnsignedAppStateManifest",
+		"appDeploymentManifest"} {
 		schemas[name] = c.MustCompile(wfmSchemaURL + "#/components/schemas/" + name)
 	}
 	return schemas
