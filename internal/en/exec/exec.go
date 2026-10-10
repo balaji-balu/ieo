@@ -46,6 +46,7 @@ type Puller interface {
 
 // Store is the EN's durable record of applied deployments; *store.Bolt is one.
 type Store interface {
+	Load(ctx context.Context) (map[uuid.UUID]store.Deployment, error)
 	Get(ctx context.Context, id uuid.UUID) (store.Deployment, bool, error)
 	PutApplied(ctx context.Context, id uuid.UUID, a store.Applied) error
 	PutComponentStatus(ctx context.Context, id uuid.UUID, s contract.ComponentStatus) error
@@ -84,14 +85,18 @@ func New(cfg Config, p Puller, r compose.Runner, s Store, pub Publisher, clock p
 // not started. Whatever happens, the digest and the projects brought up are recorded, each
 // project before it is brought up.
 //
+// superseded, if not nil, is asked after each component: when it returns true a newer command for
+// the deployment is waiting, and Apply ends there. The component just finished has been reported;
+// later ones are not started and nothing is reported for them (SPEC §8.9).
+//
 // A component that fails is not an error of Apply. Apply returns an error only when the EN could
 // not keep its record, or when ctx ended; it then reports nothing further. A status event that
 // can't be published is logged, and Apply goes on: the state is recorded and inventory carries it.
-func (e *Executor) Apply(ctx context.Context, cmd contract.Command) error {
+func (e *Executor) Apply(ctx context.Context, cmd contract.Command, superseded func() bool) error {
 	if cmd.Deployment == nil {
 		return fmt.Errorf("apply %s: the command has no deployment", cmd.DeploymentID)
 	}
-	if err := e.apply(ctx, cmd); err != nil {
+	if err := e.apply(ctx, cmd, superseded); err != nil {
 		return fmt.Errorf("apply %s at %s: %w", cmd.DeploymentID, cmd.Digest, err)
 	}
 	return nil
@@ -105,7 +110,7 @@ type applyRun struct {
 	projects []string // the deployment's recorded Compose projects, in the order first recorded
 }
 
-func (e *Executor) apply(ctx context.Context, cmd contract.Command) error {
+func (e *Executor) apply(ctx context.Context, cmd contract.Command, superseded func() bool) error {
 	components := cmd.Deployment.Spec.DeploymentProfile.Components
 	current, _, err := e.store.Get(ctx, cmd.DeploymentID)
 	if err != nil {
@@ -132,6 +137,9 @@ func (e *Executor) apply(ctx context.Context, cmd contract.Command) error {
 		runErr = err
 		if err != nil || !installed {
 			break // SPEC §8.9 step 4.6: later components are not started
+		}
+		if superseded != nil && superseded() {
+			break // SPEC §8.9: a newer command waits; it runs once this Apply is recorded
 		}
 	}
 	// SPEC §8.9 step 6: recorded whether the Apply succeeded or not.

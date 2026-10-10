@@ -167,6 +167,12 @@ func (f *fixture) push(components ...string) {
 // deployment returns a deployment of the named components, in order, with default properties.
 func deployment(components ...string) contract.ApplicationDeployment {
 	d := contract.ApplicationDeployment{ID: deploymentID}
+	// Enough for the Margo schema, which the dispatcher checks (SPEC §8.9 step 2).
+	d.Metadata = contract.DeploymentMetadata{
+		Name: "hello", Namespace: "default", Annotations: map[string]string{},
+		DeviceID: contract.DeviceID{Site: "site-1", Host: "host-03"},
+	}
+	d.Spec.ApplicationID = "hello-world"
 	d.Spec.DeploymentProfile.Type = "compose"
 	for _, c := range components {
 		d.Spec.DeploymentProfile.Components = append(d.Spec.DeploymentProfile.Components, contract.Component{
@@ -187,7 +193,7 @@ func removeCommand(digest contract.Digest) contract.Command {
 
 func (f *fixture) apply(digest contract.Digest, d contract.ApplicationDeployment) {
 	f.t.Helper()
-	if err := f.exec.Apply(ctx, applyCommand(digest, d)); err != nil {
+	if err := f.exec.Apply(ctx, applyCommand(digest, d), nil); err != nil {
 		f.t.Fatalf("Apply: %v", err)
 	}
 }
@@ -559,7 +565,7 @@ func TestApplyStopsWhenRecordFails(t *testing.T) {
 	errDisk := errors.New("disk full")
 	f.store.putApplied = errDisk
 
-	err := f.exec.Apply(ctx, applyCommand(digestA, deployment("web")))
+	err := f.exec.Apply(ctx, applyCommand(digestA, deployment("web")), nil)
 
 	if !errors.Is(err, errDisk) {
 		t.Errorf("Apply error = %v, want the store's", err)
@@ -585,7 +591,7 @@ func TestApplyStopsWhenContextEnds(t *testing.T) {
 		return nil
 	}
 
-	err := f.exec.Apply(runCtx, applyCommand(digestA, deployment("web", "db")))
+	err := f.exec.Apply(runCtx, applyCommand(digestA, deployment("web", "db")), nil)
 
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Apply error = %v, want context.Canceled", err)
