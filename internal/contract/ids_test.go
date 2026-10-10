@@ -97,6 +97,27 @@ func TestSpec_17_1_ComposeProjectNameNormalization(t *testing.T) {
 		if got := contract.ComposeProjectName(id, tt.component); got != tt.want {
 			t.Errorf("ComposeProjectName(%s, %q) = %q, want %q", id, tt.component, got, tt.want)
 		}
+		if !contract.IsComposeProjectName(tt.want) {
+			t.Errorf("IsComposeProjectName(%q) = false, want true", tt.want)
+		}
+	}
+}
+
+// IsComposeProjectName accepts only names of the form ComposeProjectName produces (SPEC §4.2, §9.2).
+func TestIsComposeProjectNameRejects(t *testing.T) {
+	for _, s := range []string{
+		"",
+		"web",
+		"3f2504e0-4f89-11d3-9a0c-0305e82c3301",  // no component
+		"3f2504e0-4f89-11d3-9a0c-0305e82c3301-", // empty component
+		"3F2504E0-4F89-11D3-9A0C-0305E82C3301-web",            // upper case
+		"3f2504e0-4f89-11d3-9a0c-0305e82c3301-We b",           // characters outside [a-z0-9_-]
+		"3f2504e0-4f89-11d3-9a0c-0305e82c3301-../x",           // path
+		"3f2504e04f8911d39a0c0305e82c3301-web-and-more-chars", // not a canonical UUID
+	} {
+		if contract.IsComposeProjectName(s) {
+			t.Errorf("IsComposeProjectName(%q) = true, want false", s)
+		}
 	}
 }
 

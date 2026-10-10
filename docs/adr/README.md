@@ -22,6 +22,7 @@ one, write a new ADR that supersedes it.
 | [0014](0014-lo-store-layout.md) | LO store: new bbolt store and its file layout (refines 0002) | Proposed |
 | [0015](0015-lo-store-hosts-and-actual.md) | LO store: `hosts` and `actual` buckets, layout version 2 (refines 0014) | Proposed |
 | [0016](0016-en-store-layout.md) | EN store: host ID file and a bbolt store for applied deployments | Proposed |
+| [0017](0017-en-compose-cli.md) | EN Compose CLI: commands, start timeout and environment (refines 0003) | Proposed |
 
 Older design notes in `docs/adr/era/` are superseded by 0002 and 0003 and kept for history.
 
