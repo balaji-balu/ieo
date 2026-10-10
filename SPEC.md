@@ -992,7 +992,8 @@ step 2); its steps 1 run later, as above. If several arrive, only the latest run
 
   The names come from Margo's "Collecting Workload Observability Data" page, which the pinned
   commit does not version (`docs/margo-pins.md`). A parameter with one of these names is set to the
-  EN's value, never the parameter's.
+  EN's value, never the parameter's; where the EN sets none (no `en.otel.grpc_endpoint`, or the
+  certificate variable), the variable is not set at all.
 
 ## 10. Status Reporting Contract
 
