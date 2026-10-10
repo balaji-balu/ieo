@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ComponentStatusEvent (EN → LO, SPEC §11.2)",
   "type": "object",
-  "required": ["deploymentId", "digest", "component", "state", "at"],
+  "required": ["deploymentId", "digest", "state", "at"],
   "properties": {
     "deploymentId": { "$ref": "defs.schema.json#/$defs/uuid" },
     "digest": { "$ref": "defs.schema.json#/$defs/digest" },
@@ -10,5 +10,8 @@
     "state": { "$ref": "defs.schema.json#/$defs/componentState" },
     "error": { "$ref": "defs.schema.json#/$defs/statusError" },
     "at": { "$ref": "defs.schema.json#/$defs/timestamp" }
-  }
+  },
+  "if": { "properties": { "state": { "enum": ["removing", "removed"] } } },
+  "then": { "properties": { "component": false } },
+  "else": { "required": ["component"] }
 }
