@@ -25,6 +25,8 @@ one, write a new ADR that supersedes it.
 | [0017](0017-en-compose-cli.md) | EN Compose CLI: commands, start timeout and environment (refines 0003) | Proposed |
 | [0018](0018-en-archive-extraction.md) | EN archive extraction: staging, containment and links (refines 0009) | Proposed |
 | [0019](0019-en-pull.md) | EN pull: spool file, what is read and what counts as a mismatch | Proposed |
+| [0020](0020-site-nats-client.md) | Site NATS client: one package, endless reconnect, nothing kept while disconnected (refines 0005) | Proposed |
+| [0021](0021-en-registry-access.md) | EN registry access: Docker `config.json` credentials, HTTPS unless told otherwise (refines 0019) | Proposed |
 
 Older design notes in `docs/adr/era/` are superseded by 0002 and 0003 and kept for history.
 

@@ -1,6 +1,6 @@
 # 0015. LO store: `hosts` and `actual` buckets (layout version 2)
 
-Status: Proposed · Date: 2026-10-08 · Spec: §4.1.11, §12, §7.3, §8.5 · Refines: 0014
+Status: Proposed · Date: 2026-10-08 · Spec: §4.1.11, §12, §7.3, §7.5, §8.5, §11.2 · Refines: 0014
 
 ## Context
 Roadmap slice D (balaji-balu/ieo#58) has the LO learn hosts and their actual state from EN
@@ -28,6 +28,21 @@ so new buckets need a layout version and a migration.
   does not hold, replaces that deployment's entry with the event's digest and that one component.
   Components with no report at the new digest are then absent, which the planner and status
   mapping read as `pending` (SPEC §8.7). States from the old digest are never carried over.
+- A removal event (`removing` or `removed`) names no component (SPEC §11.2), so the rule above does
+  not fit it. It holds for the whole deployment on that host (SPEC §7.5), added in roadmap D5:
+  - `removing` sets every component `actual[h]` holds for the deployment to `removing`, and the
+    entry's digest to the event's. Their errors are dropped.
+  - `removed` deletes the deployment's entry from `actual[h]`. The record never holds a deployment
+    in state `removed`: the planner reads an absent entry as "not on the host" (SPEC §8.5), and
+    status mapping (roadmap E) reports every component `removed` from the event, not from the
+    store.
+  - Either event for a deployment `actual[h]` does not hold changes nothing in the store. `removing`
+    has no component to set, and `removed` is already true.
+  - The event's digest is not compared with the one held. The EN reports the digest it had applied
+    (SPEC §8.9), and a removal is about the deployment at whatever digest the host ran.
+- A status event for a host with no `actual` record creates the record, with `reportedAt` the
+  event's `at`. It does not make the host `Online`: only an inventory does (SPEC §7.3 interim rule).
+- Every change to `actual[h]` from one message is one write transaction.
 - `OpenBolt` migrates version 1 to 2 in one write transaction: it creates the empty `hosts` and
   `actual` buckets and sets `schema` to 2. A new file is created at version 2. A file at any other
   version is refused at open, as ADR 0014 says.

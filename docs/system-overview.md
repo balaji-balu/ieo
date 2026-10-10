@@ -116,7 +116,7 @@ Margo device IDs are hierarchical and scoped to the reporting client.
 
 - The LO's own device ID is its **site ID**, e.g. `lo-chennai`.
 - A host's device ID is `<site-id>/<host-id>`, e.g. `lo-chennai/host-03`.
-- IDs use only RFC 3986 unreserved characters (`A–Z a–z 0–9 . _ ~ -`) per segment.
+- IDs use only RFC 3986 unreserved characters (`A–Z a–z 0–9 . _ ~ -`) per segment. **[IEO]** A site ID or host ID has no `.`, which separates the parts of a message subject (SPEC §4.2).
 - **[IEO]** `host-id` is stable for the life of the host and is persisted by the EN on first start (a generated ID unless one is configured).
 
 ### 4.2 Workload identity (CO ↔ LO)
@@ -193,7 +193,7 @@ A deployment that is **absent** from the manifest is to be removed. A `404` on a
 
 ### 5.5 Site reconciliation (LO → EN)
 
-The LO holds, per host, the **desired** set of deployments (from the manifest plus placement decisions) and the **actual** set (from EN inventory reports). A reconcile pass runs when the desired state changes, when an EN reports a change, when a host comes back online, and periodically as a safety net.
+The LO holds, per host, the **desired** set of deployments (from the manifest plus placement decisions) and the **actual** set (from EN inventory reports). A reconcile pass runs when the desired state changes, when an EN reports a change, when a host comes back online, and periodically as a safety net. **[IEO, interim]** Until command retries land (roadmap K), a status event updates the actual set but does not start a pass, so a failing deployment is not applied again in a tight loop; the host's next inventory does (SPEC §7.5).
 
 1. **Resolve targets.**
    - Directed (`<site-id>/<host-id>`): the host is the target. An unknown host produces status `failed` with error code `101` (unknown child device ID).
