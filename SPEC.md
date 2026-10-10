@@ -387,6 +387,18 @@ An archive is valid only if all hold:
 
 On extraction the EN MUST strip setuid, setgid and sticky bits. Any violation fails the component.
 
+`[IEO]` An archive is also invalid if:
+
+- an entry is not a regular file, a directory, a symbolic link or a hard link;
+- an entry's path is already held by an earlier entry, unless both are directories;
+- an entry's path passes through a symbolic link of the archive;
+- `compose.yaml` is not a regular file;
+- a hard link names anything but a regular file that an earlier entry of the archive holds.
+
+`[IEO]` Where a symbolic link points is decided by following it to its end, through the other
+symbolic links of the archive. A link that leaves the top-level directory on the way, has an
+absolute target, or does not end is invalid.
+
 `[IEO]` Limits: an archive with more than `en.archive.max_entries` entries, or whose regular files
 add up to more than `en.archive.max_extracted_bytes` once decompressed, is invalid. The EN counts
 as it reads and stops at the first entry over a limit, so it never writes more than the limit.
@@ -1693,6 +1705,9 @@ endpoints (§11.3 holds IEO-specific operations).
 - Archives are rejected for: two top-level directories; missing `compose.yaml`; `docker-compose.yml`
   instead of `compose.yaml`; absolute path; `..` segment; symlink escaping the directory; hard
   link escaping the directory.
+- Archives are rejected for: an entry that is not a file, directory or link; a path held by an
+  earlier entry; a path through a symbolic link; a `compose.yaml` that is a link; a symbolic link
+  that leaves the directory only through another link; a hard link to a path no earlier entry holds.
 - setuid, setgid and sticky bits are cleared after extraction.
 - A layer whose bytes do not match its digest is not extracted.
 - Updating to a new digest removes Compose projects of components that no longer exist.
