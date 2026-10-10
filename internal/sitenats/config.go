@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is how a tier reaches the site NATS server until Appendix B step 4 (SPEC §15.6): an
@@ -28,6 +29,12 @@ type Config struct {
 	// Insecure allows a `nats://` URL, which does not require TLS. It never turns verification
 	// of a certificate off.
 	Insecure bool
+
+	// Log receives a line for each connect, loss and failed attempt; nil means slog.Default. Give
+	// it the tier's `site_id`, and on an EN `host_id` (SPEC §13.1).
+	Log *slog.Logger
+	// ReconnectWait is the time between two attempts to connect; zero means 2 seconds (ADR 0020).
+	ReconnectWait time.Duration
 }
 
 // String returns c without its password, so that a Config can be printed (SPEC §15.4). A URL
@@ -105,19 +112,27 @@ const (
 //   - no username or no password;
 //   - a CAFile that cannot be read or holds no certificate.
 func (c Config) Check() error {
+	_, err := c.check()
+	return err
+}
+
+// check is Check; it also returns the certificates of CAFile, or nil for the system roots, so
+// that Connect verifies with exactly what was checked.
+func (c Config) check() (*x509.CertPool, error) {
 	if reason := checkURL(c.URL, c.Insecure); reason != "" {
-		return &ConfigError{Field: FieldURL, Reason: reason}
+		return nil, &ConfigError{Field: FieldURL, Reason: reason}
 	}
 	if c.Username == "" {
-		return &ConfigError{Field: FieldUsername, Reason: "not set"}
+		return nil, &ConfigError{Field: FieldUsername, Reason: "not set"}
 	}
 	if c.Password == "" {
-		return &ConfigError{Field: FieldPassword, Reason: "not set"}
+		return nil, &ConfigError{Field: FieldPassword, Reason: "not set"}
 	}
-	if _, err := c.rootCAs(); err != nil {
-		return &ConfigError{Field: FieldCAFile, Reason: err.Error()}
+	roots, err := c.rootCAs()
+	if err != nil {
+		return nil, &ConfigError{Field: FieldCAFile, Reason: err.Error()}
 	}
-	return nil
+	return roots, nil
 }
 
 // checkURL returns why u is not a server URL a tier may use, or "" if it is one. The reason
