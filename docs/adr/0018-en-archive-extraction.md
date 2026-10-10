@@ -31,7 +31,7 @@ Archive and extracts it (SPEC §5.2, §9.2). The spec gives the rules and the re
   - Hard links are created as hard links, when their entry is read.
 - **Modes.** A file or directory gets the entry's nine permission bits and no others; the process
   umask is not applied. A directory also gets owner read, write and search, so the EN can fill it
-  and later delete it. Owners and times are not restored. The component's directory itself has
+  and later delete it. A directory no entry names gets 0755. Owners and times are not restored. The component's directory itself has
   mode 0700.
 - **Read errors.** An archive that can't be decompressed or parsed is invalid. A failure of the
   reader the archive comes from, or the context ending, is returned as it is and is not
@@ -51,9 +51,15 @@ Archive and extracts it (SPEC §5.2, §9.2). The spec gives the rules and the re
   are under `en.data_dir`.
 - A component named like another component's staging directory can't exist: component names come
   from the deployment, and the random suffix is chosen so the name is unused.
-- The check that follows links uses the archive's own names. On a file system that ignores case,
-  two names that differ only in case are one path; the second fails as a path already held or with
-  the system's error.
+- The check that follows links compares the archive's own names, byte for byte. On a file system
+  that ignores case (Windows, macOS), a link reached under another spelling (`A -> .`, then
+  `l -> a/../x`) is not followed by the check, so such a link can point outside the top-level
+  directory. Nothing is written through it, since links are created last. Hosts are Linux, where
+  names are compared exactly; an EN on a file system that ignores case needs this closed first.
+- An entry name the file system refuses (a segment over 255 bytes) fails with the system's error,
+  not as an invalid archive.
+- A file stored in the old GNU sparse format is not accepted as a regular file. `tar` writes it
+  only with `--sparse`; the PAX formats are read as regular files.
 - A workload that needs a file owned by another user, or with special bits, sets that in its
   container image, not in the archive.
 

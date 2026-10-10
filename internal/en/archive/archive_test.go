@@ -172,14 +172,9 @@ func TestSpec_17_6_ArchiveRejected(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dataDir, dir := componentDir(t)
-			// A hard link that escaped would reach this file.
-			outside := filepath.Join(filepath.Dir(dir), "outside")
 			_, err := extract(t, dir, roomy, c.entries...)
 			assertInvalid(t, err)
 			assertNothingExtracted(t, dataDir, dir)
-			if _, err := os.Lstat(outside); !errors.Is(err, fs.ErrNotExist) {
-				t.Errorf("%s exists after extraction", outside)
-			}
 		})
 	}
 }
@@ -218,6 +213,8 @@ func TestSpec_17_6_ArchiveRejectedEntries(t *testing.T) {
 		{"symlinks that never end", valid(archivetest.Symlink("app/a", "b"), archivetest.Symlink("app/b", "a"))},
 		{"hard link to a path no entry holds", valid(archivetest.Hardlink("app/h", "app/nope"))},
 		{"hard link to a later entry", valid(archivetest.Hardlink("app/h", "app/later"), archivetest.File("app/later", "x"))},
+		{"hard link below a file", valid(archivetest.Hardlink("app/h", "app/compose.yaml/x"))},
+		{"hard link to another top-level directory", valid(archivetest.Hardlink("app/h", "other/x"))},
 		{"hard link to a directory", valid(archivetest.Dir("app/sub/"), archivetest.Hardlink("app/h", "app/sub"))},
 		{"hard link to a symlink", valid(
 			archivetest.Symlink("app/l", "compose.yaml"), archivetest.Hardlink("app/h", "app/l"))},

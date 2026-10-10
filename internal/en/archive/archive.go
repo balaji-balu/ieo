@@ -200,7 +200,7 @@ func (x *extractor) entry(h *tar.Header, body io.Reader) error {
 	if !nested && h.Typeflag != tar.TypeDir {
 		return invalid("top-level entry %q is not a directory", name)
 	}
-	if err := x.parents(name); err != nil {
+	if err := x.parents(name, true); err != nil {
 		return err
 	}
 	switch h.Typeflag {
@@ -243,9 +243,10 @@ func entryPath(raw string) (string, error) {
 	return clean, nil
 }
 
-// parents makes sure every directory above name exists and is a directory. Archives may leave
-// out the entries for directories.
-func (x *extractor) parents(name string) error {
+// parents makes sure every directory above name is a directory. With create, it makes the ones no
+// entry holds yet, since archives may leave out the entries for directories; without, a missing
+// one is an error.
+func (x *extractor) parents(name string, create bool) error {
 	for i, c := range name {
 		if c != '/' {
 			continue
@@ -255,8 +256,10 @@ func (x *extractor) parents(name string) error {
 		switch {
 		case err != nil:
 			return err
+		case !held && !create:
+			return invalid("no earlier entry holds %q", p)
 		case !held:
-			if err := x.root.Mkdir(filepath.FromSlash(p), 0o755); err != nil {
+			if err := x.mkdir(p, 0o755); err != nil {
 				return err
 			}
 		case fi == nil:
@@ -301,17 +304,24 @@ func (x *extractor) dir(name string, h *tar.Header) error {
 	if err != nil {
 		return err
 	}
-	osName := filepath.FromSlash(name)
-	switch {
-	case !held:
-		if err := x.root.Mkdir(osName, 0o700); err != nil {
-			return err
-		}
-	case fi == nil || !fi.IsDir():
+	if held && (fi == nil || !fi.IsDir()) {
 		return invalid("an earlier entry holds the path %q", name)
 	}
 	// The EN must be able to write what the directory holds, and to delete it on Remove.
-	return x.root.Chmod(osName, permissions(h)|0o700)
+	mode := permissions(h) | 0o700
+	if held {
+		return x.root.Chmod(filepath.FromSlash(name), mode)
+	}
+	return x.mkdir(name, mode)
+}
+
+// mkdir creates the directory name with exactly mode, whatever the process umask is.
+func (x *extractor) mkdir(name string, mode fs.FileMode) error {
+	osName := filepath.FromSlash(name)
+	if err := x.root.Mkdir(osName, 0o700); err != nil {
+		return err
+	}
+	return x.root.Chmod(osName, mode)
 }
 
 func (x *extractor) file(name string, h *tar.Header, body io.Reader) error {
@@ -376,8 +386,10 @@ func (x *extractor) hardlink(name string, h *tar.Header) error {
 	if err != nil {
 		return fmt.Errorf("hard link %q: %w", name, err)
 	}
-	// A target outside the top-level directory, or reached through a symbolic link, is not on
-	// disk: nothing is extracted outside, and symbolic links are created last.
+	// A target outside the top-level directory is not on disk: nothing is extracted there.
+	if err := x.parents(target, false); err != nil {
+		return fmt.Errorf("hard link %q to %q: %w", name, h.Linkname, err)
+	}
 	if target == "" {
 		return invalid("hard link %q names the archive's root", name)
 	}
