@@ -116,7 +116,7 @@ Margo device IDs are hierarchical and scoped to the reporting client.
 
 - The LO's own device ID is its **site ID**, e.g. `lo-chennai`.
 - A host's device ID is `<site-id>/<host-id>`, e.g. `lo-chennai/host-03`.
-- IDs use only RFC 3986 unreserved characters (`A–Z a–z 0–9 . _ ~ -`) per segment. **[IEO]** A site ID or host ID has no `.`, which separates the parts of a message subject (SPEC §4.2).
+- IDs use only RFC 3986 unreserved characters (`A–Z a–z 0–9 . _ ~ -`) per segment. **[IEO]** An LO or EN does not start with a site ID or host ID that contains `.`, which separates the parts of a message subject; elsewhere such an ID stays valid (SPEC §4.2).
 - **[IEO]** `host-id` is stable for the life of the host and is persisted by the EN on first start (a generated ID unless one is configured).
 
 ### 4.2 Workload identity (CO ↔ LO)

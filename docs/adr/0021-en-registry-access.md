@@ -28,6 +28,11 @@ Registry credentials are a §15 area (SPEC §15.4).
   (`host` or `host:port`, compared exactly, after removing a scheme and path from the key) is used
   for that registry, and for the token service that registry names when it asks for a token. No
   entry is ever sent to another registry. A registry with no entry is reached anonymously.
+  - Docker Hub is the one registry with several names. `docker.io`, `index.docker.io` and
+    `registry-1.docker.io` are the same registry here, in a key and in a repository, so the entry
+    `docker login` writes (`https://index.docker.io/v1/`) is used for `docker.io/<org>/<app>`.
+  - At startup the EN logs the registry hosts it holds an entry for, never the entries, so an
+    operator can see which pulls will be anonymous.
 - **Transport.**
   - By default HTTPS, with the registry's certificate verified against the system roots.
   - `en.registry.insecure: true` makes the EN use plain HTTP for every registry. It logs a warning
@@ -35,9 +40,11 @@ Registry credentials are a §15 area (SPEC §15.4).
     the clear. It does not mean "HTTPS without verification": that mode does not exist.
   - Redirects are followed, as registries redirect layer downloads to storage hosts. The
     `Authorization` header is not sent to another host on a redirect.
-  - The environment's proxy settings are honored (`HTTPS_PROXY`, `NO_PROXY`), unlike the LO's
-    Margo client (SPEC §15.6): edge hosts often reach a registry only through a proxy, and the
-    credential travels inside TLS.
+  - The environment's proxy settings are honored (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`), unlike
+    the LO's Margo client (SPEC §15.6): edge hosts often reach a registry only through a proxy.
+    Over HTTPS the credential travels inside TLS and the proxy does not see it. With
+    `en.registry.insecure` it is in the clear to the registry and to any proxy on the way; the
+    startup warning says so, and names the proxy host when one is set.
 - **Secrets.** No credential, `auth` value or token is logged, put in an error, or put in a status
   message (SPEC §15.4). Errors name the registry host and the HTTP status.
 - **Limits and integrity** stay in the puller (ADR 0019): `en.pull.max_bytes`, `en.pull.timeout`

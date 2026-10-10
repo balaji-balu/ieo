@@ -190,7 +190,7 @@ Fields:
 - `site_id` (string)
   - REQUIRED. Also the LO's Margo device ID.
   - MUST use only RFC 3986 unreserved characters (`A–Z a–z 0–9 . _ ~ -`).
-  - `[IEO]` MUST NOT contain `.` (§4.2, message subjects).
+  - `[IEO]` A site whose ID contains `.` cannot run an LO or ENs (§4.2, message subjects).
   - The value `any` is reserved and MUST be rejected.
 - `state` (enum: `active`, `retired`)
 - `client_identity` (string) — the SPIFFE ID of the LO's certificate (§4.2).
@@ -203,8 +203,9 @@ A machine at a site that runs workloads. Runs exactly one EN.
 Fields:
 
 - `host_id` (string)
-  - REQUIRED. Unreserved characters only, and `[IEO]` no `.` (§4.2, message subjects). Stable for
-    the life of the host: the EN generates it on first start (unless configured) and persists it.
+  - REQUIRED. Unreserved characters only. Stable for the life of the host: the EN generates it on
+    first start (unless configured) and persists it. `[IEO]` An EN does not start with a host ID
+    that contains `.` (§4.2, message subjects).
 - `device_id` (string) — `<site_id>/<host_id>`. The Margo device ID of the host.
 - `capabilities` (DeviceCapabilities, §4.1.3)
 - `labels` (map string → string)
@@ -362,10 +363,16 @@ Single authoritative state owned by the LO. Durable fields MUST survive restart.
   - LO: `spiffe://<trust-domain>/margo/wfm/<wfm-id>/client/<site_id>`
 - `Message subjects` `[IEO]`
   - `site.<site_id>.host.<host_id>.<kind>` (§11.2).
-  - `.` separates the parts of a subject, so a site ID or host ID MUST NOT contain one: with one,
-    the subject has more parts, the LO's subscriptions do not match it, and the host ID cannot be
-    read back from it. Every tier rejects such an ID where it rejects any other invalid ID: the CO
-    when a site is added, the LO and the EN at startup as a configuration error (§6.1).
+  - `.` separates the parts of a subject, so an ID used in one MUST NOT contain `.`: with one, the
+    subject has more parts, the LO's subscriptions do not match it, and the host ID cannot be read
+    back from it.
+  - The rule holds only where an ID goes into a subject. The LO exits at startup on a `lo.site_id`
+    that contains `.`, and the EN on an `en.site_id` or a host ID that does, configured or
+    persisted, as a configuration error that names the ID (§6.1); the EN never rewrites `host.id`.
+  - It is not a rule about identifiers in general. A site ID or host ID with `.` stays a valid
+    Margo device ID: the CO adds such a site, and every tier stores, parses and serves such an ID
+    as before. A deployment directed to a host whose ID contains `.` targets a host that no EN can
+    be (§8.4).
 
 ## 5. Application Package Contract
 
@@ -718,7 +725,9 @@ once, and again each time it failed. Until then:
 - A `Component Status Event` updates actual state as above, but schedules no retry and does not
   reconcile the host.
 - The host is reconciled on its next `Inventory`, on `Manifest Accepted` and on the safety timer.
-  A deployment with a `failed` component is therefore applied again within `en.inventory.interval`.
+  A deployment with a `failed` component is therefore applied again on every pass for as long as
+  it fails: at least once every `en.inventory.interval`, at a fixed rate and with no backoff. Each
+  of these Applies starts again from the deployment's first component (§8.9).
 - `Command Rejected or Ack Timeout` is logged; the next pass for the host sends the command again.
 
 Slice K replaces this rule.
@@ -1197,6 +1206,9 @@ The normative schemas for these messages are the JSON Schemas (draft 2020-12) in
 
 `[IEO]` A `hostId` in a payload MUST equal the `<h>` of the subject it arrived on; the LO logs and
 drops a message where they differ, and it changes no state. The LO keys host state by `<h>`.
+`[IEO]` The LO also logs and drops a `ComponentStatusEvent` from a host it holds no actual state
+for: that host's `Inventory` brings its state, and only an `Inventory` adds a host's actual state
+(ADR 0015).
 
 Receivers MUST ignore unknown fields. A message that fails schema validation MUST be logged and
 dropped; it MUST NOT change state.
@@ -1331,6 +1343,7 @@ nothing else.
 | Invalid archive | Component `failed` with `IEO-ARCHIVE-INVALID`; LO retries with backoff. |
 | EN offline | After missed-heartbeat window: no commands; its deployments `pending`. On return: inventory, then reconcile. |
 | Command rejected or unacknowledged | Actual state unchanged; per-deployment retry with backoff. |
+| `[IEO]` Site NATS server unreachable, or it refuses the login, at startup or later | The LO and the EN stay up and keep trying; each failure is logged. The LO goes on syncing with the CO and sends no command that can arrive; the EN keeps its workloads running. Messages are not kept meanwhile. On (re)connect: the EN publishes inventory, the LO requests inventory, then reconciles (§11.2). |
 | Container crash | Compose restart policy applies; if unrecovered, component `failed`. |
 | LO restart | Reload store; re-send capabilities; poll CO; request inventory from all ENs; reconcile. |
 | EN restart | Reload store; publish capabilities and inventory; LO reconciles drift. |
@@ -1701,7 +1714,8 @@ endpoints (§11.3 holds IEO-specific operations).
   are dropped without state change.
 - Site IDs and host IDs with characters outside RFC 3986 unreserved are rejected; `any` is rejected
   as a site ID.
-- A site ID or host ID that contains `.` is rejected (§4.2).
+- A site ID or host ID that contains `.` is refused at startup by the LO and the EN, and is still
+  accepted wherever it is not used in a message subject (§4.2).
 - Device ID parsing splits on the first `/` only.
 - Compose project names follow §4.2 for component names with mixed case and symbols.
 - Tag-to-SemVer conversion turns `_` into `+`; tag and revision compare as exact strings.
