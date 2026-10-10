@@ -1,0 +1,10 @@
+# Line endings (ADR 0009: the maintainer works on Windows with core.autocrlf).
+#
+# Text files are checked out with LF on every platform, so gofmt, bash and
+# go:embed see the same bytes on Windows as CI does on Linux.
+#
+# "auto" leaves a file alone that is already stored with CRLF (legacy configs
+# and docs); Go files are always stored and checked out with LF.
+* text=auto eol=lf
+*.go text eol=lf
+*.png binary
