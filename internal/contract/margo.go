@@ -2,6 +2,11 @@ package contract
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
+	"regexp"
+	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -228,6 +233,34 @@ type ComponentProperties struct {
 	Wait       *bool  `json:"wait,omitempty"`
 	Timeout    string `json:"timeout,omitempty"`
 }
+
+// componentTimeout is the Margo form of ComponentProperties.Timeout: minutes then seconds.
+var componentTimeout = regexp.MustCompile(`^(\d+)m(\d+)s$`)
+
+// ParseComponentTimeout returns a component's `timeout` as a duration. The form is Margo's
+// `##m##s` (`5m0s`, `8m30s`); anything else, or a value too large for a Duration, is an error.
+func ParseComponentTimeout(s string) (time.Duration, error) {
+	m := componentTimeout.FindStringSubmatch(s)
+	if m == nil {
+		return 0, fmt.Errorf("timeout %q does not have the form ##m##s", s)
+	}
+	minutes, errM := strconv.ParseInt(m[1], 10, 64)
+	seconds, errS := strconv.ParseInt(m[2], 10, 64)
+	const limit = int64(math.MaxInt64 / int64(time.Second) / 61) // minutes*60+seconds cannot overflow
+	if errM != nil || errS != nil || minutes > limit || seconds > limit {
+		return 0, fmt.Errorf("timeout %q is too large", s)
+	}
+	return time.Duration(minutes*60+seconds) * time.Second, nil
+}
+
+// Component error codes of a ComponentStatus (SPEC §10).
+const (
+	CodePullFailed     = "IEO-PULL-FAILED"
+	CodeDigestMismatch = "IEO-DIGEST-MISMATCH"
+	CodeArchiveInvalid = "IEO-ARCHIVE-INVALID"
+	CodeComposeFailed  = "IEO-COMPOSE-FAILED"
+	CodeStartTimeout   = "IEO-START-TIMEOUT"
+)
 
 // ParameterValue is a parameter's value and the places in component packages it is written to.
 type ParameterValue struct {

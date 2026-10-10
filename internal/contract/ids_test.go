@@ -151,3 +151,23 @@ func TestSpec_17_1_TagToSemVerConvertsUnderscore(t *testing.T) {
 		}
 	}
 }
+
+// A component's slug is the part of its project name after the deployment ID (SPEC §4.2, §9.1).
+func TestComponentSlug(t *testing.T) {
+	id := uuid.MustParse("6F1D7D3E-9D0C-4A39-8F5D-1B8F0C9F2A11")
+	for name, want := range map[string]string{
+		"web":       "web",
+		"Web_API-2": "web_api-2",
+		"a/b":       "a-b",
+		"../etc":    "---etc",
+		"café x":    "caf--x",
+		"":          "",
+	} {
+		if got := contract.ComponentSlug(name); got != want {
+			t.Errorf("ComponentSlug(%q) = %q, want %q", name, got, want)
+		}
+		if got, want := contract.ComposeProjectName(id, name), "6f1d7d3e-9d0c-4a39-8f5d-1b8f0c9f2a11-"+want; got != want {
+			t.Errorf("ComposeProjectName(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

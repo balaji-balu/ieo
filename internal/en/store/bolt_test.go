@@ -343,3 +343,32 @@ func TestStoreOpenMissingDir(t *testing.T) {
 		t.Errorf("Open created the data directory: %v", err)
 	}
 }
+
+// Get returns one deployment as Load would, and nothing for a deployment without an applied
+// record (SPEC §4.1.12, ADR 0016).
+func TestStoreGet(t *testing.T) {
+	b := open(t, t.TempDir())
+	defer closeStore(t, b)
+	must(t, b.PutApplied(ctx, idA, store.Applied{Digest: digestA}))
+	must(t, b.PutComponentStatus(ctx, idA, contract.ComponentStatus{Name: "web", State: contract.StateInstalled}))
+	must(t, b.PutComponentStatus(ctx, idA, contract.ComponentStatus{
+		Name: "a/b", State: contract.StateFailed, Error: &contract.StatusError{Code: "IEO-PULL-FAILED", Source: "a/b", Message: "m"},
+	}))
+	must(t, b.PutComponentStatus(ctx, idB, contract.ComponentStatus{Name: "web", State: contract.StateInstalling}))
+
+	got, ok, err := b.Get(ctx, idA)
+	if err != nil || !ok {
+		t.Fatalf("Get(%s) = ok %v, error %v", idA, ok, err)
+	}
+	if want := load(t, b)[idA]; !reflect.DeepEqual(got, want) {
+		t.Errorf("Get = %+v, want what Load returns: %+v", got, want)
+	}
+	if len(got.Components) != 2 || got.Applied.ComposeProjects == nil {
+		t.Errorf("Get = %+v, want two components and an empty project list", got)
+	}
+	for name, id := range map[string]uuid.UUID{"states but no applied record": idB, "unknown": uuid.New()} {
+		if d, ok, err := b.Get(ctx, id); err != nil || ok || d.Components != nil {
+			t.Errorf("Get of a deployment with %s = %+v, ok %v, error %v; want nothing", name, d, ok, err)
+		}
+	}
+}

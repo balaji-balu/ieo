@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -169,5 +170,29 @@ func TestOneVendoredMargoAPIFile(t *testing.T) {
 	}
 	if !bytes.Equal(raw, margo.WorkloadManagementAPI) {
 		t.Errorf("%s differs from the embedded margo.WorkloadManagementAPI", files[0])
+	}
+}
+
+// A component's `timeout` has Margo's ##m##s form (pinned OpenAPI, appDeploymentManifest).
+func TestParseComponentTimeout(t *testing.T) {
+	valid := map[string]time.Duration{
+		"5m0s":    5 * time.Minute,
+		"8m30s":   8*time.Minute + 30*time.Second,
+		"0m45s":   45 * time.Second,
+		"0m0s":    0,
+		"1m90s":   2*time.Minute + 30*time.Second,
+		"120m00s": 2 * time.Hour,
+	}
+	for in, want := range valid {
+		got, err := contract.ParseComponentTimeout(in)
+		if err != nil || got != want {
+			t.Errorf("ParseComponentTimeout(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "5m", "30s", "5m0", "1h0m0s", "-5m0s", "5m 0s", "5.5m0s", " 5m0s", "5m0s\n",
+		"99999999999999999999m0s", "9223372036854775807m0s", "0m9223372036854775807s"} {
+		if got, err := contract.ParseComponentTimeout(in); err == nil {
+			t.Errorf("ParseComponentTimeout(%q) = %v, want an error", in, got)
+		}
 	}
 }

@@ -900,7 +900,9 @@ On **Apply** (deployment ID, digest, deployment YAML):
 2. Validate the command's `deployment`. It is valid only if it validates against the Margo
    deployment schema of the pinned OpenAPI (header; `components.schemas.appDeploymentManifest`),
    its `id` equals the command's
-   `deploymentId`, and its `spec.deploymentProfile.type` is `compose`. Invalid → ack
+   `deploymentId`, its `spec.deploymentProfile.type` is `compose`, and `[IEO]` no two of its
+   components have the same Compose project name (§4.2), which would give them one project and one
+   directory. Invalid → ack
    `accepted: false` with error code `IEO-INVALID-COMMAND` (§10), and nothing else.
 3. Ack `accepted: true`. The rest runs asynchronously; outcomes are reported as status events.
 4. For each component, in listed order:
@@ -920,8 +922,8 @@ On **Apply** (deployment ID, digest, deployment YAML):
       up, so a project is never up without a record.
    5. Bring up the Compose project `<deployment_id>-<component>` with both Compose files (§5.4). If
       `wait` is true, wait until all containers are running or `timeout` elapses. `[IEO]` A
-      component with `wait` true and no `timeout` is given `en.start_timeout`, so no wait is
-      without end. Without `wait`, `timeout` and `en.start_timeout` are not used.
+      component with `wait` true and no `timeout`, or a `timeout` of zero, is given
+      `en.start_timeout`, so no wait is without end. Without `wait`, `timeout` and `en.start_timeout` are not used.
    6. Publish `installed`, or `failed` with an error and stop processing later components.
 5. If the deployment previously ran at a different digest, bring down Compose projects of
    components that no longer exist.
@@ -937,6 +939,16 @@ On **Remove** (deployment ID, digest):
 `[IEO]` The status events of a Remove carry the digest in `applied` when the Remove runs (step 1),
 or the command's digest when the deployment is not in `applied` then. They name no component
 (§11.2): each is one event for the whole deployment.
+
+`[IEO]` When a Remove cannot bring a project down or delete the working directory, the EN still
+brings down the other projects, keeps the deployment in `applied` and publishes nothing after
+`removing`. The host still reports the deployment, so the LO sends Remove again (§8.5).
+
+`[IEO]` An Apply records every component of the deployment as `pending` before its first component
+starts, without publishing it, so inventory never shows a state from an earlier Apply for a
+component this one has not reached. When the EN is stopped during an Apply, the Apply ends at the
+call that was cut short, records `applied` (step 6) and publishes nothing more; the component stays
+`installing`.
 
 `[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
 command for a deployment with a command in flight waits for it (below), then checks `applied` as the
@@ -974,6 +986,11 @@ step 2); its steps 1 run later, as above. If several arrive, only the latest run
       compose.ieo.yaml                 override: parameters + injected variables (§5.4)
   otel/config.yaml                     collector configuration
 ```
+
+`[IEO]` In these paths `<deployment_id>` is the lowercase UUID; `<digest>` is the digest with `-` in
+place of `:` (`sha256-<hex>`), since `:` is not allowed in a file name on every system; and
+`<component>` is the component's name as it appears in the Compose project name (§4.2: lowercased,
+characters outside `[a-z0-9_-]` replaced with `-`).
 
 ### 9.2 Safety Invariants
 
@@ -1016,7 +1033,8 @@ This section collects the reporting rules in one place.
   - `102` gateway-generated error defined by Margo; see the Margo specification `[Margo]`
   - `103` autonomous placement not supported `[Margo]`
   - `IEO-NO-ELIGIBLE-HOST` no host satisfies constraints `[IEO]`
-  - `IEO-ARCHIVE-INVALID` archive failed §5.2, its limits included `[IEO]`
+  - `IEO-ARCHIVE-INVALID` archive failed §5.2, its limits included, or the EN could not extract it
+    `[IEO]`
   - `IEO-DIGEST-MISMATCH` pulled layer digest did not match `[IEO]`
   - `IEO-PULL-FAILED` registry unreachable, artifact missing or not a Margo Compose Archive (§5.1),
     or a pull limit exceeded (§8.9) `[IEO]`
@@ -1024,7 +1042,8 @@ This section collects the reporting rules in one place.
     `CommandAck` error code, never a component status `[IEO]`
   - `IEO-START-TIMEOUT` containers not running within `timeout`, or within `en.start_timeout` for a
     component without one (§8.9) `[IEO]`
-  - `IEO-COMPOSE-FAILED` the Compose command failed for another reason `[IEO]`
+  - `IEO-COMPOSE-FAILED` the override file could not be written (§5.4), or the Compose command
+    failed for another reason `[IEO]`
   - `IEO-CONTAINER-EXITED` container exited and did not recover `[IEO]`
 
 ## 11. Interfaces
