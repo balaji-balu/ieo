@@ -47,7 +47,13 @@ so new buckets need a layout version and a migration.
   `actual` buckets and sets `schema` to 2. A new file is created at version 2. A file at any other
   version is refused at open, as ADR 0014 says.
 - `Load` fails on a record it cannot decode (ADR 0014), and never returns a partial `hosts` or
-  `actual`.
+  `actual`. An `actual` record whose host has no `hosts` record is one of these: the store never
+  writes one, since the first write of a host's actual state adds its `hosts` record in the same
+  transaction.
+- The store reads and writes a host's `actual` record whole, and refuses to write one it would
+  refuse to read. The rules above for status events are not the store's: the LO's single authority
+  (SPEC §7.6, ADR 0014) applies an event to the state it holds and writes that host's record
+  (roadmap D5.3).
 - Liveness is not stored: it is derived from `lastHeartbeatAt` (§4.1.11). Until slice I, the interim
   `Online` rule in §7.3 is in memory only, so after an LO restart every host is `Unknown` until its
   next inventory, which the LO asks for at start (§16.2).

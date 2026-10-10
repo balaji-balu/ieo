@@ -5,6 +5,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -19,11 +20,17 @@ var _ losync.Store = (*Memory)(nil)
 type Memory struct {
 	mu    sync.Mutex
 	state losync.State
+	// hosts and actual hold the records Bolt would, by host ID, so both backends accept and
+	// return exactly the same state.
+	hosts, actual map[string][]byte
 }
 
 // NewMemory returns an empty store.
 func NewMemory() *Memory {
-	return &Memory{state: losync.State{Desired: map[uuid.UUID]losync.Desired{}}}
+	return &Memory{
+		state: losync.State{Desired: map[uuid.UUID]losync.Desired{}},
+		hosts: map[string][]byte{}, actual: map[string][]byte{},
+	}
 }
 
 // Load returns a copy of the stored state.
@@ -62,10 +69,36 @@ func cloneDesired(in map[uuid.UUID]losync.Desired) map[uuid.UUID]losync.Desired 
 
 // LoadHosts returns a copy of every host the store holds, as Bolt.LoadHosts does.
 func (m *Memory) LoadHosts(_ context.Context) (map[contract.HostID]HostState, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	each := func(held map[string][]byte) records {
+		return func(fn func(k, v []byte) error) error {
+			for k, v := range held {
+				if err := fn([]byte(k), v); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+	out, err := decodeHosts(each(m.hosts), each(m.actual))
+	if err != nil {
+		return nil, fmt.Errorf("load hosts: %w", err)
+	}
+	return out, nil
 }
 
 // PutActual replaces the actual state of host with a copy of a, as Bolt.PutActual does.
 func (m *Memory) PutActual(_ context.Context, host contract.HostID, a HostActual) error {
+	key, value, err := encodeActual(host, a)
+	if err != nil {
+		return fmt.Errorf("put actual state of host %q: %w", host, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.hosts[string(key)]; !ok {
+		m.hosts[string(key)] = newHostRecord()
+	}
+	m.actual[string(key)] = value
 	return nil
 }

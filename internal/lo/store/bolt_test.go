@@ -131,6 +131,10 @@ func TestBoltRefusesUnknownLayout(t *testing.T) {
 			committedAt(t, path)
 			rawUpdate(t, path, func(tx *bolt.Tx) error { return tx.Bucket(bucketMeta).Put(keySchema, u64(3)) })
 		}},
+		{"version 1 that already has a version 2 bucket", func(t *testing.T, path string) {
+			committedAt(t, path) // version 2: it has the hosts bucket, which version 1 never had
+			rawUpdate(t, path, func(tx *bolt.Tx) error { return tx.Bucket(bucketMeta).Put(keySchema, u64(1)) })
+		}},
 		{"schema not 8 bytes", func(t *testing.T, path string) {
 			committedAt(t, path)
 			rawUpdate(t, path, func(tx *bolt.Tx) error { return tx.Bucket(bucketMeta).Put(keySchema, []byte{1}) })
