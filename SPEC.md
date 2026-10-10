@@ -444,6 +444,10 @@ How values reach containers: a Compose `.env` file only fills in `${…}` refere
      does not interpolate it. A value is then set exactly, whatever characters it holds.
    - A variable name that is not `[A-Za-z_][A-Za-z0-9_]*` fails the component with
      `IEO-COMPOSE-FAILED`, before any Compose command runs.
+   - A parameter value that is a string is written as it is; `true` and `false` as those words; a
+     number in its shortest decimal form (`8080`, `1.5`). A value that is `null`, a list or an
+     object fails the component the same way, as do two parameters that set one variable in the
+     same component.
 2. Runs every Compose command for the project with both files, `compose.yaml` first and
    `compose.ieo.yaml` second. Compose merges a later file's `environment:` over an earlier one's, so
    these values are set in every container, whatever the archive's `compose.yaml` sets for the same
@@ -992,7 +996,8 @@ step 2); its steps 1 run later, as above. If several arrive, only the latest run
 
   The names come from Margo's "Collecting Workload Observability Data" page, which the pinned
   commit does not version (`docs/margo-pins.md`). A parameter with one of these names is set to the
-  EN's value, never the parameter's.
+  EN's value, never the parameter's; where the EN sets none (no `en.otel.grpc_endpoint`, or the
+  certificate variable), the variable is not set at all.
 
 ## 10. Status Reporting Contract
 
