@@ -922,8 +922,8 @@ On **Apply** (deployment ID, digest, deployment YAML):
       up, so a project is never up without a record.
    5. Bring up the Compose project `<deployment_id>-<component>` with both Compose files (§5.4). If
       `wait` is true, wait until all containers are running or `timeout` elapses. `[IEO]` A
-      component with `wait` true and no `timeout` is given `en.start_timeout`, so no wait is
-      without end. Without `wait`, `timeout` and `en.start_timeout` are not used.
+      component with `wait` true and no `timeout`, or a `timeout` of zero, is given
+      `en.start_timeout`, so no wait is without end. Without `wait`, `timeout` and `en.start_timeout` are not used.
    6. Publish `installed`, or `failed` with an error and stop processing later components.
 5. If the deployment previously ran at a different digest, bring down Compose projects of
    components that no longer exist.

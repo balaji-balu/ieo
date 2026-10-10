@@ -420,6 +420,7 @@ func TestSpec_17_6_DefaultStartTimeout(t *testing.T) {
 		{"wait by default, no timeout", nil, "", compose.UpOptions{Wait: true, Timeout: startTimeout}},
 		{"wait set, no timeout", &yes, "", compose.UpOptions{Wait: true, Timeout: startTimeout}},
 		{"wait by default, own timeout", nil, "0m20s", compose.UpOptions{Wait: true, Timeout: 20 * time.Second}},
+		{"wait by default, timeout of zero", nil, "0m0s", compose.UpOptions{Wait: true, Timeout: startTimeout}},
 		// Without wait neither timeout is used (SPEC §8.9 step 4.5).
 		{"no wait", &no, "", compose.UpOptions{}},
 		{"no wait, own timeout", &no, "5m0s", compose.UpOptions{}},
