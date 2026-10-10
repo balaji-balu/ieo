@@ -225,6 +225,46 @@ func decodeStatus(name, v []byte) (contract.ComponentStatus, error) {
 	}
 }
 
+// Get returns one deployment: its Applied record and its components' states. ok is false when the
+// deployment has no Applied record, whatever component states it has, as in Load. A record that
+// can't be decoded is an error.
+func (b *Bolt) Get(_ context.Context, id uuid.UUID) (d Deployment, ok bool, err error) {
+	k := []byte(id.String())
+	err = b.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketApplied).Get(k)
+		if v == nil {
+			return nil
+		}
+		var r appliedRecord
+		if err := json.Unmarshal(v, &r); err != nil {
+			return fmt.Errorf("applied record: %w", err)
+		}
+		if r.Digest == "" {
+			return errors.New("applied record: no digest")
+		}
+		if r.ComposeProjects == nil {
+			r.ComposeProjects = []string{}
+		}
+		d, ok = Deployment{Applied: Applied(r), Components: map[string]contract.ComponentStatus{}}, true
+		states := tx.Bucket(bucketComponents).Bucket(k)
+		if states == nil {
+			return nil
+		}
+		return states.ForEach(func(name, v []byte) error {
+			s, err := decodeStatus(name, v)
+			if err != nil {
+				return err
+			}
+			d.Components[s.Name] = s
+			return nil
+		})
+	})
+	if err != nil {
+		return Deployment{}, false, fmt.Errorf("read deployment %s from the EN store: %w", id, err)
+	}
+	return d, ok, nil
+}
+
 // PutApplied records a, replacing the deployment's previous Applied record (SPEC §8.9 steps 4.4
 // and 6). Its component states are kept.
 func (b *Bolt) PutApplied(_ context.Context, id uuid.UUID, a Applied) error {

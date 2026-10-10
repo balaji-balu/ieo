@@ -168,12 +168,19 @@ func (d *Digest) UnmarshalText(b []byte) error {
 // §4.2): `<deployment_id>-<component_name>`, lowercased, with every character outside
 // [a-z0-9_-] replaced by `-`.
 func ComposeProjectName(deploymentID uuid.UUID, component string) string {
+	return deploymentID.String() + "-" + ComponentSlug(component)
+}
+
+// ComponentSlug returns a component name as it appears in its Compose project name and in the
+// EN's directory layout (SPEC §4.2, §9.1): lowercased, with every character outside [a-z0-9_-]
+// replaced by `-`. Two names may share a slug; a deployment where they do is invalid (SPEC §8.9).
+func ComponentSlug(component string) string {
 	return strings.Map(func(r rune) rune {
 		if projectNameRune(r) {
 			return r
 		}
 		return '-'
-	}, strings.ToLower(deploymentID.String()+"-"+component))
+	}, strings.ToLower(component))
 }
 
 // IsComposeProjectName reports whether s has the form ComposeProjectName produces for a non-empty
