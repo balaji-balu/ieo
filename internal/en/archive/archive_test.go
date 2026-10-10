@@ -146,9 +146,9 @@ func TestExtractAcceptsDotSlashNames(t *testing.T) {
 	}
 }
 
-// SPEC §17.6: Archives are rejected for: two top-level directories; missing `compose.yaml`;
+// SPEC §17.6: "Archives are rejected for: two top-level directories; missing `compose.yaml`;
 // `docker-compose.yml` instead of `compose.yaml`; absolute path; `..` segment; symlink escaping
-// the directory; hard link escaping the directory.
+// the directory; hard link escaping the directory."
 func TestSpec_17_6_ArchiveRejected(t *testing.T) {
 	valid := func(more ...archivetest.Entry) []archivetest.Entry {
 		return append(archivetest.Valid("app", composeYAML), more...)
@@ -184,10 +184,10 @@ func TestSpec_17_6_ArchiveRejected(t *testing.T) {
 	}
 }
 
-// SPEC §17.6: Archives are rejected for: an entry that is not a file, directory or link; a path
+// SPEC §17.6: "Archives are rejected for: an entry that is not a file, directory or link; a path
 // held by an earlier entry; a path through a symbolic link; a `compose.yaml` that is a link; a
 // symbolic link that leaves the directory only through another link; a hard link to a path no
-// earlier entry holds.
+// earlier entry holds."
 func TestSpec_17_6_ArchiveRejectedEntries(t *testing.T) {
 	valid := func(more ...archivetest.Entry) []archivetest.Entry {
 		return append(archivetest.Valid("app", composeYAML), more...)
@@ -262,7 +262,7 @@ func TestExtractRejects(t *testing.T) {
 	}
 }
 
-// SPEC §17.6: setuid, setgid and sticky bits are cleared after extraction.
+// SPEC §17.6: "setuid, setgid and sticky bits are cleared after extraction."
 func TestSpec_17_6_SpecialBitsCleared(t *testing.T) {
 	_, dir := componentDir(t)
 	entries := []archivetest.Entry{
@@ -298,9 +298,10 @@ func TestSpec_17_6_SpecialBitsCleared(t *testing.T) {
 	}
 }
 
-// SPEC §17.6: An archive with more than `en.archive.max_entries` entries, or whose files
+// SPEC §17.6: "An archive with more than `en.archive.max_entries` entries, or whose files
 // decompress to more than `en.archive.max_extracted_bytes`, fails with `IEO-ARCHIVE-INVALID`; no
-// more than the limit is written, and nothing extracted is left behind.
+// more than the limit is written, and nothing extracted is left behind." The error code is the
+// EN's mapping of ErrInvalid (roadmap D4).
 func TestSpec_17_6_ArchiveLimits(t *testing.T) {
 	body := strings.Repeat("x", 500)
 	entries := append(archivetest.Valid("app", composeYAML), // 2 entries
