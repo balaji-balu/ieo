@@ -28,10 +28,10 @@ type Host struct {
 type HostActual struct {
 	// ReportedAt is the `at` of the report the state comes from. It must not be zero.
 	ReportedAt time.Time
-	// Deployments lists what the host runs: each deployment once, with a valid digest, and each of
-	// its components once, with a name and a state of SPEC §4.1.9. In a HostActual a store
-	// returns, this list and every deployment's Components are empty, not nil, when they hold
-	// nothing.
+	// Deployments lists what the host runs: each deployment once, with an ID and a valid digest,
+	// and each of its components once, with a name and a state of SPEC §4.1.9. In a HostActual a
+	// store returns, this list and every deployment's Components are empty, not nil, when they
+	// hold nothing.
 	Deployments []contract.InventoryDeployment
 }
 
@@ -43,7 +43,7 @@ type HostState struct {
 }
 
 // hostRecord is one host in the hosts bucket, as JSON (ADR 0015). Every key is always written, so
-// a missing one is damage.
+// decodeHosts treats a missing one as damage.
 type hostRecord struct {
 	Capabilities    *contract.DeviceCapabilities `json:"capabilities"`
 	Labels          map[string]string            `json:"labels"`
@@ -92,6 +92,9 @@ func checkActual(r actualRecord) error {
 	}
 	deployments := make(map[uuid.UUID]bool, len(r.Deployments))
 	for _, d := range r.Deployments {
+		if d.DeploymentID == uuid.Nil {
+			return errors.New("a deployment has no ID")
+		}
 		if deployments[d.DeploymentID] {
 			return fmt.Errorf("deployment %s is listed twice", d.DeploymentID)
 		}
@@ -138,12 +141,24 @@ func decodeHosts(hosts, actual records) (map[contract.HostID]HostState, error) {
 		if err != nil {
 			return fmt.Errorf("hosts key %q: %w", k, err)
 		}
+		var keys map[string]json.RawMessage
+		if err := json.Unmarshal(v, &keys); err != nil {
+			return fmt.Errorf("host %s: %w", id, err)
+		}
+		for _, name := range []string{"capabilities", "labels", "lastHeartbeatAt"} {
+			if _, ok := keys[name]; !ok {
+				return fmt.Errorf("host %s: no %s", id, name)
+			}
+		}
 		var r hostRecord
 		if err := json.Unmarshal(v, &r); err != nil {
 			return fmt.Errorf("host %s: %w", id, err)
 		}
 		if r.Labels == nil {
 			return fmt.Errorf("host %s: no labels", id)
+		}
+		if r.Capabilities != nil && r.Capabilities.ID.Site == "" {
+			return fmt.Errorf("host %s: capabilities without a device ID", id)
 		}
 		h := Host{Capabilities: r.Capabilities, Labels: r.Labels}
 		if r.LastHeartbeatAt != nil {

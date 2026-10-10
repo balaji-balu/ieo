@@ -74,9 +74,13 @@ func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv 
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", keyDataDir, err)
 	}
-	s, err := store.OpenBolt(filepath.Join(cfg.DataDir, storeFile))
+	storePath := filepath.Join(cfg.DataDir, storeFile)
+	s, err := store.OpenBolt(storePath)
 	if err != nil {
 		return err
+	}
+	if v := s.MigratedFrom(); v != 0 { // ADR 0015: one way; an LO of the earlier layout refuses the file
+		log.Info("LO store migrated to a new layout", "store", storePath, "from_layout", v)
 	}
 	defer func() {
 		if err := s.Close(); err != nil {

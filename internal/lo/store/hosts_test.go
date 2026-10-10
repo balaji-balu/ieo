@@ -2,16 +2,20 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/balaji-balu/ieo/internal/contract"
 	"github.com/balaji-balu/ieo/internal/lo/store"
+	losync "github.com/balaji-balu/ieo/internal/lo/sync"
 )
 
 // The buckets layout version 2 adds (ADR 0015), which these tests write directly.
@@ -85,6 +89,15 @@ func twoDeployments() store.HostActual {
 // newHost is the host record the first PutActual creates.
 func newHost(a store.HostActual) store.HostState {
 	return store.HostState{Host: store.Host{Labels: map[string]string{}}, Actual: &a}
+}
+
+// The zero Memory is an empty store, as it was before it kept hosts.
+func TestMemoryZeroValueKeepsHosts(t *testing.T) {
+	var m store.Memory
+	putActual(t, &m, host1, actualOf())
+	if got := loadHosts(t, &m); len(got) != 1 {
+		t.Errorf("LoadHosts = %+v, want host-01", got)
+	}
 }
 
 func TestHostsStartEmpty(t *testing.T) {
@@ -174,6 +187,7 @@ func TestPutActualRefusesInvalidState(t *testing.T) {
 		{"empty host ID", "", actualOf()},
 		{"no report time", host1, store.HostActual{}},
 		{"digest not sha256", host1, actualOf(contract.InventoryDeployment{DeploymentID: idA, Digest: "md5:00"})},
+		{"deployment without an ID", host1, actualOf(contract.InventoryDeployment{Digest: digestA})},
 		{"unknown state", host1, actualOf(component("web", "running"))},
 		{"component without a name", host1, actualOf(component("", contract.StateInstalled))},
 		{"deployment listed twice", host1, actualOf(component("web", contract.StateInstalled), component("db", contract.StateInstalled))},
@@ -270,7 +284,12 @@ func TestBoltPutActualKeepsTheHostRecord(t *testing.T) {
 func dump(t *testing.T, path string) map[string]map[string]string {
 	t.Helper()
 	out := map[string]map[string]string{}
-	rawUpdate(t, path, func(tx *bolt.Tx) error {
+	db, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true}) // reading must not change the file
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer func() { _ = db.Close() }()
+	err = db.View(func(tx *bolt.Tx) error {
 		return tx.ForEach(func(name []byte, b *bolt.Bucket) error {
 			records := map[string]string{}
 			out[string(name)] = records
@@ -280,24 +299,61 @@ func dump(t *testing.T, path string) map[string]map[string]string {
 			})
 		})
 	})
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
 	return out
+}
+
+// layout1 writes at path a store file as roadmap slice C wrote it (layout version 1, ADR 0014),
+// without using the store, and returns the state it holds.
+func layout1(t *testing.T, path string) losync.State {
+	t.Helper()
+	want := losync.State{Version: 3, ETag: `"e3"`, Desired: desiredOf(2, map[uuid.UUID]string{idA: "a2", idB: "b2"})}
+	rawUpdate(t, path, func(tx *bolt.Tx) error {
+		meta, err := tx.CreateBucket(bucketMeta)
+		if err != nil {
+			return err
+		}
+		syncBucket, err := tx.CreateBucket(bucketSync)
+		if err != nil {
+			return err
+		}
+		desired, err := tx.CreateBucket(bucketDesired)
+		if err != nil {
+			return err
+		}
+		for id, d := range want.Desired {
+			v, err := json.Marshal(map[string]any{"digest": d.Digest, "adoptedManifestVersion": d.AdoptedVersion, "yaml": d.YAML})
+			if err != nil {
+				return err
+			}
+			if err := desired.Put([]byte(id.String()), v); err != nil {
+				return err
+			}
+		}
+		return errors.Join(
+			meta.Put(keySchema, u64(1)),
+			syncBucket.Put(keyVersion, u64(uint64(want.Version))),
+			syncBucket.Put([]byte("etag"), []byte(want.ETag)),
+		)
+	})
+	return want
 }
 
 // A store file of layout version 1 (roadmap slice C) is migrated when it is opened: it gets the
 // empty `hosts` and `actual` buckets, and keeps everything it held (ADR 0015).
 func TestBoltMigratesLayoutVersion1(t *testing.T) {
-	path, want := committed(t)
-	// Make the file what slice C wrote: version 1, without the buckets version 2 adds.
-	rawUpdate(t, path, func(tx *bolt.Tx) error {
-		_ = tx.DeleteBucket(bucketHosts)
-		_ = tx.DeleteBucket(bucketActual)
-		return tx.Bucket(bucketMeta).Put(keySchema, u64(1))
-	})
+	path := filepath.Join(t.TempDir(), "lo.db")
+	want := layout1(t, path)
 	before := dump(t, path)
 
 	b, err := store.OpenBolt(path)
 	if err != nil {
 		t.Fatalf("OpenBolt of a version 1 file: %v", err)
+	}
+	if got := b.MigratedFrom(); got != 1 {
+		t.Errorf("MigratedFrom = %d, want 1", got)
 	}
 	if got := load(t, b); !reflect.DeepEqual(got, want) {
 		t.Errorf("after migrating: Load = %+v, want %+v", got, want)
@@ -307,6 +363,11 @@ func TestBoltMigratesLayoutVersion1(t *testing.T) {
 	}
 	putActual(t, b, host1, twoDeployments())
 	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if again := openBolt(t, path); again.MigratedFrom() != 0 {
+		t.Errorf("second open: MigratedFrom = %d, want 0: the file is already version 2", again.MigratedFrom())
+	} else if err := again.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -330,6 +391,9 @@ func TestBoltCreatesLayoutVersion2(t *testing.T) {
 	b, err := store.OpenBolt(path)
 	if err != nil {
 		t.Fatalf("OpenBolt: %v", err)
+	}
+	if v := b.MigratedFrom(); v != 0 {
+		t.Errorf("MigratedFrom = %d for a new file, want 0", v)
 	}
 	if err := b.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -364,6 +428,10 @@ func TestBoltLoadHostsFailsOnDamagedStore(t *testing.T) {
 		damage func(tx *bolt.Tx) error
 	}{
 		{"host record not JSON", put(bucketHosts, "host-01", "{")},
+		{"host record without a capabilities key", put(bucketHosts, "host-01", `{"labels":{},"lastHeartbeatAt":null}`)},
+		{"host record without a heartbeat key", put(bucketHosts, "host-01", `{"capabilities":null,"labels":{}}`)},
+		{"capabilities without a device ID", put(bucketHosts, "host-01", `{"capabilities":{},"labels":{},"lastHeartbeatAt":null}`)},
+		{"deployment without an ID", put(bucketActual, "host-01", `{"reportedAt":"2026-10-10T12:00:00Z","deployments":[{"digest":"`+string(digestA)+`","components":[]}]}`)},
 		{"host record without labels", put(bucketHosts, "host-01", `{"capabilities":null,"labels":null,"lastHeartbeatAt":null}`)},
 		{"host key not a host ID", put(bucketHosts, "site/host", goodHost)},
 		{"actual record not JSON", put(bucketActual, "host-01", "{")},

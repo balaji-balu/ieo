@@ -16,7 +16,8 @@ import (
 
 var _ losync.Store = (*Memory)(nil)
 
-// Memory is an in-memory store. It is safe for concurrent use; its state is lost on exit.
+// Memory is an in-memory store. It is safe for concurrent use; its state is lost on exit. The
+// zero Memory is an empty store.
 type Memory struct {
 	mu    sync.Mutex
 	state losync.State
@@ -83,7 +84,7 @@ func (m *Memory) LoadHosts(_ context.Context) (map[contract.HostID]HostState, er
 	}
 	out, err := decodeHosts(each(m.hosts), each(m.actual))
 	if err != nil {
-		return nil, fmt.Errorf("load hosts: %w", err)
+		return nil, fmt.Errorf("load hosts from the LO store: %w", err) // as Bolt words it
 	}
 	return out, nil
 }
@@ -96,6 +97,9 @@ func (m *Memory) PutActual(_ context.Context, host contract.HostID, a HostActual
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.hosts == nil { // the zero Memory is an empty store
+		m.hosts, m.actual = map[string][]byte{}, map[string][]byte{}
+	}
 	if _, ok := m.hosts[string(key)]; !ok {
 		m.hosts[string(key)] = newHostRecord()
 	}

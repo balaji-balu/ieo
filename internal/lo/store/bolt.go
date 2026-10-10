@@ -46,7 +46,8 @@ type record struct {
 // Bolt is the LO's durable store: an embedded bbolt file laid out as ADR 0014 says (SPEC §12).
 // It is safe for concurrent use. Every write is one transaction, synced to disk when it commits.
 type Bolt struct {
-	db *bolt.DB
+	db           *bolt.DB
+	migratedFrom uint64 // the layout version OpenBolt migrated the file from; 0 if it did not
 }
 
 // OpenBolt opens the store file at path, creating it if it does not exist, with mode 0600 (on
@@ -58,12 +59,28 @@ func OpenBolt(path string) (*Bolt, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open LO store %s: %w", path, err)
 	}
-	if err := db.Update(initLayout); err != nil {
+	var found uint64 // the file's layout version; 0 for a new file
+	err = db.Update(func(tx *bolt.Tx) error {
+		if meta := tx.Bucket(bucketMeta); meta != nil {
+			found, _ = u64(meta.Get(keySchema)) // initLayout reports a version it cannot read
+		}
+		return initLayout(tx)
+	})
+	if err != nil {
 		_ = db.Close() // the layout error is the one to report
 		return nil, fmt.Errorf("open LO store %s: %w", path, err)
 	}
-	return &Bolt{db: db}, nil
+	b := &Bolt{db: db}
+	if found != 0 && found != schema {
+		b.migratedFrom = found
+	}
+	return b, nil
 }
+
+// MigratedFrom returns the layout version the store file had when OpenBolt migrated it to the
+// one this code writes, or 0 if OpenBolt did not migrate it. A migration cannot be undone, and an
+// LO that knows only the earlier layout refuses the file (ADR 0015), so the caller logs it.
+func (b *Bolt) MigratedFrom() uint64 { return b.migratedFrom }
 
 // initLayout creates the layout in an empty file, migrates a file of layout version 1, and checks
 // the version of any other.
