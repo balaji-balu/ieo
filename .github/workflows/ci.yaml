@@ -78,6 +78,11 @@ jobs:
       # PRs: everything the branch adds since it left the base.
       # main: the merged commit against its first parent (the previous main),
       # which exists even after a force-push or on a first push.
+      #
+      # The changed lines are passed as a patch that ignores a carriage return
+      # at the end of a line, so a commit that only renormalizes line endings
+      # (.gitattributes) doesn't make every legacy finding in the file "new".
+      # A CR there never carries meaning in Go source, so no finding is hidden.
       - name: Choose baseline revision
         id: base
         env:
@@ -85,10 +90,12 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           if [ "$EVENT" = "pull_request" ]; then
-            echo "flag=--new-from-merge-base=origin/$BASE_REF" >> "$GITHUB_OUTPUT"
+            base=$(git merge-base "origin/$BASE_REF" HEAD)
           else
-            echo "flag=--new-from-rev=HEAD^1" >> "$GITHUB_OUTPUT"
+            base=$(git rev-parse HEAD^1)
           fi
+          git diff --ignore-cr-at-eol "$base" > "$RUNNER_TEMP/new.patch"
+          echo "flag=--new-from-patch=$RUNNER_TEMP/new.patch" >> "$GITHUB_OUTPUT"
 
       - name: golangci-lint (includes gofmt, goimports, govet)
         run: golangci-lint run ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh test)
