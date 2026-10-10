@@ -23,9 +23,11 @@ with the Git-based LO (ADR 0002).
     or splits a subject;
   - the connection settings below.
   Message types, schemas and handlers stay where they are: `internal/contract` and each consumer.
-- **IDs in subjects.** A site ID or host ID that contains `.` is refused (SPEC §4.2). The ID types
-  in `internal/contract` refuse it when they parse, so the CO, the LO and the EN all do; the subject
-  builders accept only those types.
+- **IDs in subjects.** A site ID or host ID that contains `.` cannot go into a subject (SPEC §4.2).
+  The check is this package's: the function that takes a tier's site ID, and on the EN its host ID,
+  fails on one, and `cmd/lo` and `cmd/en` call it at startup and exit with a configuration error.
+  The ID types in `internal/contract` do not change: an ID with `.` still parses, and the CO, the
+  stores and the Margo payloads are not affected.
 - **URL.** One server URL per tier (`lo.nats.url`, `en.nats_url`).
   - The scheme must be `tls://`, unless the tier's `nats_insecure` is true (SPEC §15.6). With it, a
     warning at startup names the URL.
@@ -52,8 +54,13 @@ with the Git-based LO (ADR 0002).
   the LO in the next inventory.
 - **Commands.** The LO sends a command as a request with `lo.command.ack_timeout`. "No subscriber"
   from the server and a timeout are the same outcome for the caller (SPEC §8.5, §11.2).
-- **Shutdown.** A tier first drains its subscriptions, so no handler is running or still to come,
+- **Shutdown.** A tier first stops its subscriptions, so no handler is running or still to come,
   then waits for its own work (on the EN, `Dispatcher.Wait`), then closes the connection.
+  - While connected, a subscription is drained: the server is told to stop, and the messages
+    already received are handled. The drain is given 5 seconds.
+  - While disconnected, or when the drain does not end in time, the subscription is removed on the
+    client alone, which needs no server, and the tier waits for the handler in progress to return.
+  - Either way the package returns only when no handler of that subscription will run again.
 - **Tests.** The package and the wiring that uses it are tested against a real `nats-server`
   started in the test process on a loopback port chosen by the system (module
   `github.com/nats-io/nats-server/v2`, imported only from `_test.go` files). Tests that need no
@@ -64,8 +71,8 @@ with the Git-based LO (ADR 0002).
   server returns. Nothing restarts it in a loop.
 - A wrong password does not stop the tier. It shows only as a repeating warning, so an operator
   must read the log or, from roadmap M, the metrics.
-- A status event published during an outage is lost as a message. The LO sees the state at the
-  next inventory, at most `en.inventory.interval` after reconnecting, and at once on reconnect.
+- A status event published during an outage is lost as a message. The LO sees the state in the
+  inventory the EN publishes when it reconnects.
 - An Apply command carries the whole deployment. One larger than the server's maximum payload
   (1 MiB by default) cannot be sent; the send fails and is logged like a rejected command.
 - The test binary of a few packages links `nats-server`. It is not in any shipped binary. These
@@ -88,3 +95,6 @@ with the Git-based LO (ADR 0002).
   one that is true now.
 - Encode IDs so that `.` can appear in a subject: subjects would no longer read as the IDs they
   carry, in logs and in server permissions (roadmap O), to allow a character no site needs.
+- Refuse `.` in the ID types of `internal/contract`, for every tier: an ID with `.` is a valid
+  Margo device ID, and the same parsing reads stored rows, `host.id` and Margo payloads, so IDs
+  that exist today would stop loading.

@@ -30,8 +30,9 @@ so new buckets need a layout version and a migration.
   mapping read as `pending` (SPEC §8.7). States from the old digest are never carried over.
 - A removal event (`removing` or `removed`) names no component (SPEC §11.2), so the rule above does
   not fit it. It holds for the whole deployment on that host (SPEC §7.5), added in roadmap D5:
-  - `removing` sets every component `actual[h]` holds for the deployment to `removing`, and the
-    entry's digest to the event's. Their errors are dropped.
+  - `removing` sets every component `actual[h]` holds for the deployment to `removing`, and drops
+    their errors. The entry keeps its digest: its components were reported at that digest, and
+    none is carried to another.
   - `removed` deletes the deployment's entry from `actual[h]`. The record never holds a deployment
     in state `removed`: the planner reads an absent entry as "not on the host" (SPEC §8.5), and
     status mapping (roadmap E) reports every component `removed` from the event, not from the
@@ -40,8 +41,11 @@ so new buckets need a layout version and a migration.
     has no component to set, and `removed` is already true.
   - The event's digest is not compared with the one held. The EN reports the digest it had applied
     (SPEC §8.9), and a removal is about the deployment at whatever digest the host ran.
-- A status event for a host with no `actual` record creates the record, with `reportedAt` the
-  event's `at`. It does not make the host `Online`: only an inventory does (SPEC §7.3 interim rule).
+- A status event of any kind for a host with no `actual` record is logged and dropped, and changes
+  nothing: only an inventory creates the record, as only an inventory makes the host `Online`
+  (SPEC §7.3 interim rule). An EN publishes inventory when it connects and when the LO asks, so
+  the record exists before a command can produce an event; an event that arrives earlier is
+  covered by that inventory. `actual` therefore never holds a host that `hosts` does not.
 - Every change to `actual[h]` from one message is one write transaction.
 - `OpenBolt` migrates version 1 to 2 in one write transaction: it creates the empty `hosts` and
   `actual` buckets and sets `schema` to 2. A new file is created at version 2. A file at any other
