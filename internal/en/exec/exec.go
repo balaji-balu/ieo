@@ -96,7 +96,7 @@ func (e *Executor) Apply(ctx context.Context, cmd contract.Command, superseded f
 	if cmd.Deployment == nil {
 		return fmt.Errorf("apply %s: the command has no deployment", cmd.DeploymentID)
 	}
-	if err := e.apply(ctx, cmd); err != nil {
+	if err := e.apply(ctx, cmd, superseded); err != nil {
 		return fmt.Errorf("apply %s at %s: %w", cmd.DeploymentID, cmd.Digest, err)
 	}
 	return nil
@@ -110,7 +110,7 @@ type applyRun struct {
 	projects []string // the deployment's recorded Compose projects, in the order first recorded
 }
 
-func (e *Executor) apply(ctx context.Context, cmd contract.Command) error {
+func (e *Executor) apply(ctx context.Context, cmd contract.Command, superseded func() bool) error {
 	components := cmd.Deployment.Spec.DeploymentProfile.Components
 	current, _, err := e.store.Get(ctx, cmd.DeploymentID)
 	if err != nil {
@@ -137,6 +137,9 @@ func (e *Executor) apply(ctx context.Context, cmd contract.Command) error {
 		runErr = err
 		if err != nil || !installed {
 			break // SPEC §8.9 step 4.6: later components are not started
+		}
+		if superseded != nil && superseded() {
+			break // SPEC §8.9: a newer command waits; it runs once this Apply is recorded
 		}
 	}
 	// SPEC §8.9 step 6: recorded whether the Apply succeeded or not.
