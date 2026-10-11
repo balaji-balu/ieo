@@ -93,7 +93,7 @@ func ParseApplicationDescription(b []byte) (ApplicationDescription, error) {
 	return desc, nil
 }
 
-// checkPlainYAML rejects input that isn't exactly one YAML document, or that uses aliases (SPEC
+// checkPlainYAML rejects input that isn't exactly one YAML document with content, or that uses aliases (SPEC
 // §5.3). The description comes from a registry and is untrusted: a few hundred bytes of nested
 // aliases expand to gigabytes. Parsing to the AST doesn't expand them.
 func checkPlainYAML(b []byte) error {
@@ -103,6 +103,9 @@ func checkPlainYAML(b []byte) error {
 	}
 	if len(f.Docs) != 1 {
 		return fmt.Errorf("want one YAML document, found %d", len(f.Docs))
+	}
+	if f.Docs[0].Body == nil { // empty, or only comments: there is nothing to walk
+		return errors.New("the YAML document is empty")
 	}
 	if aliases := ast.Filter(ast.AliasType, f.Docs[0]); len(aliases) > 0 {
 		pos := aliases[0].GetToken().Position

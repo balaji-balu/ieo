@@ -133,3 +133,14 @@ func TestParseApplicationDescriptionRejects(t *testing.T) {
 		})
 	}
 }
+
+// An empty document is refused like any other invalid description; it is untrusted input and must
+// not stop the CO (SPEC §5.3, G-B4).
+func TestParseApplicationDescriptionRejectsEmptyYAML(t *testing.T) {
+	for _, in := range []string{"", "# only a comment\n", "---\n"} {
+		_, err := ParseApplicationDescription([]byte(in))
+		if !errors.Is(err, ErrInvalidApplicationDescription) || !strings.Contains(err.Error(), "empty") {
+			t.Errorf("ParseApplicationDescription(%q) = %v, want ErrInvalidApplicationDescription naming an empty document", in, err)
+		}
+	}
+}
