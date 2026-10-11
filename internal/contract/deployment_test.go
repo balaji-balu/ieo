@@ -2,11 +2,14 @@ package contract_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/google/uuid"
 
 	"github.com/balaji-balu/ieo/internal/contract"
+	"github.com/balaji-balu/ieo/internal/contract/margotest"
 )
 
 const layoutDescription = `apiVersion: margo.org/v1-alpha1
@@ -134,5 +137,49 @@ func TestBuildApplicationDeploymentRejects(t *testing.T) {
 				t.Errorf("err = %v; wraps ErrDeploymentParameter = %v, want %v", err, got, tt.parameter)
 			}
 		})
+	}
+}
+
+// A deployment the CO builds is one an EN applies: it passes the check of SPEC §8.9 step 2 as the
+// `deployment` of an Apply, without the `annotations` the pinned OpenAPI file wrongly requires
+// (api/margo/f209a7f/README.md).
+func TestBuiltDeploymentIsAcceptedInAnApply(t *testing.T) {
+	built, err := contract.BuildApplicationDeployment([]byte(layoutDescription), layoutChoices())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	js, err := yaml.YAMLToJSON(built)
+	if err != nil {
+		t.Fatalf("deployment YAML to JSON: %v", err)
+	}
+	if err := margotest.Validate(margotest.Load(t).Schema(t, "appDeploymentManifest"), js); err != nil {
+		t.Errorf("the built deployment fails Margo's appDeploymentManifest: %v", err)
+	}
+	apply := `{"commandId":"` + testUUID2 + `","action":"apply","deploymentId":"` + testUUID +
+		`","digest":"` + testDigest + `","deployment":` + string(js) + `}`
+	cmd, err := contract.DecodeCommand([]byte(apply))
+	if err != nil {
+		t.Fatalf("DecodeCommand: %v", err)
+	}
+	// The LO sends the decoded value, so it must pass again once encoded from the Go type.
+	again, err := contract.EncodeSiteMessage(cmd)
+	if err != nil {
+		t.Fatalf("encode the decoded Apply: %v", err)
+	}
+	if _, err := contract.DecodeCommand(again); err != nil {
+		t.Errorf("DecodeCommand of the encoded Apply: %v", err)
+	}
+}
+
+// The metadata of Margo's own valid DesiredState examples (pinned commit,
+// resources/examples/valid/DesiredState-001.yaml) has a name, a namespace and a device ID, and
+// nothing else.
+func TestMargoDesiredStateMetadataValidates(t *testing.T) {
+	doc := strings.Replace(deploymentJSON, `,"annotations":{"note":"x"}`, "", 1)
+	if doc == deploymentJSON {
+		t.Fatal("test setup: deploymentJSON has no annotations to drop")
+	}
+	if err := margotest.Validate(margotest.Load(t).Schema(t, "appDeploymentManifest"), []byte(doc)); err != nil {
+		t.Errorf("a deployment without annotations fails Margo's appDeploymentManifest: %v", err)
 	}
 }
