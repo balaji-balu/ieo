@@ -828,6 +828,12 @@ func TestSafetyTimerReconcilesAllHosts(t *testing.T) {
 	f.sender.release(t, host1)
 	f.waitIdle(host1)
 
+	// A host marked while Run has nothing to do gets its pass at once, not at the next timer.
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(time.Second)))
+	recv(t, f.sender.started, "the pass for an inventory that arrives while Run is idle")
+	f.sender.release(t, host1)
+	f.waitIdle(host1)
+
 	clock.Advance(interval - time.Nanosecond)
 	clock.Advance(time.Nanosecond)
 	// Run sets the next timer before it starts the pass the timer asked for.
@@ -837,7 +843,7 @@ func TestSafetyTimerReconcilesAllHosts(t *testing.T) {
 	if s := recv(t, f.sender.started, "the pass for the safety timer"); s.what() != apply(idA, a) {
 		t.Errorf("the safety timer's pass sent %s", s.what())
 	}
-	if n := len(f.sender.to(host1)); n != 2 {
+	if n := len(f.sender.to(host1)); n != 3 {
 		t.Errorf("%d commands sent, want one per pass", n)
 	}
 	f.sender.release(t, host1)
@@ -885,5 +891,54 @@ func TestNewFails(t *testing.T) {
 	broken := &testStore{Memory: store.NewMemory(), failLoad: errors.New("disk gone")}
 	if r, err := reconcile.New(context.Background(), valid, broken, newSender()); err == nil || r != nil {
 		t.Errorf("New with a store that cannot be read = %v, %v; want an error", r, err)
+	}
+}
+
+// SPEC §8.5: an LO that has accepted no State Manifest does not know what should run, so it sends
+// no command. Without this, an LO starting with a new or lost store (SPEC §12) would remove
+// everything its hosts run, on their first inventories.
+func TestNoCommandBeforeAManifestIsAccepted(t *testing.T) {
+	f := newFixture(t, nil)
+	running := deployment(idC, otherDigest, component("web", contract.StateInstalled))
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start, running))
+	equal(t, "pass before any manifest", f.pass(host1), nil)
+	f.r.ReconcileAll(f.ctx)
+	equal(t, "pass after ReconcileAll, still without a manifest", f.pass(host1), nil)
+	if lines := f.lines("no State Manifest accepted yet"); len(lines) != 2 || lines[0]["site_id"] != "site-1" {
+		t.Errorf("log lines, want one by New and one by ReconcileAll: %v", lines)
+	}
+
+	// The sync loop replaces desired state, starts reconciling and only then commits the version
+	// (SPEC §8.2 steps 6–8): desired state that holds a deployment is acted on at once.
+	a := want(t, idA, "site-1/host-1", "a")
+	f.setDesired(map[uuid.UUID]losync.Desired{idA: a})
+	f.r.ReconcileAll(f.ctx)
+	equal(t, "pass for the first manifest", f.pass(host1), []string{apply(idA, a), remove(idC, otherDigest)})
+
+	// An accepted manifest without deployments does mean that nothing should run.
+	f.setDesired(nil)
+	if err := f.store.CommitVersion(f.ctx, 2, "etag"); err != nil {
+		t.Fatalf("test setup: CommitVersion: %v", err)
+	}
+	f.r.ReconcileAll(f.ctx)
+	equal(t, "pass for an accepted empty manifest", f.pass(host1), []string{remove(idC, otherDigest)})
+}
+
+// A deployment directed to a host that has published no Inventory gets no command (SPEC §7.3
+// interim rule); it is logged when all hosts are reconciled, so that it leaves a trace until
+// status reporting arrives (SPEC §8.4, roadmap slice E).
+func TestDeploymentForAHostWithoutInventoryIsLogged(t *testing.T) {
+	a, b := want(t, idA, "site-1/host-1", "a"), want(t, idB, "site-1/host-2", "b")
+	f := newFixture(t, map[uuid.UUID]losync.Desired{idA: a, idB: b})
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start))
+	f.r.ReconcileAll(f.ctx)
+	f.r.RunPending(f.ctx)
+	equal(t, "commands to the host that reported", f.sender.take(host1), []string{apply(idA, a)})
+	equal(t, "commands to the host that did not", f.sender.take(host2), nil)
+
+	lines := f.lines("desired deployment waits for an inventory of its host")
+	if len(lines) != 1 || lines[0]["site_id"] != "site-1" || lines[0]["host_id"] != "host-2" ||
+		lines[0]["deployment_id"] != idB.String() || lines[0]["digest"] != string(b.Digest) {
+		t.Errorf("log lines: %v", lines)
 	}
 }
