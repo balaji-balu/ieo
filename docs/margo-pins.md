@@ -18,6 +18,7 @@ ADR 0010). The pinned OpenAPI file lives in `api/margo/<commit>/`.
   `annotations`, which the schema does not define and Margo's `DesiredState` definition and valid
   examples at this commit do not have. The entry is dropped in memory, so the deployments the CO
   builds (SPEC §4.1.5) pass the EN's check (§8.9 step 2); see `api/margo/f209a7f/README.md`.
+  Added file, same commit: `DesiredState-001.yaml`, Margo's valid example, as test data for it.
 - Known upstream inconsistency (roadmap slice B3a): `margo-management-interface/api-requirements-and-security.md`
   says a retired client gets the `wfm-client-relationship-retired` problem type, but
   `problem-types.md` has no such entry and requires responses to use its registry; the same page's

@@ -58,15 +58,22 @@ func TestWorkloadManagementAPIDocumentDropsUndefinedRequired(t *testing.T) {
 	}
 	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
 	metadata := schemas["appDeploymentMetadata"].(map[string]any)
-	var got []string
-	for _, r := range metadata["required"].([]any) {
-		got = append(got, r.(string))
+	required := metadata["required"].([]any)
+	if slices.Contains(required, any("annotations")) {
+		t.Errorf("appDeploymentMetadata still requires annotations: %v", required)
 	}
-	if want := []string{"name", "namespace", "deviceId"}; !slices.Equal(got, want) {
-		t.Errorf("appDeploymentMetadata required = %v, want %v", got, want)
+	for _, name := range []string{"name", "namespace", "deviceId"} {
+		if !slices.Contains(required, any(name)) {
+			t.Errorf("appDeploymentMetadata no longer requires %s: %v", name, required)
+		}
 	}
-	// The workaround is for this one defect: it must be dropped when a pin change fixes the file.
+
+	// The workaround is for this one defect. When a pin change brings a file without it, these
+	// fail: remove the workaround and its README row.
 	if _, defined := metadata["properties"].(map[string]any)["annotations"]; defined {
-		t.Error("appDeploymentMetadata now defines annotations: drop the workaround and its README row")
+		t.Error("the file now defines annotations in appDeploymentMetadata")
+	}
+	if !strings.Contains(string(margo.WorkloadManagementAPI), "required: [annotations, name, namespace, deviceId]") {
+		t.Error("the file no longer requires annotations in appDeploymentMetadata")
 	}
 }

@@ -193,12 +193,13 @@ type ApplicationDeployment struct {
 }
 
 // DeploymentMetadata names a deployment and its target. DeviceID is `<site>/<host>` for a
-// directed deployment or `<site>/*` for an autonomous one (SPEC §4.1.5).
+// directed deployment or `<site>/*` for an autonomous one (SPEC §4.1.5). Annotations is not part
+// of Margo's DesiredState and IEO writes none; one a deployment carries is kept.
 type DeploymentMetadata struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
 	DeviceID    DeviceID          `json:"deviceId"`
-	Annotations map[string]string `json:"annotations"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 }
 

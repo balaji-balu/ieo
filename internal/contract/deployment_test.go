@@ -2,6 +2,8 @@ package contract_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -169,17 +171,27 @@ func TestBuiltDeploymentIsAcceptedInAnApply(t *testing.T) {
 	if _, err := contract.DecodeCommand(again); err != nil {
 		t.Errorf("DecodeCommand of the encoded Apply: %v", err)
 	}
+	if strings.Contains(string(again), "annotations") {
+		t.Errorf("the encoded Apply names annotations, which the deployment does not have: %s", again)
+	}
 }
 
-// The metadata of Margo's own valid DesiredState examples (pinned commit,
-// resources/examples/valid/DesiredState-001.yaml) has a name, a namespace and a device ID, and
-// nothing else.
-func TestMargoDesiredStateMetadataValidates(t *testing.T) {
-	doc := strings.Replace(deploymentJSON, `,"annotations":{"note":"x"}`, "", 1)
-	if doc == deploymentJSON {
-		t.Fatal("test setup: deploymentJSON has no annotations to drop")
+// Margo's own valid DesiredState example at the pinned commit validates against the pinned
+// OpenAPI file once its defects are worked around: its metadata has a name, a namespace and a
+// device ID, and no annotations (api/margo/f209a7f/README.md).
+func TestMargoDesiredStateExampleValidates(t *testing.T) {
+	example, err := os.ReadFile(filepath.Join("..", "..", "api", "margo", "f209a7f", "DesiredState-001.yaml"))
+	if err != nil {
+		t.Fatalf("read Margo's example: %v", err)
 	}
-	if err := margotest.Validate(margotest.Load(t).Schema(t, "appDeploymentManifest"), []byte(doc)); err != nil {
-		t.Errorf("a deployment without annotations fails Margo's appDeploymentManifest: %v", err)
+	if strings.Contains(string(example), "annotations") {
+		t.Fatal("test setup: Margo's example has annotations")
+	}
+	js, err := yaml.YAMLToJSON(example)
+	if err != nil {
+		t.Fatalf("example YAML to JSON: %v", err)
+	}
+	if err := margotest.Validate(margotest.Load(t).Schema(t, "appDeploymentManifest"), js); err != nil {
+		t.Errorf("Margo's valid DesiredState example fails appDeploymentManifest: %v", err)
 	}
 }
