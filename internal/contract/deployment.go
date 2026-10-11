@@ -157,3 +157,15 @@ func get(m yaml.MapSlice, key string) any {
 	v, _ := lookup(m, key)
 	return v
 }
+
+// DecodeApplicationDeployment decodes the YAML bytes of one desired deployment, as an LO holds
+// them, into the deployment an Apply command carries (SPEC §8.5, §11.2). id is the deployment ID
+// the State Manifest lists the bytes under.
+//
+// It accepts exactly what DecodeCommand accepts as the `deployment` of an Apply for id (SPEC §8.9
+// step 2), so an LO never sends a deployment its ENs would refuse. Any failure wraps
+// ErrInvalidDeployment and names the reason, and the returned deployment is the zero value. The
+// bytes are checked for aliases before they are parsed, like every YAML IEO reads (SPEC §5.3).
+func DecodeApplicationDeployment(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
+	return ApplicationDeployment{}, errors.New("not implemented")
+}
