@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+
+	"github.com/google/uuid"
 )
 
-// ErrInvalidDeployment is returned, wrapped with the reason, for a Command that is a valid site
-// message but whose `deployment` an EN must not apply (SPEC §8.9 step 2). The EN acks such a
-// command `accepted: false` with CodeInvalidCommand and changes nothing.
-var ErrInvalidDeployment = errors.New("invalid deployment in command")
+// ErrInvalidDeployment is returned, wrapped with the reason, for a deployment an EN must not apply
+// (SPEC §8.9 step 2): by DecodeCommand for a Command that is a valid site message but carries
+// one, and by DecodeApplicationDeployment for the YAML of one. The EN acks such a command
+// `accepted: false` with CodeInvalidCommand and changes nothing; the LO sends no command for such
+// a YAML (SPEC §8.4).
+var ErrInvalidDeployment = errors.New("invalid deployment")
 
 // CodeInvalidCommand is the CommandAck error code for ErrInvalidDeployment (SPEC §10). It is
 // never a component status code.
@@ -43,7 +47,7 @@ func DecodeCommand(data []byte) (Command, error) {
 	if !apply {
 		return cmd, nil
 	}
-	d, err := decodeCommandDeployment(raw, cmd)
+	d, err := decodeDeployment(raw, cmd.DeploymentID)
 	if err != nil {
 		return cmd, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
 	}
@@ -51,8 +55,10 @@ func DecodeCommand(data []byte) (Command, error) {
 	return cmd, nil
 }
 
-// decodeCommandDeployment checks and decodes the deployment of an Apply (SPEC §8.9 step 2).
-func decodeCommandDeployment(raw any, cmd Command) (ApplicationDeployment, error) {
+// decodeDeployment checks and decodes raw, a parsed JSON value, as the deployment of an Apply for
+// deployment id (SPEC §8.9 step 2). The LO decodes what it sends with it and the EN what it
+// receives, so both refuse the same deployments.
+func decodeDeployment(raw any, id uuid.UUID) (ApplicationDeployment, error) {
 	if err := wfmSchemas()["appDeploymentManifest"].Validate(raw); err != nil {
 		return ApplicationDeployment{}, errors.New(schemaViolations(err))
 	}
@@ -60,8 +66,8 @@ func decodeCommandDeployment(raw any, cmd Command) (ApplicationDeployment, error
 	if err := decodeKnown(raw, &d); err != nil {
 		return ApplicationDeployment{}, errors.New("a value does not have the expected form")
 	}
-	if d.ID != cmd.DeploymentID {
-		return ApplicationDeployment{}, fmt.Errorf("deployment id %s is not the command's deploymentId %s", d.ID, cmd.DeploymentID)
+	if d.ID != id {
+		return ApplicationDeployment{}, fmt.Errorf("deployment id %s is not the deploymentId %s it is sent under", d.ID, id)
 	}
 	if d.Spec.DeploymentProfile.Type != "compose" {
 		return ApplicationDeployment{}, fmt.Errorf("deployment profile type %q is not compose", d.Spec.DeploymentProfile.Type)

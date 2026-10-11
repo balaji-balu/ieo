@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"maps"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/google/uuid"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // ErrDeploymentParameter is returned, wrapped with the parameter name, when a deployment would
@@ -156,4 +158,37 @@ func lookup(m yaml.MapSlice, key string) (any, bool) {
 func get(m yaml.MapSlice, key string) any {
 	v, _ := lookup(m, key)
 	return v
+}
+
+// DecodeApplicationDeployment decodes the YAML bytes of one desired deployment, as an LO holds
+// them, into the deployment an Apply command carries (SPEC §8.5, §11.2). id is the deployment ID
+// the State Manifest lists the bytes under.
+//
+// The YAML must be one document without aliases, like every YAML IEO reads (SPEC §5.3), and its
+// content must pass the checks DecodeCommand applies to the `deployment` of an Apply for id (SPEC
+// §8.9 step 2), so an LO never sends a deployment its ENs would refuse. The result holds the
+// fields IEO reads; keys ApplicationDeployment does not name, vendor extensions among them, are
+// not in it. Any failure wraps ErrInvalidDeployment and names the reason, and the returned
+// deployment is the zero value.
+func DecodeApplicationDeployment(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
+	d, err := decodeDeploymentYAML(id, b)
+	if err != nil {
+		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
+	}
+	return d, nil
+}
+
+func decodeDeploymentYAML(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
+	if err := checkPlainYAML(b); err != nil {
+		return ApplicationDeployment{}, err
+	}
+	js, err := yaml.YAMLToJSON(b)
+	if err != nil {
+		return ApplicationDeployment{}, err
+	}
+	raw, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
+	if err != nil {
+		return ApplicationDeployment{}, err
+	}
+	return decodeDeployment(raw, id)
 }
