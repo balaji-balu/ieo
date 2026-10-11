@@ -51,7 +51,25 @@ func WorkloadManagementAPIDocument() (map[string]any, error) {
 	if err := moveDottedRequired(schemas); err != nil {
 		return nil, err
 	}
+	dropUndefinedAnnotations(schemas)
 	return doc, nil
+}
+
+// dropUndefinedAnnotations removes `annotations` from the required list of appDeploymentMetadata
+// while the schema defines no such property. Margo's DesiredState definition and valid examples
+// at the same commit have none, so every deployment Margo calls valid would fail
+// (f209a7f/README.md). A file that defines the property, or no longer requires it, is left as it
+// is; the tests then say the workaround is no longer needed.
+func dropUndefinedAnnotations(schemas map[string]any) {
+	metadata, _ := schemas["appDeploymentMetadata"].(map[string]any)
+	props, _ := metadata["properties"].(map[string]any)
+	if _, defined := props["annotations"]; defined {
+		return
+	}
+	req, _ := metadata["required"].([]any)
+	if i := slices.Index(req, any("annotations")); i >= 0 {
+		metadata["required"] = slices.Delete(req, i, i+1)
+	}
 }
 
 // moveDottedRequired fixes `required` entries of the form `<property>.<field>`:

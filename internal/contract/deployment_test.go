@@ -2,11 +2,16 @@ package contract_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/google/uuid"
 
 	"github.com/balaji-balu/ieo/internal/contract"
+	"github.com/balaji-balu/ieo/internal/contract/margotest"
 )
 
 const layoutDescription = `apiVersion: margo.org/v1-alpha1
@@ -134,5 +139,59 @@ func TestBuildApplicationDeploymentRejects(t *testing.T) {
 				t.Errorf("err = %v; wraps ErrDeploymentParameter = %v, want %v", err, got, tt.parameter)
 			}
 		})
+	}
+}
+
+// A deployment the CO builds is one an EN applies: it passes the check of SPEC §8.9 step 2 as the
+// `deployment` of an Apply, without the `annotations` the pinned OpenAPI file wrongly requires
+// (api/margo/f209a7f/README.md).
+func TestBuiltDeploymentIsAcceptedInAnApply(t *testing.T) {
+	built, err := contract.BuildApplicationDeployment([]byte(layoutDescription), layoutChoices())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	js, err := yaml.YAMLToJSON(built)
+	if err != nil {
+		t.Fatalf("deployment YAML to JSON: %v", err)
+	}
+	if err := margotest.Validate(margotest.Load(t).Schema(t, "appDeploymentManifest"), js); err != nil {
+		t.Errorf("the built deployment fails Margo's appDeploymentManifest: %v", err)
+	}
+	apply := `{"commandId":"` + testUUID2 + `","action":"apply","deploymentId":"` + testUUID +
+		`","digest":"` + testDigest + `","deployment":` + string(js) + `}`
+	cmd, err := contract.DecodeCommand([]byte(apply))
+	if err != nil {
+		t.Fatalf("DecodeCommand: %v", err)
+	}
+	// The LO sends the decoded value, so it must pass again once encoded from the Go type.
+	again, err := contract.EncodeSiteMessage(cmd)
+	if err != nil {
+		t.Fatalf("encode the decoded Apply: %v", err)
+	}
+	if _, err := contract.DecodeCommand(again); err != nil {
+		t.Errorf("DecodeCommand of the encoded Apply: %v", err)
+	}
+	if strings.Contains(string(again), "annotations") {
+		t.Errorf("the encoded Apply names annotations, which the deployment does not have: %s", again)
+	}
+}
+
+// Margo's own valid DesiredState example at the pinned commit validates against the pinned
+// OpenAPI file once its defects are worked around: its metadata has a name, a namespace and a
+// device ID, and no annotations (api/margo/f209a7f/README.md).
+func TestMargoDesiredStateExampleValidates(t *testing.T) {
+	example, err := os.ReadFile(filepath.Join("..", "..", "api", "margo", "f209a7f", "DesiredState-001.yaml"))
+	if err != nil {
+		t.Fatalf("read Margo's example: %v", err)
+	}
+	if strings.Contains(string(example), "annotations") {
+		t.Fatal("test setup: Margo's example has annotations")
+	}
+	js, err := yaml.YAMLToJSON(example)
+	if err != nil {
+		t.Fatalf("example YAML to JSON: %v", err)
+	}
+	if err := margotest.Validate(margotest.Load(t).Schema(t, "appDeploymentManifest"), js); err != nil {
+		t.Errorf("Margo's valid DesiredState example fails appDeploymentManifest: %v", err)
 	}
 }

@@ -932,6 +932,8 @@ On **Apply** (deployment ID, digest, deployment YAML):
    `accepted: true` and do nothing else.
 2. Validate the command's `deployment`. It is valid only if it validates against the Margo
    deployment schema of the pinned OpenAPI (header; `components.schemas.appDeploymentManifest`),
+   with that file's known defects worked around (`api/margo/<commit>/README.md`: it requires a
+   `metadata.annotations` that neither it nor Margo's `DesiredState` defines, and §4.1.5 has none),
    its `id` equals the command's
    `deploymentId`, its `spec.deploymentProfile.type` is `compose`, and `[IEO]` no two of its
    components have the same Compose project name (§4.2), which would give them one project and one
