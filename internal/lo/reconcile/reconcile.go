@@ -81,6 +81,9 @@ type Reconciler struct {
 	// that get no command (SPEC §8.4). Both are replaced whole, never changed.
 	want    map[contract.HostID]map[uuid.UUID]wanted
 	skipped map[uuid.UUID]bool
+	// known says the LO knows what should run: it has accepted a State Manifest, or holds the
+	// desired state of the one it is accepting. Until then no pass sends a command (SPEC §8.5).
+	known bool
 }
 
 // host is what the Reconciler holds for one host.
@@ -151,6 +154,12 @@ func (r *Reconciler) loadDesired(ctx context.Context) error {
 			slog.String("deployment_id", u.id.String()), slog.String("digest", string(u.digest)), slog.String("reason", u.reason))
 	}
 	r.want, r.skipped = byHost, skipped
+	// The sync loop replaces desired state and starts reconciling before it commits the version
+	// (SPEC §8.2 steps 6–8), so desired state that holds a deployment is a manifest's too.
+	r.known = st.Version > 0 || len(st.Desired) > 0
+	if !r.known {
+		r.log.LogAttrs(ctx, slog.LevelInfo, "no State Manifest accepted yet", slog.String("effect", "no command is sent"))
+	}
 	return nil
 }
 
@@ -222,6 +231,22 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) {
 	for _, h := range r.hosts {
 		if h.online {
 			r.mark(h)
+		}
+	}
+	r.logWaiting(ctx)
+}
+
+// logWaiting logs each desired deployment whose host has published no Inventory since the LO
+// started: it gets no command until the host does (SPEC §7.3 interim rule). Status reporting
+// replaces this trace (SPEC §8.4, roadmap slice E). r.mu is held.
+func (r *Reconciler) logWaiting(ctx context.Context) {
+	for hostID, wants := range r.want {
+		if h := r.hosts[hostID]; h != nil && h.online {
+			continue
+		}
+		for id, w := range wants {
+			r.log.LogAttrs(ctx, slog.LevelInfo, "desired deployment waits for an inventory of its host",
+				slog.String("host_id", string(hostID)), slog.String("deployment_id", id.String()), slog.String("digest", string(w.digest)))
 		}
 	}
 }
@@ -298,6 +323,10 @@ func (r *Reconciler) plan(ctx context.Context, id contract.HostID) ([]contract.C
 		return nil, false
 	}
 	h.marked = false
+	if !r.known {
+		// SPEC §8.5: empty desired state is not yet a wish that nothing runs.
+		return nil, true
+	}
 	wants := r.want[id]
 	digests := make(map[uuid.UUID]contract.Digest, len(wants))
 	for dep, w := range wants {
@@ -319,6 +348,10 @@ func (r *Reconciler) plan(ctx context.Context, id contract.HostID) ([]contract.C
 // command that is rejected or not acknowledged is logged, and the next pass of the host sends it
 // again (SPEC §7.5 interim rule). Nothing here changes actual state: only what the host reports
 // does (SPEC §7.6). send stops, without logging a failure, when ctx ends.
+//
+// The commands were planned when the pass started. If desired or actual state changes while they
+// are sent, the rest are still sent as planned: the change marked the host, so the pass that
+// follows plans from the new state, and Apply and Remove are idempotent on the EN (SPEC §7.6).
 func (r *Reconciler) send(ctx context.Context, id contract.HostID, cmds []contract.Command) {
 	for _, cmd := range cmds {
 		if ctx.Err() != nil {
