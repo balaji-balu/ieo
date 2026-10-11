@@ -96,7 +96,7 @@ Applied at **Tests** (stage 4).
 | G-F1 | Tests exercise the **public interface**, not the internals, so refactors don't break them. |
 | G-F2 | Each §17 bullet has a test named after it, e.g. `TestSpec_17_4_ReconcileIsIdempotent`, whose doc comment quotes the bullet's opening words: `// SPEC §17.4: "Reconciling twice…"` (ADR 0011). `go run ./tools/conformance` lists bullets without one. |
 | G-F3 | A new test is seen **failing for the right reason** before the implementation is written. |
-| G-F4 | Core Conformance tests are deterministic: fake registry, runtime and clock; no sleeps, no network. |
+| G-F4 | Core Conformance tests are deterministic: fake registry, runtime and clock; no sleeps, no network. A listener the test itself starts on `127.0.0.1`, such as the fake registry or the in-process NATS server (ADR 0020), is not "network". A test waits for an event with a deadline, never for a fixed time; the one exception is a short watch that something has *not* happened yet. |
 | G-F5 | Table-driven tests where cases share structure; each failure message names the case. |
 
 ## Who enforces what

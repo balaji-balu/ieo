@@ -17,7 +17,9 @@ with the Git-based LO (ADR 0002).
 
 ## Decision
 - **One package.** `internal/sitenats` is the only new code that imports `nats.go`. `cmd/lo` and
-  `cmd/en` get a `*nats.Conn` from it. It owns:
+  `cmd/en` get a `*sitenats.Conn` from it: a concrete type with `Publish`, `Request`, `Subscribe`
+  and `Close`, and no interface or fake of it. No type of `nats.go` appears in its interface, so
+  no other package imports the library. It owns:
   - the subject format (SPEC §4.2, §11.2): building each subject from a site ID and host ID, the
     LO's wildcard subjects, and reading the host ID back from a subject. No other package formats
     or splits a subject;
@@ -46,8 +48,16 @@ with the Git-based LO (ADR 0002).
   again every 2 seconds without end, and logs each failure at warning level. A refused login is
   treated the same way: it is logged and tried again, since the fix is on the server or in a
   restart with other credentials.
-- **Reconnect.** A lost connection is retried the same way, without limit. On every connect and
-  reconnect the package calls one function its caller gave it:
+  - The client library reports an attempt that reached no server, but retries in silence after a
+    server answered and refused (a wrong password, a certificate it cannot verify, a server
+    without TLS). The package therefore logs the last refusal itself, once every retry interval
+    while the tier is not connected.
+- **Reconnect.** A lost connection is retried the same way, without limit. A server that goes
+  away without closing the connection is noticed within 30 seconds: the tier asks it for a sign of
+  life every 10 seconds, and two unanswered make the connection lost. On every connect and
+  reconnect the package calls one function its caller gave it. The caller gives it after it has
+  subscribed; if the tier is connected by then, the function is called at once, so an answer to
+  what the function publishes never arrives before the subscription exists:
   - the EN publishes its inventory (SPEC §7.6, §16.7);
   - the LO publishes `site.<s>.inventory.request` (SPEC §16.2). ENs whose own connection never
     dropped would otherwise not know the LO missed their messages.
@@ -64,9 +74,12 @@ with the Git-based LO (ADR 0002).
     client alone, which needs no server, and the tier waits for the handler in progress to return.
   - Either way the package returns only when no handler of that subscription will run again.
 - **Tests.** The package and the wiring that uses it are tested against a real `nats-server`
-  started in the test process on a loopback port chosen by the system (module
-  `github.com/nats-io/nats-server/v2`, imported only from `_test.go` files). Tests that need no
-  connection (planner, executor, dispatcher) keep their fakes.
+  started in the test process on a loopback port chosen by the system. The module
+  `github.com/nats-io/nats-server/v2` is imported only by `internal/sitenats/natstest`, which only
+  tests import. Tests that need no connection (planner, executor, dispatcher) keep their fakes.
+  - The module is pinned to the v2.10 line: the line the laptop harness runs (`nats:2.10-alpine`),
+    and the newest whose requirements leave `go.mod` as it is. Later lines need a newer `nats.go`
+    (v2.11, v2.12) or Go 1.26 (v2.14 and later). It moves with the harness image.
 
 ## Consequences
 - An EN on a host whose site server is down stays up, keeps its workloads, and joins when the
@@ -78,8 +91,8 @@ with the Git-based LO (ADR 0002).
 - An Apply command carries the whole deployment. One larger than the server's maximum payload
   (1 MiB by default) cannot be sent; the send fails and is logged like a rejected command.
 - The test binary of a few packages links `nats-server`. It is not in any shipped binary. These
-  tests open a loopback socket, which the "no network" line of G-F4 allowed only for fake
-  registries until now; `docs/coding-guidelines.md` is updated in the PR that adds the first one.
+  tests open a loopback socket, which G-F4 now allows for a listener the test itself starts. A
+  vulnerability scanner that reads `go.mod` will list the test server; no tier links it.
 - From Appendix B step 4 the LO runs the server and credentials are per host. The subject code and
   the reconnect rules stay; the URL and credential rules are replaced.
 
