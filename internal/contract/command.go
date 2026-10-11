@@ -9,10 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrInvalidDeployment is returned, wrapped with the reason, for a Command that is a valid site
-// message but whose `deployment` an EN must not apply (SPEC §8.9 step 2). The EN acks such a
-// command `accepted: false` with CodeInvalidCommand and changes nothing.
-var ErrInvalidDeployment = errors.New("invalid deployment in command")
+// ErrInvalidDeployment is returned, wrapped with the reason, for a deployment an EN must not apply
+// (SPEC §8.9 step 2): by DecodeCommand for a Command that is a valid site message but carries
+// one, and by DecodeApplicationDeployment for the YAML of one. The EN acks such a command
+// `accepted: false` with CodeInvalidCommand and changes nothing; the LO sends no command for such
+// a YAML (SPEC §8.4).
+var ErrInvalidDeployment = errors.New("invalid deployment")
 
 // CodeInvalidCommand is the CommandAck error code for ErrInvalidDeployment (SPEC §10). It is
 // never a component status code.

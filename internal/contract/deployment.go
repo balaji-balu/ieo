@@ -164,25 +164,31 @@ func get(m yaml.MapSlice, key string) any {
 // them, into the deployment an Apply command carries (SPEC §8.5, §11.2). id is the deployment ID
 // the State Manifest lists the bytes under.
 //
-// It accepts exactly what DecodeCommand accepts as the `deployment` of an Apply for id (SPEC §8.9
-// step 2), so an LO never sends a deployment its ENs would refuse. Any failure wraps
-// ErrInvalidDeployment and names the reason, and the returned deployment is the zero value. The
-// bytes are checked for aliases before they are parsed, like every YAML IEO reads (SPEC §5.3).
+// The YAML must be one document without aliases, like every YAML IEO reads (SPEC §5.3), and its
+// content must pass the checks DecodeCommand applies to the `deployment` of an Apply for id (SPEC
+// §8.9 step 2), so an LO never sends a deployment its ENs would refuse. The result holds the
+// fields IEO reads; keys ApplicationDeployment does not name, vendor extensions among them, are
+// not in it. Any failure wraps ErrInvalidDeployment and names the reason, and the returned
+// deployment is the zero value.
 func DecodeApplicationDeployment(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
-	if err := checkPlainYAML(b); err != nil {
-		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
-	}
-	js, err := yaml.YAMLToJSON(b)
-	if err != nil {
-		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
-	}
-	raw, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
-	if err != nil {
-		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
-	}
-	d, err := decodeDeployment(raw, id)
+	d, err := decodeDeploymentYAML(id, b)
 	if err != nil {
 		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
 	}
 	return d, nil
+}
+
+func decodeDeploymentYAML(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
+	if err := checkPlainYAML(b); err != nil {
+		return ApplicationDeployment{}, err
+	}
+	js, err := yaml.YAMLToJSON(b)
+	if err != nil {
+		return ApplicationDeployment{}, err
+	}
+	raw, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
+	if err != nil {
+		return ApplicationDeployment{}, err
+	}
+	return decodeDeployment(raw, id)
 }

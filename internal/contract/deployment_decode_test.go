@@ -95,27 +95,34 @@ func TestDecodeApplicationDeploymentRejects(t *testing.T) {
         repository: oci://registry.test/example/hello-web
         revision: 1.2.3_build.5
 `
-	cases := map[string]string{
-		"not YAML":                             "id: [",
-		"empty":                                "",
-		"only a comment":                       "# nothing\n",
-		"two documents":                        valid + "---\n" + valid,
-		"an alias":                             replace("name: hello", "name: &n hello") + "x-again: *n\n",
-		"fails the Margo schema: no metadata":  replace("metadata:", "meta:"),
-		"fails the Margo schema: unknown key":  replace("    type: compose", "    type: compose\n    replicas: 3"),
-		"fails the Margo schema: bad timeout":  replace("revision: 1.2.3_build.5", "revision: 1.2.3_build.5\n        timeout: 5 minutes"),
-		"id is another deployment":             replace("id: "+testUUID, "id: "+testUUID2),
-		"id is not a UUID":                     replace("id: "+testUUID, "id: hello"),
-		"device ID is not one":                 replace("deviceId: site-1/host-1", "deviceId: site 1/host-1"),
-		"profile type is helm":                 replace("    type: compose", "    type: helm"),
-		"two components with one project name": replace(component, component+strings.Replace(component, "name: web", "name: WEB", 1)),
-		"timeout too large to be a duration":   replace("revision: 1.2.3_build.5", "revision: 1.2.3_build.5\n        timeout: 99999999999999999999m0s"),
+	cases := []struct {
+		name, data string
+		// reason is a part of the error message that names the violation.
+		reason string
+	}{
+		{"not YAML", "id: [", "not found"},
+		{"empty", "", "empty"},
+		{"only a comment", "# nothing\n", "empty"},
+		{"two documents", valid + "---\n" + valid, "one YAML document"},
+		{"an alias", replace("name: hello", "name: &n hello") + "x-again: *n\n", "alias"},
+		{"fails the Margo schema: no metadata", replace("metadata:", "meta:"), "'metadata'"},
+		{"fails the Margo schema: unknown key", replace("    type: compose", "    type: compose\n    replicas: 3"), "'replicas'"},
+		{"fails the Margo schema: bad timeout", replace("revision: 1.2.3_build.5", "revision: 1.2.3_build.5\n        timeout: 5 minutes"), "/timeout"},
+		{"id is another deployment", replace("id: "+testUUID, "id: "+testUUID2), "is not the deploymentId"},
+		{"id is not a UUID", replace("id: "+testUUID, "id: hello"), "expected form"},
+		{"device ID is not one", replace("deviceId: site-1/host-1", "deviceId: site 1/host-1"), "/metadata/deviceId"},
+		{"profile type is helm", replace("    type: compose", "    type: helm"), "is not compose"},
+		{"two components with one project name", replace(component, component+strings.Replace(component, "name: web", "name: WEB", 1)), "same Compose project name"},
+		{"timeout too large to be a duration", replace("revision: 1.2.3_build.5", "revision: 1.2.3_build.5\n        timeout: 99999999999999999999m0s"), `component "web"`},
 	}
-	for name, data := range cases {
-		t.Run(name, func(t *testing.T) {
-			d, err := contract.DecodeApplicationDeployment(uuid.MustParse(testUUID), []byte(data))
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			d, err := contract.DecodeApplicationDeployment(uuid.MustParse(testUUID), []byte(tt.data))
 			if !errors.Is(err, contract.ErrInvalidDeployment) {
 				t.Fatalf("error = %v, want one wrapping contract.ErrInvalidDeployment", err)
+			}
+			if !strings.Contains(err.Error(), tt.reason) {
+				t.Errorf("error %q does not name %q", err, tt.reason)
 			}
 			if !reflect.DeepEqual(d, contract.ApplicationDeployment{}) {
 				t.Errorf("returned %+v with the error, want the zero deployment", d)
