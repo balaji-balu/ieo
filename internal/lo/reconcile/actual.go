@@ -31,10 +31,10 @@ func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.Ho
 		return a, false
 	}
 	out := store.HostActual{ReportedAt: ev.At, Deployments: cloneDeployments(a.Deployments)}
-	switch {
-	case ev.State == contract.StateRemoved:
+	switch ev.State {
+	case contract.StateRemoved:
 		out.Deployments = slices.Delete(out.Deployments, i, i+1)
-	case ev.State == contract.StateRemoving:
+	case contract.StateRemoving:
 		for j, c := range out.Deployments[i].Components {
 			out.Deployments[i].Components[j] = contract.ComponentStatus{Name: c.Name, State: contract.StateRemoving}
 		}

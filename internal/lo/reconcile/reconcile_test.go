@@ -830,11 +830,12 @@ func TestSafetyTimerReconcilesAllHosts(t *testing.T) {
 
 	clock.Advance(interval - time.Nanosecond)
 	clock.Advance(time.Nanosecond)
-	if s := recv(t, f.sender.started, "the pass for the safety timer"); s.what() != apply(idA, a) {
-		t.Errorf("the safety timer's pass sent %s", s.what())
-	}
+	// Run sets the next timer before it starts the pass the timer asked for.
 	if d := recv(t, clock.timers, "the next safety timer"); d != interval {
 		t.Errorf("the next safety timer waits %v, want %v", d, interval)
+	}
+	if s := recv(t, f.sender.started, "the pass for the safety timer"); s.what() != apply(idA, a) {
+		t.Errorf("the safety timer's pass sent %s", s.what())
 	}
 	if n := len(f.sender.to(host1)); n != 2 {
 		t.Errorf("%d commands sent, want one per pass", n)
