@@ -860,6 +860,13 @@ For each desired deployment:
 - If `lo.placement.enabled` is false, autonomous deployments get status `failed` with error code
   `103` `[Margo]`.
 
+`[IEO, interim]` A desired deployment the LO cannot resolve to a host of its site gets no command on
+any host, neither Apply nor Remove, and is logged each time all hosts are reconciled (§7.5). That is
+a deployment whose YAML an EN would refuse (§8.9 step 2), whose `id` is not the `deploymentId` the
+manifest lists it under, or whose `deviceId` names another site. Roadmap slice E reports it
+`failed`. Until autonomous placement is implemented (roadmap slice H), the same holds for an
+autonomous deployment.
+
 ### 8.5 LO: Host Reconciliation
 
 For one host that is `Online` (§7.3, including its interim rule):

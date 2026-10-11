@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"maps"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/google/uuid"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // ErrDeploymentParameter is returned, wrapped with the parameter name, when a deployment would
@@ -167,5 +169,20 @@ func get(m yaml.MapSlice, key string) any {
 // ErrInvalidDeployment and names the reason, and the returned deployment is the zero value. The
 // bytes are checked for aliases before they are parsed, like every YAML IEO reads (SPEC §5.3).
 func DecodeApplicationDeployment(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
-	return ApplicationDeployment{}, errors.New("not implemented")
+	if err := checkPlainYAML(b); err != nil {
+		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
+	}
+	js, err := yaml.YAMLToJSON(b)
+	if err != nil {
+		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
+	}
+	raw, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
+	if err != nil {
+		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
+	}
+	d, err := decodeDeployment(raw, id)
+	if err != nil {
+		return ApplicationDeployment{}, fmt.Errorf("%w: %w", ErrInvalidDeployment, err)
+	}
+	return d, nil
 }

@@ -98,6 +98,7 @@ func TestDecodeApplicationDeploymentRejects(t *testing.T) {
 	cases := map[string]string{
 		"not YAML":                             "id: [",
 		"empty":                                "",
+		"only a comment":                       "# nothing\n",
 		"two documents":                        valid + "---\n" + valid,
 		"an alias":                             replace("name: hello", "name: &n hello") + "x-again: *n\n",
 		"fails the Margo schema: no metadata":  replace("metadata:", "meta:"),
