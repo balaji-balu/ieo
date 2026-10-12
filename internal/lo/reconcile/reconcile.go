@@ -84,6 +84,8 @@ type Reconciler struct {
 	// known says the LO knows what should run: it has accepted a State Manifest, or holds the
 	// desired state of the one it is accepting. Until then no pass sends a command (SPEC §8.5).
 	known bool
+	// stale says the last read of desired state failed, so want may be older than the store's.
+	stale bool
 }
 
 // host is what the Reconciler holds for one host.
@@ -136,6 +138,7 @@ func New(ctx context.Context, cfg Config, st Store, sender Sender) (*Reconciler,
 	if err := r.loadDesired(ctx); err != nil {
 		return nil, fmt.Errorf("reconcile: load desired state: %w", err)
 	}
+	r.logUnknown(ctx)
 	return r, nil
 }
 
@@ -153,14 +156,19 @@ func (r *Reconciler) loadDesired(ctx context.Context) error {
 		r.log.LogAttrs(ctx, slog.LevelWarn, "desired deployment gets no command",
 			slog.String("deployment_id", u.id.String()), slog.String("digest", string(u.digest)), slog.String("reason", u.reason))
 	}
-	r.want, r.skipped = byHost, skipped
+	r.want, r.skipped, r.stale = byHost, skipped, false
 	// The sync loop replaces desired state and starts reconciling before it commits the version
 	// (SPEC §8.2 steps 6–8), so desired state that holds a deployment is a manifest's too.
 	r.known = st.Version > 0 || len(st.Desired) > 0
+	return nil
+}
+
+// logUnknown logs that no pass sends a command, if the LO does not know yet what should run (SPEC
+// §8.5). r.mu is held.
+func (r *Reconciler) logUnknown(ctx context.Context) {
 	if !r.known {
 		r.log.LogAttrs(ctx, slog.LevelInfo, "no State Manifest accepted yet", slog.String("effect", "no command is sent"))
 	}
-	return nil
 }
 
 // OnInventory replaces the actual state of host with inv and marks the host for a pass; the host
@@ -220,14 +228,17 @@ func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev co
 // ReconcileAll reads desired state from the store and marks every `Online` host for a pass (SPEC
 // §7.5 `Manifest Accepted` and `Reconcile Safety Timer Fired`). It returns once the hosts are
 // marked, not once their commands are acknowledged (SPEC §8.2 step 8); Run sends them. If desired
-// state cannot be read it logs, marks no host and keeps the desired state it had.
+// state cannot be read it logs and marks no host. The desired state it had may then be older than
+// the store's, so the next pass of a host reads it again before it plans.
 func (r *Reconciler) ReconcileAll(ctx context.Context) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.loadDesired(ctx); err != nil {
+		r.stale = true
 		r.log.LogAttrs(ctx, slog.LevelError, "reconcile all hosts failed", slog.String("reason", "load desired state: "+err.Error()))
 		return
 	}
+	r.logUnknown(ctx)
 	for _, h := range r.hosts {
 		if h.online {
 			r.mark(h)
@@ -314,6 +325,10 @@ func (r *Reconciler) runHost(ctx context.Context, id contract.HostID) {
 // plan starts one pass of a claimed host: it takes the host's mark and returns the commands that
 // converge the host as the Reconciler sees it now (SPEC §8.5 steps 1–5). If the host is not marked
 // or ctx has ended there is no pass: plan gives the claim back and returns false.
+//
+// Desired state is the one the last ReconcileAll read, with two exceptions, in which plan reads it
+// again and the pass sends no command if it still cannot plan: no manifest was accepted then, as
+// one may have been since (SPEC §8.5), and the last read failed.
 func (r *Reconciler) plan(ctx context.Context, id contract.HostID) ([]contract.Command, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -323,9 +338,16 @@ func (r *Reconciler) plan(ctx context.Context, id contract.HostID) ([]contract.C
 		return nil, false
 	}
 	h.marked = false
-	if !r.known {
-		// SPEC §8.5: empty desired state is not yet a wish that nothing runs.
-		return nil, true
+	if !r.known || r.stale {
+		if err := r.loadDesired(ctx); err != nil {
+			r.log.LogAttrs(ctx, slog.LevelError, "pass sends no command", slog.String("host_id", string(id)),
+				slog.String("reason", "load desired state: "+err.Error()))
+			return nil, true
+		}
+		if !r.known {
+			// SPEC §8.5: empty desired state is not yet a wish that nothing runs.
+			return nil, true
+		}
 	}
 	wants := r.want[id]
 	digests := make(map[uuid.UUID]contract.Digest, len(wants))

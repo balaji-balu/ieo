@@ -22,8 +22,9 @@ import (
 //     another digest, or for a deployment not held, the deployment's entry becomes that one
 //     component at the event's digest: no state is carried from one digest to another.
 //
-// A changed state is reported at the event's `at` and shares nothing with a or ev. a is not
-// modified; it is returned as it is when nothing changed.
+// An event that reports what a already holds changes nothing. A changed state is reported at the
+// event's `at` and shares nothing with a or ev. a is not modified; it is returned as it is when
+// nothing changed.
 func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.HostActual, bool) {
 	i := slices.IndexFunc(a.Deployments, func(d contract.InventoryDeployment) bool { return d.DeploymentID == ev.DeploymentID })
 	removal := ev.State == contract.StateRemoving || ev.State == contract.StateRemoved
@@ -58,7 +59,22 @@ func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.Ho
 			d.Components = append(d.Components, reported)
 		}
 	}
+	if slices.EqualFunc(out.Deployments, a.Deployments, sameDeployment) {
+		return a, false
+	}
 	return out, true
+}
+
+// sameDeployment reports whether x and y are one deployment at one digest with the same components
+// in the same order, each in the same state with the same error.
+func sameDeployment(x, y contract.InventoryDeployment) bool {
+	return x.DeploymentID == y.DeploymentID && x.Digest == y.Digest &&
+		slices.EqualFunc(x.Components, y.Components, func(c, d contract.ComponentStatus) bool {
+			if c.Name != d.Name || c.State != d.State || (c.Error == nil) != (d.Error == nil) {
+				return false
+			}
+			return c.Error == nil || *c.Error == *d.Error
+		})
 }
 
 // cloneDeployments returns a deep copy of deployments. The copy and each of its component lists
