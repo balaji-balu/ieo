@@ -1,12 +1,13 @@
 // Command lo is the Local Orchestrator (SPEC §3). It keeps its site's desired state in step with
 // the CO over the Margo API (SPEC §8.2) and stores it in <lo.data_dir>/lo.db (SPEC §12, ADR 0014).
-// Until roadmap slices C3b–E replace it, it also runs the old, Git-based LO when LO_PORT is set
-// (legacy.go).
+// Over the site NATS server it takes what the hosts report and sends them the commands that
+// converge them on desired state (SPEC §8.5, §11.2, §16.2). Until roadmap slice D5.6 deletes it,
+// it also runs the old, Git-based LO when LO_PORT is set (legacy.go).
 //
 // It is configured from the environment and flags, which win (SPEC §6.1, §6.3); a .env file in
 // the working directory sets variables that are not set. It logs JSON on stderr (SPEC §13.1) and
-// never logs the site token (SPEC §15.4). It exits 0 after SIGINT or SIGTERM, 1 on a failure, and
-// 2 on an invalid configuration.
+// never logs the site token or the NATS password (SPEC §15.4). It exits 0 after SIGINT or SIGTERM,
+// 1 on a failure, and 2 on an invalid configuration.
 package main
 
 import (
@@ -24,8 +25,11 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/balaji-balu/ieo/internal/lo/reconcile"
+	"github.com/balaji-balu/ieo/internal/lo/sitelink"
 	"github.com/balaji-balu/ieo/internal/lo/store"
 	losync "github.com/balaji-balu/ieo/internal/lo/sync"
+	"github.com/balaji-balu/ieo/internal/sitenats"
 )
 
 // storeFile is the LO store's file name in lo.data_dir (ADR 0014).
@@ -50,6 +54,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 			err = configError(fmt.Sprintf("%s: %v", keyCAFile, err))
 		}
 	}
+	if err == nil {
+		err = natsConfigError(cfg.nats().Check()) // reads lo.nats.ca_file
+	}
 	if err != nil {
 		log.Error("invalid configuration", "error", err.Error())
 		return 2
@@ -62,9 +69,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	return 0
 }
 
-// serve opens the LO store and runs the sync loop until ctx ends (SPEC §16.2), with the old LO
-// beside it when cfg.LegacyPort is set; when either stops, both do. It fails at startup if the
-// store cannot be opened, and never deletes or overwrites the file (SPEC §14.2).
+// serve opens the LO store, connects to the site NATS server, and runs the sync loop and the
+// reconciler until ctx ends (SPEC §16.2), with the old LO beside them when cfg.LegacyPort is set;
+// when one stops, all do. It fails at startup if the store cannot be opened, and never deletes or
+// overwrites the file (SPEC §14.2). A NATS server that cannot be reached is not a failure: the
+// connection is made, and made again, in the background (SPEC §11.2, ADR 0020).
 func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv func(string) string, base *slog.Logger) error {
 	log := base.With(slog.String("site_id", string(cfg.SiteID)))  // SPEC §13.1
 	if strings.HasPrefix(strings.ToLower(cfg.COURL), "http://") { // the scheme is case-insensitive
@@ -87,16 +96,42 @@ func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv 
 			log.Warn("close LO store", "error", err.Error())
 		}
 	}()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	site, err := sitenats.ForSite(cfg.SiteID)
+	if err != nil {
+		return err
+	}
+	natsCfg := cfg.nats()
+	natsCfg.Log = log
+	conn, err := sitenats.Connect(natsCfg) // returns at once; with a nats:// URL it logs the §15.6 warning
+	if err != nil {
+		return err
+	}
+	defer conn.Close() // ADR 0020: last, after the subscriptions and the passes
+	link := sitelink.New(conn, site, log)
+	reconciler, err := reconcile.New(ctx, reconcile.Config{
+		SiteID: cfg.SiteID, AckTimeout: cfg.AckTimeout, Interval: cfg.ReconcileInterval, Log: base, // the Reconciler adds site_id
+	}, s, link)
+	if err != nil {
+		return err
+	}
+	// SPEC §16.2: subscribe, then ask the hosts for their inventories, now and on every reconnect.
+	if err := link.Listen(ctx, reconciler); err != nil {
+		return err
+	}
+	defer link.Stop()
 	syncer := losync.New(losync.Config{
 		SiteID: cfg.SiteID, COURL: cfg.COURL, Token: cfg.SiteToken, PollInterval: cfg.PollInterval,
 		Transport: transport, Log: base, // the Syncer adds site_id
+		Reconcile: reconciler.ReconcileAll, // SPEC §8.2 step 7
 	}, s)
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	errs := make(chan error, 2)
-	running := 1
-	go func() { errs <- syncer.Run(ctx) }() // SPEC §16.2: the first tick at delay 0
+	errs := make(chan error, 3)
+	running := 2
+	go func() { errs <- syncer.Run(ctx) }()     // SPEC §16.2: the first tick at delay 0
+	go func() { errs <- reconciler.Run(ctx) }() // the passes, and the reconcile safety timer
 	if cfg.LegacyPort != "" {
 		running++
 		go func() { errs <- legacy(ctx, cfg, getenv) }()
@@ -104,11 +139,14 @@ func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv 
 	log.Info("syncing with the CO", "co_url", cfg.COURL, "poll_interval", cfg.PollInterval.String())
 	var first error
 	for range running {
-		// The sync loop ends only with ctx; that is a stop, not a failure.
+		// The sync loop and the reconciler end only with ctx; that is a stop, not a failure.
 		if err := <-errs; err != nil && !errors.Is(err, context.Canceled) && first == nil {
 			first = err
 		}
-		cancel() // one stopped: stop the other
+		cancel() // one stopped: stop the others
+		// ADR 0020: the subscriptions end first, so nothing reaches the reconciler while it waits
+		// for its passes; then the connection is closed.
+		link.Stop()
 	}
 	log.Info("stopped")
 	return first

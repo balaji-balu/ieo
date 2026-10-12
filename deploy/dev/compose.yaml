@@ -10,9 +10,10 @@
 #   docker compose -f deploy/dev/compose.yaml down -v
 #
 # CO, LO and EN are built from this checkout (deploy/dev/Dockerfile). The LO syncs with the CO's
-# Margo API. Until roadmap slices C3b–E replace it, the old, Git-based code runs beside it: the CO
-# and LO clone public GitHub repos at startup and log an error if that fails, and EN runs a mock
-# runtime and does not use its host's engine yet.
+# Margo API and connects to NATS as the site's user (SPEC §15.6). Until roadmap slices D5.6–E
+# replace it, the old, Git-based code runs beside it: the CO and LO clone public GitHub repos at
+# startup and log an error if that fails, and EN runs a mock runtime, does not use its host's
+# engine yet, and does not answer the LO's commands.
 #
 # Each simulated host is two containers that act as one machine: hostN runs its own Docker engine
 # (docker:dind) and enN shares its network namespace, so enN reaches that engine, and only that
@@ -64,7 +65,8 @@ x-en: &en
   restart: unless-stopped
 
 services:
-  # LO ↔ EN messaging. 8222 is the monitoring endpoint.
+  # LO ↔ EN messaging. 8222 is the monitoring endpoint. The server asks for no login until the old
+  # EN, which has none, is replaced (roadmap D5.6); it ignores the one the LO sends.
   nats:
     image: nats:2.10-alpine
     command: ["--http_port", "8222"]
@@ -128,9 +130,9 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # Local Orchestrator for the one site. It polls the CO's Margo API with the site's token, and
-  # keeps its store in /var/lib/lo/lo.db. The old LO (LO_PORT set) registers with the old CO API
-  # once at startup, which needs a UUID site ID until roadmap slice E.
+  # Local Orchestrator for the one site. It polls the CO's Margo API with the site's token, keeps
+  # its store in /var/lib/lo/lo.db, and reconciles the hosts over NATS. The old LO (LO_PORT set)
+  # registers with the old CO API once at startup, which needs a UUID site ID until roadmap slice E.
   lo:
     build:
       <<: *ieo-build
@@ -146,7 +148,12 @@ services:
       LO_SITE_TOKEN: ${LO_SITE_TOKEN:-}
       LO_PORT: "9010"
       LO_METRICS_PORT: "9200"
-      LO_NATS_URL: nats://nats:4222
+      LO_NATS_URL: nats://nats:4222 # also read by the old LO
+      LO_NATS_INSECURE: "true" # no TLS on the compose network; the LO logs a warning (SPEC §15.6)
+      # The site's NATS login (SPEC §15.6). Values for this harness only, like the Postgres ones
+      # above: the server checks no login until roadmap D5.6.
+      LO_NATS_USERNAME: site
+      LO_NATS_PASSWORD: dev-harness-only
       LO_LEGACY_CO_URL: http://co:9001
     ports: ["9010:9010"]
     volumes:

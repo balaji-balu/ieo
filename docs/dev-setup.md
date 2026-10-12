@@ -93,6 +93,12 @@ yet.
 The LO reaches the CO over plain HTTP on the compose network (`LO_CO_INSECURE=true`), so it logs a
 warning at startup. It uses no HTTP proxy, whatever `HTTP_PROXY` and `HTTPS_PROXY` say (SPEC §15.6).
 
+The LO also connects to the `nats` container as the site's user, without TLS
+(`LO_NATS_INSECURE=true`, a second warning at startup), and asks the hosts for their inventories.
+Nothing answers yet: the old EN does not speak the site messages, so the LO sends no command until
+the new EN arrives (roadmap D5.6). Until then the NATS server also checks no login, and ignores
+the one the LO sends.
+
 ## Adding a site
 
 The Margo API on 9002 serves a site only to an LO that presents the site's token. `co site add`

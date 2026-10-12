@@ -22,6 +22,30 @@ const msgNATSConnected = "connected to the site NATS server"
 
 var siteLogin = natstest.Options{Username: natsUser, Password: natsPassword}
 
+// warned reports whether l logged a warning, with site_id, that holds text.
+func warned(t *testing.T, l *runningLO, text string) bool {
+	t.Helper()
+	for _, line := range l.stderr.lines(t) {
+		if line["level"] == "WARN" && line["site_id"] == "site-1" && strings.Contains(fmt.Sprint(line), text) {
+			return true
+		}
+	}
+	return false
+}
+
+// refusedAtStartup runs an LO with env, which must exit with a configuration error that names
+// key and without connecting to the site NATS server.
+func refusedAtStartup(t *testing.T, env map[string]string, key, what string) {
+	t.Helper()
+	code, stderr := runLO(t, env)
+	if code != 2 || !strings.Contains(stderr.String(), key) {
+		t.Errorf("%s: exit %d, want 2 with an error naming %s:\n%s", what, code, key, stderr)
+	}
+	if strings.Contains(stderr.String(), msgNATSConnected) {
+		t.Errorf("%s: the LO connected:\n%s", what, stderr)
+	}
+}
+
 // SPEC §17.7: "Until scoped NATS credentials, the LO and the EN accept a NATS URL other than
 // `tls://` only when it is a `nats://` URL and `lo.nats_insecure`/`en.nats_insecure` is set, and
 // exit at startup on any other" (§15.6). This is the LO's half; the EN's, and the password that
@@ -29,46 +53,34 @@ var siteLogin = natstest.Options{Username: natsUser, Password: natsPassword}
 func TestSpec_17_7_LOAcceptsANATSURLWithoutTLSOnlyWhenInsecure(t *testing.T) {
 	co := publishedCO(t)
 	coSrv, ca := tlsCO(t, co)
-	// env is an LO that connects to srv, with the NATS settings changed by kv.
+	withTLS := siteLogin
+	withTLS.TLS = true
+	// env is an LO that connects to srv, with the NATS settings changed by kv; an empty value
+	// removes the variable.
 	env := func(t *testing.T, srv *natstest.Server, kv ...string) map[string]string {
 		e := loEnv(t, coSrv.URL, co.Token(), "LO_TLS_CA_FILE", ca)
 		natsEnv(e, srv)
 		for i := 0; i+1 < len(kv); i += 2 {
-			if kv[i+1] == "" {
-				delete(e, kv[i])
-			} else {
-				e[kv[i]] = kv[i+1]
-			}
+			e[kv[i]] = kv[i+1]
 		}
 		return e
 	}
 
 	t.Run("tls with lo.nats.ca_file", func(t *testing.T) {
-		tlsOpts := siteLogin
-		tlsOpts.TLS = true
-		srv := natstest.Start(t, tlsOpts)
-		l := startLO(t, env(t, srv))
+		l := startLO(t, env(t, natstest.Start(t, withTLS)))
 		l.waitMsg(msgNATSConnected)
 		if code := l.stop(); code != 0 {
 			t.Errorf("exit %d after shutdown, want 0", code)
 		}
-		for _, line := range l.stderr.lines(t) {
-			if line["level"] == "WARN" && strings.Contains(fmt.Sprint(line), "TLS") {
-				t.Errorf("a warning about TLS with a tls:// URL: %v", line)
-			}
+		if warned(t, l, "TLS") {
+			t.Errorf("a warning about TLS with a tls:// URL:\n%s", l.stderr)
 		}
 	})
 
 	t.Run("nats without lo.nats_insecure", func(t *testing.T) {
 		srv := natstest.Start(t, siteLogin)
 		for _, insecure := range []string{"", "false"} {
-			code, stderr := runLO(t, env(t, srv, "LO_NATS_INSECURE", insecure))
-			if code != 2 || !strings.Contains(stderr.String(), "LO_NATS_URL") {
-				t.Errorf("LO_NATS_INSECURE=%q: exit %d, want 2 with an error naming LO_NATS_URL:\n%s", insecure, code, stderr)
-			}
-			if strings.Contains(stderr.String(), msgNATSConnected) {
-				t.Errorf("LO_NATS_INSECURE=%q: the LO connected:\n%s", insecure, stderr)
-			}
+			refusedAtStartup(t, env(t, srv, "LO_NATS_INSECURE", insecure), "LO_NATS_URL", "LO_NATS_INSECURE="+insecure)
 		}
 		if reqs := co.TakeRequests(); len(reqs) != 0 {
 			t.Errorf("the CO got %d requests from an LO that must not start", len(reqs))
@@ -80,13 +92,7 @@ func TestSpec_17_7_LOAcceptsANATSURLWithoutTLSOnlyWhenInsecure(t *testing.T) {
 		l := startLO(t, env(t, srv))
 		l.waitMsg(msgNATSConnected)
 		l.stop()
-		warned := false
-		for _, line := range l.stderr.lines(t) {
-			if line["level"] == "WARN" && line["site_id"] == "site-1" && strings.Contains(fmt.Sprint(line), srv.URL()) {
-				warned = true
-			}
-		}
-		if !warned {
+		if !warned(t, l, srv.URL()) {
 			t.Errorf("no startup warning naming %s:\n%s", srv.URL(), l.stderr)
 		}
 		if strings.Contains(l.stderr.String(), natsPassword) {
@@ -98,27 +104,20 @@ func TestSpec_17_7_LOAcceptsANATSURLWithoutTLSOnlyWhenInsecure(t *testing.T) {
 		srv := natstest.Start(t, siteLogin)
 		for _, scheme := range []string{"ws", "wss", "http"} {
 			for _, insecure := range []string{"", "true"} {
-				code, stderr := runLO(t, env(t, srv, "LO_NATS_URL", scheme+"://"+srv.Addr(), "LO_NATS_INSECURE", insecure))
-				if code != 2 || !strings.Contains(stderr.String(), "LO_NATS_URL") {
-					t.Errorf("%s:// with LO_NATS_INSECURE=%q: exit %d, want 2 with an error naming LO_NATS_URL:\n%s", scheme, insecure, code, stderr)
-				}
+				refusedAtStartup(t, env(t, srv, "LO_NATS_URL", scheme+"://"+srv.Addr(), "LO_NATS_INSECURE", insecure),
+					"LO_NATS_URL", scheme+":// with LO_NATS_INSECURE="+insecure)
 			}
 		}
 	})
 
 	t.Run("lo.nats.ca_file that cannot be used", func(t *testing.T) {
-		tlsOpts := siteLogin
-		tlsOpts.TLS = true
-		srv := natstest.Start(t, tlsOpts)
+		srv := natstest.Start(t, withTLS)
 		notPEM := filepath.Join(t.TempDir(), "ca.pem")
 		if err := os.WriteFile(notPEM, []byte("not a certificate"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		for name, file := range map[string]string{"missing": filepath.Join(t.TempDir(), "none.pem"), "not PEM": notPEM} {
-			code, stderr := runLO(t, env(t, srv, "LO_NATS_CA_FILE", file))
-			if code != 2 || !strings.Contains(stderr.String(), "LO_NATS_CA_FILE") {
-				t.Errorf("CA file %s: exit %d, want 2 with an error naming LO_NATS_CA_FILE:\n%s", name, code, stderr)
-			}
+			refusedAtStartup(t, env(t, srv, "LO_NATS_CA_FILE", file), "LO_NATS_CA_FILE", "CA file "+name)
 		}
 	})
 }
