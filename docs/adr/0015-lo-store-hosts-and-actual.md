@@ -46,7 +46,9 @@ so new buckets need a layout version and a migration.
   (SPEC §7.3 interim rule). An EN publishes inventory when it connects and when the LO asks, so
   the record exists before a command can produce an event; an event that arrives earlier is
   covered by that inventory. `actual` therefore never holds a host that `hosts` does not.
-- Every change to `actual[h]` from one message is one write transaction.
+- Every change to `actual[h]` from one message is one write transaction. A status event that
+  reports what `actual[h]` already holds changes nothing and is not written; `reportedAt` then
+  stays the `at` of the report the state came from.
 - `OpenBolt` migrates version 1 to 2 in one write transaction: it creates the empty `hosts` and
   `actual` buckets and sets `schema` to 2. A new file is created at version 2. A file at any other
   version is refused at open, as ADR 0014 says.
