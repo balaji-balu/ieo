@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/balaji-balu/ieo/internal/contract"
+	"github.com/balaji-balu/ieo/internal/lo/reconcile"
 	"github.com/balaji-balu/ieo/internal/lo/sitelink"
 	"github.com/balaji-balu/ieo/internal/sitenats"
 	"github.com/balaji-balu/ieo/internal/sitenats/natstest"
@@ -39,6 +40,13 @@ var (
 	idA    = uuid.MustParse("0a0a0a0a-0000-4000-8000-00000000000a")
 	digest = contract.DigestOf([]byte("a deployment"))
 	at     = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+)
+
+// The two sides the LO joins with a Link (cmd/lo): the authority sends through it, and it reports
+// to the authority.
+var (
+	_ reconcile.Sender = (*sitelink.Link)(nil)
+	_ sitelink.Handler = (*reconcile.Reconciler)(nil)
 )
 
 // lockedBuffer collects the log lines of the Link and of its connection.
@@ -182,10 +190,8 @@ func newFixture(t *testing.T) *fixture {
 // sync returns once the server knows every subscription the EN's connection has made: a
 // connection's messages reach the server in order, so the answer to a request it sends itself
 // comes after them.
-func (f *fixture) sync() {
+func (f *fixture) sync(ctx context.Context) {
 	f.t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
 	if _, err := f.en.Request(ctx, syncSubject, nil); err != nil {
 		f.t.Fatalf("sync the EN's connection: %v", err)
 	}
@@ -335,10 +341,10 @@ func TestSendReturnsTheHostsAck(t *testing.T) {
 		t.Fatalf("Subscribe: %v", err)
 	}
 	defer sub.Stop()
-	f.sync()
-
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
+	f.sync(ctx)
+
 	ack, err := f.link.Send(ctx, host1, cmd)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -386,7 +392,7 @@ func TestSendFailsWithoutAValidAck(t *testing.T) {
 			t.Fatalf("Subscribe: %v", err)
 		}
 		defer sub.Stop()
-		f.sync()
+		f.sync(ctx)
 		ack, err := f.link.Send(ctx, host1, cmd)
 		if !errors.Is(err, contract.ErrInvalidMessage) || !reflect.DeepEqual(ack, contract.CommandAck{}) {
 			t.Errorf("Send = %+v, %v; want no ack and contract.ErrInvalidMessage", ack, err)
