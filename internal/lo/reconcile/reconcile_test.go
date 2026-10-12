@@ -942,3 +942,69 @@ func TestDeploymentForAHostWithoutInventoryIsLogged(t *testing.T) {
 		t.Errorf("log lines: %v", lines)
 	}
 }
+
+// SPEC §8.5: a first manifest that lists no deployment takes effect on the first pass after its
+// version is committed. The sync loop starts reconciling before it commits (SPEC §8.2 steps 7–8),
+// so that pass is the next one of each host, not the next safety timer.
+func TestFirstEmptyManifestTakesEffectOnTheFirstPassAfterItsCommit(t *testing.T) {
+	f := newFixture(t, nil)
+	running := deployment(idC, otherDigest, component("web", contract.StateInstalled))
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start, running))
+	f.r.ReconcileAll(f.ctx) // the sync loop, before it commits the version
+	equal(t, "pass before the version is committed", f.pass(host1), nil)
+
+	if err := f.store.CommitVersion(f.ctx, 1, "etag"); err != nil {
+		t.Fatalf("test setup: CommitVersion: %v", err)
+	}
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(time.Minute), running))
+	equal(t, "first pass after the version is committed", f.pass(host1), []string{remove(idC, otherDigest)})
+}
+
+// Desired state that could not be read is not planned from: it may be older than the store's. The
+// next pass of a host reads it again, and sends no command while it cannot.
+func TestPassAfterAFailedReadOfDesiredStateReadsItAgain(t *testing.T) {
+	a := want(t, idA, "site-1/host-1", "a")
+	f := newFixture(t, map[uuid.UUID]losync.Desired{idA: a})
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start))
+	equal(t, "first pass", f.pass(host1), []string{apply(idA, a)})
+
+	// The next manifest deletes A, and the read of it fails.
+	f.setDesired(nil)
+	if err := f.store.CommitVersion(f.ctx, 2, "etag"); err != nil {
+		t.Fatalf("test setup: CommitVersion: %v", err)
+	}
+	f.store.fail(nil, errors.New("disk gone"))
+	f.r.ReconcileAll(f.ctx)
+
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(time.Minute)))
+	equal(t, "pass while desired state cannot be read", f.pass(host1), nil)
+	if lines := f.lines("pass sends no command"); len(lines) != 1 || lines[0]["level"] != "ERROR" || lines[0]["host_id"] != "host-1" {
+		t.Errorf("log lines for the pass that could not read desired state: %v", lines)
+	}
+
+	f.store.fail(nil, nil)
+	installed := deployment(idA, a.Digest, component("web", contract.StateInstalled))
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(2*time.Minute), installed))
+	equal(t, "pass once it can be read", f.pass(host1), []string{remove(idA, a.Digest)})
+}
+
+// A status event that reports what is already held changes nothing, so it is not written.
+func TestRepeatedStatusEventIsNotWritten(t *testing.T) {
+	f := newFixture(t, nil)
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start, deployment(idA, otherDigest, component("web", contract.StateInstalled))))
+	held := f.actualOf(host1)
+	f.r.OnStatus(f.ctx, host1, contract.ComponentStatusEvent{DeploymentID: idA, Digest: otherDigest, Component: "web", State: contract.StateInstalled, At: start.Add(time.Second)})
+	if n := f.store.writes(); n != 1 {
+		t.Errorf("a repeated `installed` made %d writes, want none", n-1)
+	}
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, held) {
+		t.Errorf("the store's actual state changed:\n%+v\nwas\n%+v", got, held)
+	}
+	removing := contract.ComponentStatusEvent{DeploymentID: idA, Digest: otherDigest, State: contract.StateRemoving, At: start.Add(2 * time.Second)}
+	f.r.OnStatus(f.ctx, host1, removing)
+	removing.At = start.Add(3 * time.Second)
+	f.r.OnStatus(f.ctx, host1, removing)
+	if n := f.store.writes(); n != 2 {
+		t.Errorf("`removing` twice made %d writes, want 1", n-1)
+	}
+}
