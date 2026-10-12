@@ -21,6 +21,7 @@ import (
 	"github.com/balaji-balu/ieo/internal/contract"
 	"github.com/balaji-balu/ieo/internal/lo/store"
 	"github.com/balaji-balu/ieo/internal/lo/sync/synctest"
+	"github.com/balaji-balu/ieo/internal/sitenats/natstest"
 )
 
 const manifestPath = "/api/v1/deployments"
@@ -92,10 +93,22 @@ func startLO(t *testing.T, env map[string]string, args ...string) *runningLO {
 // waitOutcome waits for a sync attempt with outcome, and returns its log line.
 func (l *runningLO) waitOutcome(outcome string) map[string]any {
 	l.t.Helper()
+	return l.waitLine("a sync attempt with outcome "+outcome, func(line map[string]any) bool { return line["outcome"] == outcome })
+}
+
+// waitMsg waits for a log line with message msg, and returns it.
+func (l *runningLO) waitMsg(msg string) map[string]any {
+	l.t.Helper()
+	return l.waitLine("a log line "+msg, func(line map[string]any) bool { return line["msg"] == msg })
+}
+
+// waitLine waits for a log line that is the one wanted, and returns it.
+func (l *runningLO) waitLine(what string, wanted func(line map[string]any) bool) map[string]any {
+	l.t.Helper()
 	deadline := time.After(10 * time.Second) // guards against a hang only
 	for {
 		for _, line := range l.stderr.lines(l.t) {
-			if line["outcome"] == outcome {
+			if wanted(line) {
 				return line
 			}
 		}
@@ -103,9 +116,9 @@ func (l *runningLO) waitOutcome(outcome string) map[string]any {
 		case <-l.stderr.written:
 		case code := <-l.done:
 			l.code = &code
-			l.t.Fatalf("lo exited with %d before a sync attempt with outcome %s:\n%s", code, outcome, l.stderr)
+			l.t.Fatalf("lo exited with %d before %s:\n%s", code, what, l.stderr)
 		case <-deadline:
-			l.t.Fatalf("no sync attempt with outcome %s:\n%s", outcome, l.stderr)
+			l.t.Fatalf("no %s:\n%s", what, l.stderr)
 		}
 	}
 }
@@ -142,11 +155,32 @@ func runLO(t *testing.T, env map[string]string, args ...string) (int, *logBuffer
 	}
 }
 
+// The site's NATS login in these tests. Both passwords are made up here (SPEC §15.6).
+const (
+	natsUser          = "site-1"
+	natsPassword      = "made-up-for-the-lo-tests"
+	wrongNATSPassword = "another-made-up-one"
+)
+
+// natsEnv adds to env the settings of an LO that connects to srv as the site's user. The server
+// has no TLS unless the test started it with it, so lo.nats_insecure is set for a nats:// URL.
+func natsEnv(env map[string]string, srv *natstest.Server) {
+	env["LO_NATS_URL"], env["LO_NATS_USERNAME"], env["LO_NATS_PASSWORD"] = srv.URL(), natsUser, natsPassword
+	delete(env, "LO_NATS_CA_FILE")
+	delete(env, "LO_NATS_INSECURE")
+	if ca := srv.CAFile(); ca != "" {
+		env["LO_NATS_CA_FILE"] = ca
+	} else {
+		env["LO_NATS_INSECURE"] = "true"
+	}
+}
+
 // loEnv is the environment of an LO of site-1 that syncs with the CO at coURL, with a data
-// directory of its own.
+// directory and a site NATS server of its own. more may replace any of it.
 func loEnv(t *testing.T, coURL, token string, more ...string) map[string]string {
 	t.Helper()
 	env := map[string]string{"LO_SITE_ID": "site-1", "LO_CO_URL": coURL, "LO_SITE_TOKEN": token, "LO_DATA_DIR": t.TempDir()}
+	natsEnv(env, natstest.Start(t, natstest.Options{Username: natsUser, Password: natsPassword}))
 	for i := 0; i+1 < len(more); i += 2 {
 		env[more[i]] = more[i+1]
 	}
@@ -257,7 +291,9 @@ func TestSpec_17_7_LOSendsTokenOnlyOverHTTPSUnlessInsecure(t *testing.T) {
 
 // SPEC §17.7: "No credential, key or token appears in logs or status messages." and "Every tier
 // writes each log line as one JSON object.", for the LO: a configuration error, an unreachable CO,
-// a refused token, a redirect and an accepted manifest.
+// a refused token, a redirect and an accepted manifest; and for the site NATS password (SPEC
+// §15.6): a NATS URL that holds it, a server that refuses the login, and a connection that is
+// made.
 func TestSpec_17_7_NoCredentialOrTokenInLOLogs(t *testing.T) {
 	co := publishedCO(t)
 	srv, ca := tlsCO(t, co)
@@ -287,13 +323,29 @@ func TestSpec_17_7_NoCredentialOrTokenInLOLogs(t *testing.T) {
 	redirected := startLO(t, loEnv(t, srv.URL, token, "LO_TLS_CA_FILE", ca))
 	redirected.waitOutcome("Unreachable")
 
-	for _, l := range []*runningLO{unreachable, refused, accepted, redirected} {
+	accepted.waitMsg("connected to the site NATS server")
+
+	// A NATS URL that holds the password is refused, and not repeated (SPEC §15.4).
+	env = loEnv(t, srv.URL, token, "LO_TLS_CA_FILE", ca)
+	env["LO_NATS_URL"] = strings.Replace(env["LO_NATS_URL"], "://", "://"+natsUser+":"+natsPassword+"@", 1)
+	if code, stderr := runLO(t, env); code != 2 {
+		t.Errorf("with a password in LO_NATS_URL: exit %d, want 2", code)
+	} else {
+		logs = append(logs, stderr)
+	}
+
+	loginRefused := startLO(t, loEnv(t, srv.URL, token, "LO_TLS_CA_FILE", ca, "LO_NATS_PASSWORD", wrongNATSPassword))
+	loginRefused.waitMsg("cannot connect to the site NATS server")
+
+	for _, l := range []*runningLO{unreachable, refused, accepted, redirected, loginRefused} {
 		l.stop()
 		logs = append(logs, l.stderr)
 	}
 	for _, l := range logs {
-		if strings.Contains(l.String(), token) {
-			t.Errorf("the log contains the token:\n%s", l)
+		for name, secret := range map[string]string{"token": token, "NATS password": natsPassword, "wrong NATS password": wrongNATSPassword} {
+			if strings.Contains(l.String(), secret) {
+				t.Errorf("the log contains the %s:\n%s", name, l)
+			}
 		}
 		l.lines(t) // fails on a line that is not one JSON object
 	}
@@ -389,6 +441,7 @@ func TestStoreFileHeldExitsAtStartup(t *testing.T) {
 func configEnv(kv ...string) map[string]string {
 	env := map[string]string{
 		"LO_SITE_ID": "site-1", "LO_CO_URL": "https://co.example", "LO_SITE_TOKEN": "t", "LO_DATA_DIR": "data",
+		"LO_NATS_URL": "tls://nats.example:4222", "LO_NATS_USERNAME": "site-1", "LO_NATS_PASSWORD": "p",
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		if kv[i+1] == "" {
@@ -410,17 +463,29 @@ func TestConfigSources(t *testing.T) {
 		want config
 	}{
 		{"defaults", configEnv(), nil,
-			config{SiteID: "site-1", COURL: "https://co.example", SiteToken: "t", DataDir: "data", PollInterval: 60 * time.Second}},
+			config{SiteID: "site-1", COURL: "https://co.example", SiteToken: "t", DataDir: "data", PollInterval: 60 * time.Second,
+				NATSURL: "tls://nats.example:4222", NATSUsername: "site-1", NATSPassword: "p",
+				AckTimeout: 5 * time.Second, ReconcileInterval: 5 * time.Minute}},
 		{"every key from the environment", configEnv("LO_CO_URL", "http://co.example:9002", "LO_CO_INSECURE", "true",
-			"LO_TLS_CA_FILE", "ca.pem", "LO_POLL_INTERVAL", "5s", "LO_PORT", "9010"), nil,
+			"LO_TLS_CA_FILE", "ca.pem", "LO_POLL_INTERVAL", "5s", "LO_PORT", "9010",
+			"LO_NATS_URL", "nats://nats:4222", "LO_NATS_INSECURE", "true", "LO_NATS_USERNAME", "lo", "LO_NATS_PASSWORD", "pw",
+			"LO_NATS_CA_FILE", "nats-ca.pem", "LO_COMMAND_ACK_TIMEOUT", "2s", "LO_RECONCILE_INTERVAL", "1m"), nil,
 			config{SiteID: "site-1", COURL: "http://co.example:9002", COInsecure: true, CAFile: "ca.pem", SiteToken: "t",
-				DataDir: "data", PollInterval: 5 * time.Second, LegacyPort: "9010"}},
+				DataDir: "data", PollInterval: 5 * time.Second, LegacyPort: "9010",
+				NATSURL: "nats://nats:4222", NATSInsecure: true, NATSUsername: "lo", NATSPassword: "pw", NATSCAFile: "nats-ca.pem",
+				AckTimeout: 2 * time.Second, ReconcileInterval: time.Minute}},
 		{"flags win over the environment",
-			configEnv("LO_SITE_ID", "a b", "LO_CO_URL", "ftp://x", "LO_CO_INSECURE", "maybe", "LO_POLL_INTERVAL", "0s"),
+			configEnv("LO_SITE_ID", "a b", "LO_CO_URL", "ftp://x", "LO_CO_INSECURE", "maybe", "LO_POLL_INTERVAL", "0s",
+				"LO_NATS_URL", "ws://x", "LO_NATS_INSECURE", "maybe", "LO_NATS_USERNAME", "", "LO_NATS_CA_FILE", "env.pem",
+				"LO_COMMAND_ACK_TIMEOUT", "0s", "LO_RECONCILE_INTERVAL", "never"),
 			[]string{"--site-id", "site-2", "--co-url", "http://co.example", "--co-insecure", "--tls-ca-file", "ca.pem",
-				"--data-dir", "other", "--poll-interval", "90s"},
+				"--data-dir", "other", "--poll-interval", "90s",
+				"--nats-url", "nats://nats.example", "--nats-insecure", "--nats-username", "lo", "--nats-ca-file", "flag.pem",
+				"--command-ack-timeout", "3s", "--reconcile-interval", "10m"},
 			config{SiteID: "site-2", COURL: "http://co.example", COInsecure: true, CAFile: "ca.pem", SiteToken: "t",
-				DataDir: "other", PollInterval: 90 * time.Second}},
+				DataDir: "other", PollInterval: 90 * time.Second,
+				NATSURL: "nats://nats.example", NATSInsecure: true, NATSUsername: "lo", NATSPassword: "p", NATSCAFile: "flag.pem",
+				AckTimeout: 3 * time.Second, ReconcileInterval: 10 * time.Minute}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := loadConfig(tc.args, func(k string) string { return tc.env[k] })
@@ -458,6 +523,22 @@ func TestConfig(t *testing.T) {
 		{"interval without a unit", configEnv("LO_POLL_INTERVAL", "60"), nil, "LO_POLL_INTERVAL"},
 		{"invalid interval flag", configEnv(), []string{"--poll-interval", "soon"}, "poll-interval"},
 		{"no token flag", configEnv(), []string{"--site-token", "t"}, "site-token"},
+		// ADR 0020: the site ID goes into every subject, where `.` separates the parts.
+		{"site ID with a dot", configEnv("LO_SITE_ID", "plant.1"), nil, "LO_SITE_ID"},
+		{"no NATS URL", configEnv("LO_NATS_URL", ""), nil, "LO_NATS_URL"},
+		{"no NATS username", configEnv("LO_NATS_USERNAME", ""), nil, "LO_NATS_USERNAME"},
+		{"no NATS password", configEnv("LO_NATS_PASSWORD", ""), nil, "LO_NATS_PASSWORD"},
+		{"no NATS password flag", configEnv(), []string{"--nats-password", "p"}, "nats-password"},
+		{"nats:// URL", configEnv("LO_NATS_URL", "nats://nats.example"), nil, "LO_NATS_URL"},
+		{"nats:// URL, insecure false", configEnv("LO_NATS_URL", "nats://nats.example", "LO_NATS_INSECURE", "false"), nil, "LO_NATS_URL"},
+		{"NATS URL with another scheme", configEnv("LO_NATS_URL", "wss://nats.example", "LO_NATS_INSECURE", "true"), nil, "LO_NATS_URL"},
+		{"NATS URL with user info", configEnv("LO_NATS_URL", "tls://site:pw@nats.example"), nil, "LO_NATS_URL"},
+		{"NATS URL with a path", configEnv("LO_NATS_URL", "tls://nats.example/x"), nil, "LO_NATS_URL"},
+		{"invalid NATS insecure", configEnv("LO_NATS_INSECURE", "maybe"), nil, "LO_NATS_INSECURE"},
+		{"zero ack timeout", configEnv("LO_COMMAND_ACK_TIMEOUT", "0s"), nil, "LO_COMMAND_ACK_TIMEOUT"},
+		{"ack timeout without a unit", configEnv("LO_COMMAND_ACK_TIMEOUT", "5"), nil, "LO_COMMAND_ACK_TIMEOUT"},
+		{"negative reconcile interval", configEnv("LO_RECONCILE_INTERVAL", "-5m"), nil, "LO_RECONCILE_INTERVAL"},
+		{"invalid reconcile interval flag", configEnv(), []string{"--reconcile-interval", "often"}, "reconcile-interval"},
 		{"an argument", configEnv(), []string{"serve"}, "serve"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

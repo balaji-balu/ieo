@@ -25,6 +25,16 @@ type config struct {
 	DataDir      string          // lo.data_dir
 	PollInterval time.Duration   // lo.poll.interval, greater than 0
 	LegacyPort   string          // LO_PORT: the old LO runs only when it is set (legacy.go)
+
+	// The site NATS server until Appendix B step 4 (SPEC §15.6); sitenats.Config.Check accepts them.
+	NATSURL      string // lo.nats.url
+	NATSInsecure bool   // lo.nats_insecure: allows a nats:// NATSURL
+	NATSUsername string // lo.nats.username
+	NATSPassword string // lo.nats.password; never logged (§15.4)
+	NATSCAFile   string // lo.nats.ca_file: verifies the NATS server; empty means the system roots
+
+	AckTimeout        time.Duration // lo.command.ack_timeout, greater than 0
+	ReconcileInterval time.Duration // lo.reconcile.interval, greater than 0
 }
 
 // configError is a configuration the LO cannot run with (SPEC §6.1).
