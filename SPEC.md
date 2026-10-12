@@ -887,6 +887,13 @@ host reports the desired digest `installed` or the deployment is no longer wante
 `[IEO, interim]` Until roadmap slice K there are no retry entries, and step 6 skips nothing; §7.5
 says what triggers a pass until then.
 
+`[IEO]` Until the LO has accepted a State Manifest it does not know what should run, and an empty
+desired state is not a wish that nothing runs: while `accepted_manifest_version` is 0 and desired
+state is empty, a pass sends no command. This is the state of an LO that starts with a new or lost
+store (§12); without the rule it would remove everything its hosts run, on their first inventories.
+A first manifest that lists no deployment takes effect on the first pass after its version is
+committed (§8.2 step 8).
+
 Operations are whole-deployment. Converging the components inside a deployment is the EN's job.
 
 ### 8.6 LO: Autonomous Placement `[IEO]`
