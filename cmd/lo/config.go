@@ -137,14 +137,15 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 		return b, nil
 	}
 	// duration returns the value of a key that is a time greater than 0, or def if it is not set.
-	duration := func(k key, def time.Duration) (time.Duration, error) {
+	// example is def as an operator would write it.
+	duration := func(k key, def time.Duration, example string) (time.Duration, error) {
 		s := value(k)
 		if s == "" {
 			return def, nil
 		}
 		d, err := time.ParseDuration(s)
 		if err != nil || d <= 0 {
-			return 0, configError(fmt.Sprintf("%s: %q is not a duration greater than 0, such as %s", k, s, def))
+			return 0, configError(fmt.Sprintf("%s: %q is not a duration greater than 0, such as %s", k, s, example))
 		}
 		return d, nil
 	}
@@ -177,7 +178,7 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 	if cfg.DataDir, err = required(keyDataDir); err != nil {
 		return config{}, err
 	}
-	if cfg.PollInterval, err = duration(keyPollInterval, defaultPollInterval); err != nil {
+	if cfg.PollInterval, err = duration(keyPollInterval, defaultPollInterval, "60s"); err != nil {
 		return config{}, err
 	}
 
@@ -192,10 +193,10 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 	if err := natsConfigError(withoutCA.Check()); err != nil {
 		return config{}, err
 	}
-	if cfg.AckTimeout, err = duration(keyAckTimeout, defaultAckTimeout); err != nil {
+	if cfg.AckTimeout, err = duration(keyAckTimeout, defaultAckTimeout, "5s"); err != nil {
 		return config{}, err
 	}
-	if cfg.ReconcileInterval, err = duration(keyReconcileInterval, defaultReconcileInterval); err != nil {
+	if cfg.ReconcileInterval, err = duration(keyReconcileInterval, defaultReconcileInterval, "5m"); err != nil {
 		return config{}, err
 	}
 	cfg.LegacyPort = getenv("LO_PORT")

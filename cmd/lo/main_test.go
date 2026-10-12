@@ -521,6 +521,8 @@ func TestConfig(t *testing.T) {
 		{"zero interval", configEnv("LO_POLL_INTERVAL", "0s"), nil, "LO_POLL_INTERVAL"},
 		{"negative interval", configEnv("LO_POLL_INTERVAL", "-1s"), nil, "LO_POLL_INTERVAL"},
 		{"interval without a unit", configEnv("LO_POLL_INTERVAL", "60"), nil, "LO_POLL_INTERVAL"},
+		{"interval without a unit, the example", configEnv("LO_POLL_INTERVAL", "60"), nil, "such as 60s"},
+		{"reconcile interval without a unit, the example", configEnv("LO_RECONCILE_INTERVAL", "5"), nil, "such as 5m"},
 		{"invalid interval flag", configEnv(), []string{"--poll-interval", "soon"}, "poll-interval"},
 		{"no token flag", configEnv(), []string{"--site-token", "t"}, "site-token"},
 		// ADR 0020: the site ID goes into every subject, where `.` separates the parts.
@@ -530,6 +532,9 @@ func TestConfig(t *testing.T) {
 		{"no NATS password", configEnv("LO_NATS_PASSWORD", ""), nil, "LO_NATS_PASSWORD"},
 		{"no NATS password flag", configEnv(), []string{"--nats-password", "p"}, "nats-password"},
 		{"nats:// URL", configEnv("LO_NATS_URL", "nats://nats.example"), nil, "LO_NATS_URL"},
+		// The error also names the key that would allow the URL.
+		{"nats:// URL, the insecure key", configEnv("LO_NATS_URL", "nats://nats.example"), nil, "LO_NATS_INSECURE"},
+		{"NATS URL with another scheme, the insecure key", configEnv("LO_NATS_URL", "ws://nats.example"), nil, "LO_NATS_INSECURE"},
 		{"nats:// URL, insecure false", configEnv("LO_NATS_URL", "nats://nats.example", "LO_NATS_INSECURE", "false"), nil, "LO_NATS_URL"},
 		{"NATS URL with another scheme", configEnv("LO_NATS_URL", "wss://nats.example", "LO_NATS_INSECURE", "true"), nil, "LO_NATS_URL"},
 		{"NATS URL with user info", configEnv("LO_NATS_URL", "tls://site:pw@nats.example"), nil, "LO_NATS_URL"},

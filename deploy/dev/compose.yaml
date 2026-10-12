@@ -151,7 +151,8 @@ services:
       LO_NATS_URL: nats://nats:4222 # also read by the old LO
       LO_NATS_INSECURE: "true" # no TLS on the compose network; the LO logs a warning (SPEC §15.6)
       # The site's NATS login (SPEC §15.6). Values for this harness only, like the Postgres ones
-      # above: the server checks no login until roadmap D5.6.
+      # above: the server checks no login until roadmap D5.6. When it does, the password must
+      # come from deploy/dev/.env, as LO_SITE_TOKEN does, not from this file.
       LO_NATS_USERNAME: site
       LO_NATS_PASSWORD: dev-harness-only
       LO_LEGACY_CO_URL: http://co:9001
