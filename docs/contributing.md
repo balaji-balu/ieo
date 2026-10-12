@@ -69,7 +69,10 @@ LO_DATA_DIR=data/lo                 # the LO store is data/lo/lo.db; the old LO 
 LO_SITE_TOKEN=                      # printed by `go run ./cmd/co site add <LO_SITE_ID>` (step 4)
 LO_PORT=9010                        # the old LO, run only when set
 LO_METRICS_PORT=9202
-LO_NATS_URL=nats://localhost:4222
+LO_NATS_URL=nats://localhost:4222   # the site NATS server; the old LO reads it too
+LO_NATS_INSECURE=true               # allows nats:// on this machine; the LO logs a warning
+LO_NATS_USERNAME=site               # the site's NATS login (SPEC §15.6); the harness NATS server
+LO_NATS_PASSWORD=dev-harness-only   #   checks none yet (roadmap D5.6), so any value does
 LO_LEGACY_CO_URL=http://localhost:9001   # the old CO API, where the old LO registers
 
 # --- EN ---

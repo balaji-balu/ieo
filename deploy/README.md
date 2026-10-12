@@ -25,9 +25,19 @@ or invalid:
 | `LO_TLS_CA_FILE` | `--tls-ca-file` | `lo.tls.ca_file` | optional; verifies the CO, instead of the system roots |
 | `LO_CO_INSECURE` | `--co-insecure` | `lo.co_insecure` | default `false`; `true` allows an `http://` `LO_CO_URL` |
 | `LO_POLL_INTERVAL` | `--poll-interval` | `lo.poll.interval` | default `60s` |
+| `LO_NATS_URL` | `--nats-url` | `lo.nats.url` | REQUIRED; the site NATS server, `tls://host[:port]` |
+| `LO_NATS_USERNAME` | `--nats-username` | `lo.nats.username` | REQUIRED; the site's NATS user (SPEC §15.6) |
+| `LO_NATS_PASSWORD` | none | `lo.nats.password` | REQUIRED; environment only |
+| `LO_NATS_CA_FILE` | `--nats-ca-file` | `lo.nats.ca_file` | optional; verifies the NATS server, instead of the system roots |
+| `LO_NATS_INSECURE` | `--nats-insecure` | `lo.nats_insecure` | default `false`; `true` allows a `nats://` `LO_NATS_URL`, which does not require TLS |
+| `LO_COMMAND_ACK_TIMEOUT` | `--command-ack-timeout` | `lo.command.ack_timeout` | default `5s`; how long a host has to acknowledge a command |
+| `LO_RECONCILE_INTERVAL` | `--reconcile-interval` | `lo.reconcile.interval` | default `5m`; the safety pass over all hosts |
 
-The LO uses no HTTP proxy for the CO (SPEC §15.6). The old LO runs beside it while `LO_PORT` is
-set; it registers with the old CO API at `LO_LEGACY_CO_URL` (until roadmap slice E).
+The LO uses no HTTP proxy for the CO (SPEC §15.6). A NATS server it cannot reach, or that refuses
+its login, does not stop it: it logs a warning, keeps trying, and goes on syncing with the CO
+(SPEC §11.2). A site ID that contains `.` is refused at startup, since it goes into every NATS
+subject (SPEC §4.2). The old LO runs beside it while `LO_PORT` is set; it reads `LO_NATS_URL`
+too, and registers with the old CO API at `LO_LEGACY_CO_URL` (until roadmap slice E).
 
 The Compose bundle (`deploy/compose`) and the `ieo-lo` Helm chart do not set these keys yet, so
 an LO image built from current code exits at startup with them. `deploy/dev/compose.yaml` does
