@@ -45,6 +45,8 @@ func actual(at time.Time, deployments ...contract.InventoryDeployment) store.Hos
 	return store.HostActual{ReportedAt: at, Deployments: deployments}
 }
 
+var effectNames = map[effect]string{unchanged: "unchanged", changed: "changed", stale: "stale", clockBack: "clockBack"}
+
 // The status-event rules of ADR 0015 (SPEC §7.5), with the order of reports (balaji-balu/ieo#84).
 func TestApplyStatus(t *testing.T) {
 	held := func() store.HostActual {
@@ -142,7 +144,7 @@ func TestApplyStatus(t *testing.T) {
 				wantState, wantEffect = before, stale
 			}
 			if effect != wantEffect || !reflect.DeepEqual(got, wantState) {
-				t.Errorf("applyStatus = effect %d,\n%+v\nwant effect %d,\n%+v", effect, got, wantEffect, wantState)
+				t.Errorf("applyStatus = %s,\n%+v\nwant %s,\n%+v", effectNames[effect], got, effectNames[wantEffect], wantState)
 			}
 		})
 	}
@@ -175,30 +177,32 @@ func TestApplyInventory(t *testing.T) {
 		held           *store.HostActual
 		at             time.Time
 		lastNotApplied bool
-		applied        bool
+		want           effect
 	}{
-		{name: "a newer one is applied", held: &held, at: later, applied: true},
-		{name: "an older one is not", held: &held, at: earlier},
-		{name: "one at the time of the state held is not", held: &held, at: reported},
-		{name: "an older one after one that was not applied is applied", held: &held, at: earlier, lastNotApplied: true, applied: true},
-		{name: "one at the time of the state held, after one that was not applied, is applied", held: &held, at: reported, lastNotApplied: true, applied: true},
-		{name: "a newer one after one that was not applied is applied", held: &held, at: later, lastNotApplied: true, applied: true},
-		{name: "one with nothing to compare it with is applied", at: earlier, applied: true},
+		{name: "a newer one is applied", held: &held, at: later, want: changed},
+		{name: "an older one is not", held: &held, at: earlier, want: stale},
+		{name: "one at the time of the state held is not", held: &held, at: reported, want: stale},
+		{name: "an older one after one that was not applied is applied: the clock went back",
+			held: &held, at: earlier, lastNotApplied: true, want: clockBack},
+		{name: "one at the time of the state held, after one that was not applied, is applied",
+			held: &held, at: reported, lastNotApplied: true, want: clockBack},
+		{name: "a newer one after one that was not applied is applied", held: &held, at: later, lastNotApplied: true, want: changed},
+		{name: "one with nothing to compare it with is applied", at: earlier, want: changed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			before := clone(held)
 			inv := contract.Inventory{HostID: "host-1", At: tt.at, Deployments: []contract.InventoryDeployment{listed}}
-			got, applied := applyInventory(tt.held, inv, tt.lastNotApplied)
+			got, effect := applyInventory(tt.held, inv, tt.lastNotApplied)
 			if !reflect.DeepEqual(held, before) {
 				t.Errorf("applyInventory modified the state held:\n%+v\nwas\n%+v", held, before)
 			}
-			want := before
-			if tt.applied {
-				want = actual(tt.at, listed)
+			want := actual(tt.at, listed)
+			if tt.want == stale {
+				want = before
 			}
-			if applied != tt.applied || !reflect.DeepEqual(got, want) {
-				t.Errorf("applyInventory = applied %v,\n%+v\nwant applied %v,\n%+v", applied, got, tt.applied, want)
+			if effect != tt.want || !reflect.DeepEqual(got, want) {
+				t.Errorf("applyInventory = %s,\n%+v\nwant %s,\n%+v", effectNames[effect], got, effectNames[tt.want], want)
 			}
 		})
 	}

@@ -726,9 +726,11 @@ the `reported_at` it holds for the host (§4.1.8).
 - A `Component Status Event` whose `at` is before `reported_at` is logged and dropped.
 - An `Inventory` whose `at` is not after `reported_at` is logged and not applied. The host is still
   reconciled.
-- Two Inventories are always applied: the one that makes a host `Online` (§7.3), and one that
-  follows an Inventory not applied. A host whose clock went back is therefore followed again after
-  at most `en.inventory.interval`.
+- Two Inventories are always applied: a host's first since the LO started (under the §7.3 interim
+  rule, the one that makes it `Online`), and one that follows an Inventory not applied with no
+  status event of the host accepted between the two. A host whose clock went back is therefore
+  followed again from its second Inventory after that, at most twice `en.inventory.interval`
+  later; its status events are dropped until then.
 
 `[IEO, interim]` Until command retries are implemented (roadmap slice K), there are no retry
 entries (§8.5 step 6), so a `failed` component that reconciled its host would be applied again at

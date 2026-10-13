@@ -20,6 +20,9 @@ const (
 	changed
 	// stale: the report is older than the state held, and is dropped (SPEC §7.5).
 	stale
+	// clockBack: the state returned is an Inventory's that is not newer than the state held; it is
+	// applied because the host's clock went back (SPEC §7.5).
+	clockBack
 )
 
 // applyStatus returns the actual state of a host after one status event from it, and what the
@@ -84,22 +87,26 @@ func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.Ho
 	return out, changed
 }
 
-// applyInventory returns the actual state of a host after inv, and whether inv was applied (SPEC
-// §7.5, ADR 0015). held is the state inv is compared with, nil if there is none; lastNotApplied
-// says the host's last Inventory was not applied.
+// applyInventory returns the actual state of a host after inv, and what inv did to it (SPEC §7.5,
+// ADR 0015). held is the state inv is compared with, nil if there is none; lastNotApplied says the
+// host's last Inventory was not applied, and no status event from it was accepted since.
 //
-// An Inventory that is not made after held is not applied, and held is returned as it is: a status
-// event made after the host read inv may have come first, and inv would bring back what it
-// changed. If the host's last Inventory was not applied either, its clock went back, and inv is
-// applied so that the LO follows that clock again.
+// An Inventory that is not made after held is stale, and held is returned as it is: a status event
+// made after the host read inv may have come first, and inv would bring back what it changed. If
+// the host's last Inventory was not applied either, its clock went back: inv is applied, so that
+// the LO follows that clock again, and the effect is clockBack.
 //
-// An applied inv replaces the state whole: the state returned is reported at inv's `at` and shares
-// nothing with inv.
-func applyInventory(held *store.HostActual, inv contract.Inventory, lastNotApplied bool) (store.HostActual, bool) {
-	if held != nil && !lastNotApplied && !inv.At.After(held.ReportedAt) {
-		return *held, false
+// An applied inv replaces the state whole, whether or not it lists what held does: the state
+// returned is reported at inv's `at` and shares nothing with inv.
+func applyInventory(held *store.HostActual, inv contract.Inventory, lastNotApplied bool) (store.HostActual, effect) {
+	applied := changed
+	if held != nil && !inv.At.After(held.ReportedAt) {
+		if !lastNotApplied {
+			return *held, stale
+		}
+		applied = clockBack
 	}
-	return store.HostActual{ReportedAt: inv.At, Deployments: cloneDeployments(inv.Deployments)}, true
+	return store.HostActual{ReportedAt: inv.At, Deployments: cloneDeployments(inv.Deployments)}, applied
 }
 
 // sameDeployment reports whether x and y are one deployment at one digest with the same components

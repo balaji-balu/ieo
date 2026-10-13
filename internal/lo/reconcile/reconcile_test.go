@@ -1122,6 +1122,45 @@ func TestHostWhoseClockWentBackIsFollowedAgain(t *testing.T) {
 	}
 }
 
+// SPEC §7.5: a status event that is not older than the state held shows that the host's clock is
+// not behind it, so an Inventory that was not applied had only crossed an event. The host's next
+// Inventory is compared again.
+func TestAcceptedStatusEventEndsTheExceptionForTheNextInventory(t *testing.T) {
+	a := want(t, idA, "site-1/host-1", "a")
+	f := newFixture(t, map[uuid.UUID]losync.Desired{idA: a})
+	installed := deployment(idA, a.Digest, component("web", contract.StateInstalled))
+	minutes := func(n int) time.Time { return start.Add(time.Duration(n) * time.Minute) }
+	removed := func(at time.Time) contract.ComponentStatusEvent {
+		return contract.ComponentStatusEvent{DeploymentID: idA, Digest: a.Digest, State: contract.StateRemoved, At: at}
+	}
+
+	f.r.OnInventory(f.ctx, host1, inventory(host1, minutes(1), installed))
+	f.r.OnStatus(f.ctx, host1, removed(minutes(3)))
+	f.r.OnInventory(f.ctx, host1, inventory(host1, minutes(2), installed)) // crossed the event: not applied
+	// The event that follows reports what is held, and is not older than it.
+	f.r.OnStatus(f.ctx, host1, removed(minutes(4)))
+	held := f.actualOf(host1)
+	f.r.OnInventory(f.ctx, host1, inventory(host1, minutes(2).Add(time.Second), installed))
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, held) {
+		t.Errorf("an older inventory was applied after a status event was accepted:\n%+v\nwas\n%+v", got, held)
+	}
+	if lines := f.lines("inventory applied"); len(lines) != 0 {
+		t.Errorf("the host's clock was logged as gone back: %v", lines)
+	}
+}
+
+// A first Inventory the store does not take leaves nothing held for its host: a status event from
+// it is still one from a host without actual state (SPEC §11.2).
+func TestHostOfAnInventoryThatWasNotStoredIsNotHeld(t *testing.T) {
+	f := newFixture(t, nil)
+	f.store.fail(errors.New("disk full"), nil)
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start))
+	f.store.fail(nil, nil)
+	if f.r.Holds(host1) {
+		t.Error("the Reconciler holds a host whose only inventory was not stored")
+	}
+}
+
 // SPEC §7.5, §13.1: a report that is dropped for its age is logged with its host and both times,
 // and a status event with its deployment and digest too.
 func TestReportsDroppedForTheirAgeAreLogged(t *testing.T) {

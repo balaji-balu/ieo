@@ -29,9 +29,12 @@ so new buckets need a layout version and a migration.
   them. At an equal `at` the event is applied and the inventory is not. An inventory read before
   the event would bring back what the event changed, and one read after it holds the same state.
   - Two inventories are applied whatever their `at`: the first from a host since the LO started,
-    and one that follows an inventory that was not applied. Two in a row that are not newer mean
-    the host's clock went back, not that messages crossed; the LO then follows that clock again.
-    Whether the host's last inventory was not applied is held in memory only.
+    and one that follows an inventory that was not applied, if no status event from the host was
+    accepted between the two. Two in a row that are not newer, with every event between them
+    older than the state held, mean the host's clock went back, not that messages crossed; the LO
+    then follows that clock again, at most two `en.inventory.interval` after the clock moved. An
+    accepted event shows the clock is not behind, so the comparison holds again for the next
+    inventory. Whether the host's last inventory was not applied is held in memory only.
   - An inventory that is not applied still starts a pass for the host: the state held is the
     newer one, and the event that made it so started none (SPEC §7.5 interim rule).
 - A status event changes the one component it names (§7.5) when its digest is the digest
