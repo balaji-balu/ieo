@@ -182,10 +182,10 @@ func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, in
 			slog.String("reason", "the payload names another host than the subject"))
 		return
 	}
-	actual := store.HostActual{ReportedAt: inv.At, Deployments: cloneDeployments(inv.Deployments)}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	actual, _ := applyInventory(nil, inv, false)
 	if err := r.store.PutActual(ctx, hostID, actual); err != nil {
 		log.LogAttrs(ctx, slog.LevelError, "inventory dropped", slog.String("reason", err.Error()))
 		return
@@ -214,8 +214,8 @@ func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev co
 		log.LogAttrs(ctx, slog.LevelWarn, "status event dropped", slog.String("reason", "no actual state is held for the host"))
 		return
 	}
-	actual, changed := applyStatus(*h.actual, ev)
-	if !changed {
+	actual, effect := applyStatus(*h.actual, ev)
+	if effect != changed {
 		return
 	}
 	if err := r.store.PutActual(ctx, hostID, actual); err != nil {

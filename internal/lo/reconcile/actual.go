@@ -10,8 +10,20 @@ import (
 	"github.com/balaji-balu/ieo/internal/lo/store"
 )
 
-// applyStatus returns the actual state of a host after one status event from it, and whether the
-// event changed anything (SPEC §7.5, ADR 0015):
+// effect says what a report did to the actual state held for its host.
+type effect int
+
+const (
+	// unchanged: the report says what is already held.
+	unchanged effect = iota
+	// changed: the state returned differs from the one held.
+	changed
+	// stale: the report is older than the state held, and is dropped (SPEC §7.5).
+	stale
+)
+
+// applyStatus returns the actual state of a host after one status event from it, and what the
+// event did to it (SPEC §7.5, ADR 0015):
 //
 //   - `removing` sets every component held for the deployment to `removing`, without its error,
 //     and keeps the held digest;
@@ -25,11 +37,11 @@ import (
 // An event that reports what a already holds changes nothing. A changed state is reported at the
 // event's `at` and shares nothing with a or ev. a is not modified; it is returned as it is when
 // nothing changed.
-func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.HostActual, bool) {
+func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.HostActual, effect) {
 	i := slices.IndexFunc(a.Deployments, func(d contract.InventoryDeployment) bool { return d.DeploymentID == ev.DeploymentID })
 	removal := ev.State == contract.StateRemoving || ev.State == contract.StateRemoved
 	if removal && i < 0 {
-		return a, false
+		return a, unchanged
 	}
 	out := store.HostActual{ReportedAt: ev.At, Deployments: cloneDeployments(a.Deployments)}
 	switch ev.State {
@@ -60,9 +72,14 @@ func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.Ho
 		}
 	}
 	if slices.EqualFunc(out.Deployments, a.Deployments, sameDeployment) {
-		return a, false
+		return a, unchanged
 	}
-	return out, true
+	return out, changed
+}
+
+// applyInventory returns the actual state of a host after inv, and whether inv was applied.
+func applyInventory(held *store.HostActual, inv contract.Inventory, lastNotApplied bool) (store.HostActual, bool) {
+	return store.HostActual{ReportedAt: inv.At, Deployments: cloneDeployments(inv.Deployments)}, true
 }
 
 // sameDeployment reports whether x and y are one deployment at one digest with the same components

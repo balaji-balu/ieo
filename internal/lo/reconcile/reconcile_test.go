@@ -496,11 +496,12 @@ func TestSpec_17_4_NoTwoReconcilePassesForTheSameHostRunConcurrently(t *testing.
 }
 
 // A host the store already holds is `Unknown` when the LO starts: what it ran before is not acted
-// on until it publishes an Inventory (SPEC §7.3 interim rule, ADR 0015).
+// on until it publishes an Inventory (SPEC §7.3 interim rule, ADR 0015). That Inventory is applied
+// whatever its `at`: here the stored state is from a later time than it (SPEC §7.5).
 func TestLoadedHostGetsNoCommandUntilItsInventory(t *testing.T) {
 	a := want(t, idA, "site-1/host-1", "a")
 	f := newFixture(t, map[uuid.UUID]losync.Desired{idA: a}, func(f *fixture) {
-		stale := store.HostActual{ReportedAt: start.Add(-time.Hour), Deployments: []contract.InventoryDeployment{
+		stale := store.HostActual{ReportedAt: start.Add(time.Hour), Deployments: []contract.InventoryDeployment{
 			deployment(idC, otherDigest, component("web", contract.StateInstalled)),
 		}}
 		if err := f.store.Memory.PutActual(f.ctx, host1, stale); err != nil {
@@ -513,6 +514,9 @@ func TestLoadedHostGetsNoCommandUntilItsInventory(t *testing.T) {
 
 	f.r.OnInventory(f.ctx, host1, inventory(host1, start))
 	equal(t, "pass after the inventory", f.pass(host1), []string{apply(idA, a)})
+	if got := f.actualOf(host1); got == nil || !got.ReportedAt.Equal(start) || len(got.Deployments) != 0 {
+		t.Errorf("stored actual state %+v, want the inventory's", got)
+	}
 }
 
 // A status event updates actual state and starts no pass; the next pass plans from it (SPEC §7.5
@@ -1006,5 +1010,140 @@ func TestRepeatedStatusEventIsNotWritten(t *testing.T) {
 	f.r.OnStatus(f.ctx, host1, removing)
 	if n := f.store.writes(); n != 2 {
 		t.Errorf("`removing` twice made %d writes, want 1", n-1)
+	}
+}
+
+// SPEC §17.4: "A report older than the actual state held for its host changes no state"
+//
+// Inventories and status events arrive on two subscriptions, so not in the order the host
+// published them (balaji-balu/ieo#84).
+func TestSpec_17_4_ReportOlderThanActualStateChangesNoState(t *testing.T) {
+	a := want(t, idA, "site-1/host-1", "a")
+	f := newFixture(t, map[uuid.UUID]losync.Desired{idA: a})
+	installed := deployment(idA, a.Digest, component("web", contract.StateInstalled))
+
+	// A status event after a newer Inventory: the component failed and recovered before the host
+	// read the Inventory.
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(2*time.Minute), installed))
+	held := f.actualOf(host1)
+	f.r.OnStatus(f.ctx, host1, contract.ComponentStatusEvent{DeploymentID: idA, Digest: a.Digest, Component: "web",
+		State: contract.StateFailed, Error: &contract.StatusError{Code: "IEO-PULL", Message: "gone"}, At: start.Add(time.Minute)})
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, held) {
+		t.Errorf("an older status event changed the store's actual state:\n%+v\nwas\n%+v", got, held)
+	}
+	if n := f.store.writes(); n != 1 {
+		t.Errorf("an older status event made %d writes, want none", n-1)
+	}
+	// The state the Reconciler plans from did not change either: a failed component is applied again.
+	f.r.ReconcileAll(f.ctx)
+	equal(t, "pass after the older status event", f.pass(host1), nil)
+
+	// An Inventory after a newer status event: the host listed the deployment and then removed it.
+	f.r.OnStatus(f.ctx, host1, contract.ComponentStatusEvent{DeploymentID: idA, Digest: a.Digest, State: contract.StateRemoved, At: start.Add(4 * time.Minute)})
+	held = f.actualOf(host1)
+	if len(held.Deployments) != 0 {
+		t.Fatalf("`removed` left %+v in the store", held.Deployments)
+	}
+	equal(t, "pass after `removed`", f.pass(host1), nil) // SPEC §7.5 interim rule: an event starts none
+	writes := f.store.writes()
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(3*time.Minute), installed))
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, held) {
+		t.Errorf("an older inventory changed the store's actual state:\n%+v\nwas\n%+v", got, held)
+	}
+	if n := f.store.writes(); n != writes {
+		t.Errorf("an older inventory made %d writes, want none", n-writes)
+	}
+	// SPEC §7.5: the host is still reconciled, from the state held, in which the deployment is absent.
+	equal(t, "pass after the older inventory", f.pass(host1), []string{apply(idA, a)})
+}
+
+// SPEC §7.5: at the `at` of the state held, a status event is applied and an Inventory is not.
+func TestReportAtTheTimeOfTheStateHeld(t *testing.T) {
+	a := want(t, idA, "site-1/host-1", "a")
+	f := newFixture(t, map[uuid.UUID]losync.Desired{idA: a})
+	installed := deployment(idA, a.Digest, component("web", contract.StateInstalled))
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start, installed))
+
+	f.r.OnStatus(f.ctx, host1, contract.ComponentStatusEvent{DeploymentID: idA, Digest: a.Digest, State: contract.StateRemoved, At: start})
+	held := f.actualOf(host1)
+	if len(held.Deployments) != 0 {
+		t.Fatalf("an event at the time of the state held was not applied: the store holds %+v", held.Deployments)
+	}
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start, installed))
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, held) {
+		t.Errorf("an inventory at the time of the state held changed it:\n%+v\nwas\n%+v", got, held)
+	}
+}
+
+// SPEC §7.5: a host whose clock went back sends reports older than the state held. Its first
+// Inventory is not applied, as it may only have crossed a newer event; the next one is, and the LO
+// follows the host's clock from then on.
+func TestHostWhoseClockWentBackIsFollowedAgain(t *testing.T) {
+	a := want(t, idA, "site-1/host-1", "a")
+	f := newFixture(t, map[uuid.UUID]losync.Desired{idA: a})
+	installed := deployment(idA, a.Digest, component("web", contract.StateInstalled))
+	minutes := func(n int) time.Time { return start.Add(time.Duration(n) * time.Minute) }
+
+	f.r.OnInventory(f.ctx, host1, inventory(host1, minutes(10)))
+	equal(t, "first pass", f.pass(host1), []string{apply(idA, a)})
+	held := f.actualOf(host1)
+
+	f.r.OnInventory(f.ctx, host1, inventory(host1, minutes(5), installed))
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, held) {
+		t.Errorf("the first older inventory changed the store's actual state:\n%+v\nwas\n%+v", got, held)
+	}
+	equal(t, "pass after the first older inventory", f.pass(host1), []string{apply(idA, a)})
+	if lines := f.lines("inventory applied"); len(lines) != 0 {
+		t.Errorf("log lines after the first older inventory: %v", lines)
+	}
+
+	f.r.OnInventory(f.ctx, host1, inventory(host1, minutes(6), installed))
+	wantActual := &store.HostActual{ReportedAt: minutes(6), Deployments: []contract.InventoryDeployment{installed}}
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, wantActual) {
+		t.Errorf("stored actual state after the second older inventory:\n%+v\nwant\n%+v", got, wantActual)
+	}
+	equal(t, "pass after the second older inventory", f.pass(host1), nil)
+	lines := f.lines("inventory applied")
+	if len(lines) != 1 || lines[0]["level"] != "WARN" || lines[0]["site_id"] != "site-1" || lines[0]["host_id"] != "host-1" ||
+		lines[0]["at"] != minutes(6).Format(time.RFC3339Nano) || lines[0]["reported_at"] != minutes(10).Format(time.RFC3339Nano) || lines[0]["reason"] == nil {
+		t.Errorf("log lines for the inventory of a host whose clock went back: %v", lines)
+	}
+
+	// The host's reports are in order again: an event after that inventory is applied.
+	f.r.OnStatus(f.ctx, host1, contract.ComponentStatusEvent{DeploymentID: idA, Digest: a.Digest, State: contract.StateRemoved, At: minutes(7)})
+	held = f.actualOf(host1)
+	if !held.ReportedAt.Equal(minutes(7)) || len(held.Deployments) != 0 {
+		t.Fatalf("stored actual state after an event in the host's time: %+v", held)
+	}
+	// An applied inventory ends the exception: an older one is again one that crossed an event.
+	f.r.OnInventory(f.ctx, host1, inventory(host1, minutes(6).Add(time.Second), installed))
+	if got := f.actualOf(host1); !reflect.DeepEqual(got, held) {
+		t.Errorf("an older inventory after an applied one changed the store's actual state:\n%+v\nwas\n%+v", got, held)
+	}
+}
+
+// SPEC §7.5, §13.1: a report that is dropped for its age is logged with its host and both times,
+// and a status event with its deployment and digest too.
+func TestReportsDroppedForTheirAgeAreLogged(t *testing.T) {
+	f := newFixture(t, nil)
+	held, older := start.Add(time.Minute), start
+	f.r.OnInventory(f.ctx, host1, inventory(host1, held))
+	f.r.OnStatus(f.ctx, host1, contract.ComponentStatusEvent{DeploymentID: idA, Digest: otherDigest, Component: "web", State: contract.StateInstalled, At: older})
+	f.r.OnInventory(f.ctx, host1, inventory(host1, older))
+
+	for msg, event := range map[string]bool{"status event dropped": true, "inventory dropped": false} {
+		lines := f.lines(msg)
+		if len(lines) != 1 {
+			t.Errorf("%d lines %q, want 1: %v", len(lines), msg, lines)
+			continue
+		}
+		l := lines[0]
+		if l["level"] != "INFO" || l["site_id"] != "site-1" || l["host_id"] != "host-1" || l["reason"] == nil ||
+			l["at"] != older.Format(time.RFC3339Nano) || l["reported_at"] != held.Format(time.RFC3339Nano) {
+			t.Errorf("log line %v", l)
+		}
+		if event && (l["deployment_id"] != idA.String() || l["digest"] != string(otherDigest)) {
+			t.Errorf("log line of the event %v", l)
+		}
 	}
 }
