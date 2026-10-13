@@ -17,7 +17,8 @@ import (
 //
 // Its `at` is taken before the record is read, and a status event's after the change is recorded.
 // So an event for a change this Inventory does not show has a later `at`, and the LO, which drops
-// a report older than the one it holds, keeps that event (SPEC §7.5, §11.2).
+// a report older than the one it holds, keeps that event (SPEC §7.5, §11.2). `removing` records
+// nothing: until `removed`, an Inventory lists that deployment as it was before the Remove.
 func (e *Executor) Inventory(ctx context.Context, host contract.HostID) (contract.Inventory, error) {
 	at := e.clock.Now()
 	stored, err := e.store.Load(ctx)

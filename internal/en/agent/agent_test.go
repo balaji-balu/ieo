@@ -60,6 +60,12 @@ func (l *lockedBuffer) Write(p []byte) (int, error) {
 	return l.b.Write(p)
 }
 
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
 // lines returns the log lines with message msg.
 func (l *lockedBuffer) lines(t *testing.T, msg string) []map[string]any {
 	t.Helper()
@@ -389,6 +395,26 @@ func TestCommandIsAckedOnItsReplySubject(t *testing.T) {
 		t.Errorf("request the dispatcher answers with nothing = %q, %v; want ErrNoReply", reply, err)
 	}
 	await(t, f.cmds.got, "the message at the dispatcher")
+}
+
+// An ack that cannot be sent is logged with its command, never with the message. Here the message
+// was published, not requested, so there is nowhere to reply to; the dispatcher has taken the
+// command all the same, as it does when the connection is lost before the reply.
+func TestAckThatCannotBeSentIsLogged(t *testing.T) {
+	f := listening(t)
+	ack := contract.CommandAck{CommandID: uuid.MustParse("0c0c0c0c-0000-4000-8000-00000000000c"), Accepted: true}
+	f.cmds.answer(ack, true)
+	if err := f.lo.Publish(f.host.Cmd(), []byte(`{"a":"message with no reply subject"}`)); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	await(t, f.cmds.got, "the message at the dispatcher")
+	l := f.logged("command ack not sent")
+	if l["level"] != "WARN" || l["site_id"] != "site-1" || l["host_id"] != "host-1" || l["command_id"] != ack.CommandID.String() || l["reason"] == nil {
+		t.Errorf("log line for the ack that was not sent: %v", l)
+	}
+	if strings.Contains(f.logs.String(), "message with no reply subject") {
+		t.Error("a log line holds the message")
+	}
 }
 
 // SPEC §11.2: every EN answers `site.<s>.inventory.request` by publishing its Inventory.

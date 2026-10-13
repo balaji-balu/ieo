@@ -233,7 +233,7 @@ On **Remove**, the EN brings down the deployment's Compose projects, reporting `
 
 ### 5.8 Status reporting (EN → LO → CO)
 
-1. The EN publishes component status events and a periodic full **inventory** (every deployment it runs, with digest and component states).
+1. The EN publishes component status events and a periodic full **inventory** (every deployment it runs, with digest and component states). `internal/en/agent` is the EN's side of the site messages: it replies to each command with its ack, and publishes the inventory on every (re)connect, when the LO asks and every 60 s, one at a time. An inventory carries the time before the EN read its record and a status event the time after its change was recorded, so the LO can order a host's reports (SPEC §7.5, §11.2).
 2. The LO maps these onto Margo deployment status and calls `POST /api/v1/deployments/{deploymentId}/status` with:
    - `deploymentId`
    - `deviceId`: the host's full ID (`<site-id>/<host-id>`); for an autonomous deployment, the host the LO chose
