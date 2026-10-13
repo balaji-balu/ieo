@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -82,8 +83,9 @@ func readAuthFile(path string) (authFile, error) {
 	}
 	for _, key := range slices.Sorted(maps.Keys(cfg.Auths)) { // a stable first error
 		host := hostOfKey(key)
-		if host == "" {
-			return authFile{}, &ConfigError{File: path, Reason: "an entry of auths has a key with no registry host"}
+		if !isHost(host) {
+			// Not quoted: what is not a host may hold anything, a password among it.
+			return authFile{}, &ConfigError{File: path, Reason: "an entry of auths has a key that is not a registry host"}
 		}
 		cred, reason := cfg.Auths[key].credential()
 		if reason != "" {
@@ -149,6 +151,12 @@ func hostOfKey(key string) string {
 	key = strings.TrimPrefix(key, "http://")
 	host, _, _ := strings.Cut(key, "/")
 	return registryOf(host)
+}
+
+// isHost reports whether host is `host` or `host:port` and nothing more, such as a user name.
+func isHost(host string) bool {
+	u, err := url.Parse("//" + host)
+	return err == nil && host != "" && u.Host == host && u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
 
 // credential returns what the entry holds, or why it cannot be decoded. `auth` is used when

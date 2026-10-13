@@ -25,7 +25,8 @@ Registry credentials are a §15 area (SPEC §15.4).
   - `credsStore` and `credHelpers` are ignored, with one warning at startup that names the key.
     The EN never runs a credential helper: it would be a program chosen by a file.
   - Two keys that name the same registry are a configuration error that names the host: the file
-    does not say which of the two is meant.
+    does not say which of the two is meant. So is a key that is not `host` or `host:port` once
+    its scheme and path are removed; that error does not quote the key.
   - The file is read once, at startup. A file that is set but missing, unreadable or not valid is a
     configuration error (exit code 2) that names the file and never its contents. A file larger
     than 1 MiB is not valid: a `config.json` is a few KiB.
@@ -50,6 +51,10 @@ Registry credentials are a §15 area (SPEC §15.4).
     `Authorization` header is not sent to another host on a redirect: a target whose scheme or
     `host:port` differs from the first request's, compared exactly. Another port of the same
     host, and a subdomain, are other hosts.
+  - Only the host a request was first sent to may ask for a credential. A redirect target that
+    answers `401` and names a token service is not obeyed: its `401` fails the pull. A request
+    with a body, such as the one that carries an `identitytoken` to a token service, is not
+    redirected to another host.
   - The EN retries no registry request. A failed pull fails the component (SPEC §8.9); trying
     again is the LO's decision.
   - The environment's proxy settings are honored (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`), unlike

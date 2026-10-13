@@ -119,6 +119,7 @@ func New(cfg Config) (*Client, error) {
 	if !cfg.Insecure {
 		transport = httpsOnly{transport}
 	}
+	transport = firstHostOnly{transport}
 	credentials := file.Credentials
 	return &Client{
 		plainHTTP: cfg.Insecure,
@@ -153,25 +154,62 @@ func warnInsecure(log *slog.Logger, credentials bool, proxy func(*url.URL) (*url
 }
 
 var (
-	errProxy     = errors.New("the proxy address in the environment is not valid")
-	errPlainHTTP = errors.New("a plain-HTTP request is not made unless en.registry.insecure is set")
+	errProxy        = errors.New("the proxy address in the environment is not valid")
+	errPlainHTTP    = errors.New("a plain-HTTP request is not made unless en.registry.insecure is set")
+	errRedirects    = errors.New("too many redirects")
+	errBodyRedirect = errors.New("a request with a body is not redirected to another host")
 )
 
 // maxRedirects is how many redirects one request follows, as Go's HTTP client does by default.
 const maxRedirects = 10
 
+// sameHost reports whether two URLs are of one host as ADR 0021 means it: the same scheme and
+// the same `host:port`, compared exactly. Another port and a subdomain are other hosts.
+func sameHost(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && a.Host == b.Host
+}
+
 // checkRedirect follows a redirect, as registries send layer downloads to storage hosts, and
-// keeps the Authorization header from another host: a target whose scheme or `host:port` is not
-// exactly the first request's (ADR 0021). Go's own rule would send it on to another port of the
-// same host, and to a subdomain.
+// keeps what is for the first host from another one (ADR 0021): the Authorization header, and
+// the body of a request, which for a token service holds an identity token. Go's own rule would
+// send the header on to another port of the same host, and to a subdomain.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
-		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		return errRedirects
 	}
-	if first := via[0].URL; req.URL.Scheme != first.Scheme || req.URL.Host != first.Host {
-		req.Header.Del("Authorization")
+	if sameHost(req.URL, via[0].URL) {
+		return nil
 	}
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return errBodyRedirect
+	}
+	req.Header.Del("Authorization")
 	return nil
+}
+
+// firstHostOnly lets only the host a request was first sent to ask for a credential. The
+// registry client answers the challenge of the last response of a redirect chain with the
+// credential of the first host: a storage host could name its own token service and be sent the
+// registry's password (ADR 0021). So the challenge of any other host is removed, and its 401 is
+// the answer.
+type firstHostOnly struct {
+	next http.RoundTripper
+}
+
+func (f firstHostOnly) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := f.next.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	// req.Response is the redirect that led to req; the chain ends at the first request.
+	first := req
+	for first.Response != nil && first.Response.Request != nil {
+		first = first.Response.Request
+	}
+	if !sameHost(req.URL, first.URL) {
+		resp.Header.Del("WWW-Authenticate")
+	}
+	return resp, nil
 }
 
 // httpsOnly refuses every request that is not HTTPS: to a registry, to the token service a

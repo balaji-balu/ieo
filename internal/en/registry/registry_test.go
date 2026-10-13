@@ -209,10 +209,15 @@ func auths(entries map[string]entry) map[string]any {
 // withPassword is the entry `docker login` writes for user and password.
 func withPassword() entry { return entry{"auth": basicAuth} }
 
-// request is what a server was sent.
+// request is what a server was sent. refreshToken is the identity token in the body of a request
+// to a token service.
 type request struct {
-	method, host, path, authorization string
+	method, host, path, authorization, refreshToken string
 }
+
+// credential is what a request holds that only its registry and that registry's token service
+// may be sent.
+func (r request) credential() string { return r.authorization + r.refreshToken }
 
 // seen records the requests a server is sent.
 type seen struct {
@@ -223,7 +228,7 @@ type seen struct {
 func (s *seen) record(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
-		s.requests = append(s.requests, request{r.Method, r.Host, r.URL.Path, r.Header.Get("Authorization")})
+		s.requests = append(s.requests, request{r.Method, r.Host, r.URL.Path, r.Header.Get("Authorization"), r.PostFormValue("refresh_token")})
 		s.mu.Unlock()
 		next.ServeHTTP(w, r)
 	})
@@ -427,6 +432,72 @@ func TestSpec_17_7_RegistryCredentialGoesToTheTokenServiceItsRegistryNames(t *te
 	}
 }
 
+// grasping is a storage host that is after the credential of the registry that redirects to it.
+// It answers every request with a challenge that names a token service of its own, at /token on
+// the same host; asked records what that token service is sent.
+func grasping(asked *seen) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			asked.record(tokenService()).ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="http://`+r.Host+`/token",service="storage.test"`)
+		refuse(w, http.StatusUnauthorized, "UNAUTHORIZED")
+	})
+}
+
+// SPEC §17.7: "The EN sends a registry credential only to the registry it is listed for and to the
+// token service that registry names, never to the target of a redirect". Here: the target of a
+// redirect asks for the credential, by naming a token service as a registry does.
+func TestSpec_17_7_RedirectTargetCannotAskForTheRegistryCredential(t *testing.T) {
+	noPassword := base64.StdEncoding.EncodeToString([]byte("00000000-0000-0000-0000-000000000000:"))
+	for kind, listed := range map[string]entry{
+		"a password":        withPassword(),
+		"an identity token": {"auth": noPassword, "identitytoken": identityToken},
+	} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t)
+			var asked seen
+			hostX := start(t, grasping(&asked))
+			realm := "http://" + start(t, tokenService()) + "/token"
+			hostA := start(t, bearer(realm, bearerToken, redirectLayers("http://"+hostX, f.reg.Handler())))
+			f.push(t, hostA)
+			c := f.client(t, registry.Config{Insecure: true, AuthFile: authFile(t, auths(map[string]entry{hostA: listed}))})
+
+			f.mustFail(t, c, hostA, hostA, hostX, "401")
+			for _, r := range asked.all() {
+				if r.credential() != "" {
+					t.Errorf("the token service the storage host names was sent %q; want no credential", r.credential())
+				}
+			}
+		})
+	}
+}
+
+// ADR 0021: a redirect keeps "what is for the first host" from another one. A token service that
+// redirects the request holding an identity token does not send that token on.
+func TestIdentityTokenDoesNotFollowARedirect(t *testing.T) {
+	f := newFixture(t)
+	var elsewhere seen
+	hostX := start(t, elsewhere.record(tokenService()))
+	moved := start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+hostX+"/token", http.StatusTemporaryRedirect) // keeps the method and the body
+	}))
+	hostA := start(t, bearer("http://"+moved+"/token", bearerToken, f.reg.Handler()))
+	f.push(t, hostA)
+	noPassword := base64.StdEncoding.EncodeToString([]byte("00000000-0000-0000-0000-000000000000:"))
+	c := f.client(t, registry.Config{Insecure: true, AuthFile: authFile(t, auths(map[string]entry{
+		hostA: {"auth": noPassword, "identitytoken": identityToken},
+	}))})
+
+	f.mustFail(t, c, hostA, hostA)
+	for _, r := range elsewhere.all() {
+		if r.credential() != "" {
+			t.Errorf("the host a token service redirects to was sent %q; want no credential", r.credential())
+		}
+	}
+}
+
 // ADR 0021: an `identitytoken` is a credential too. It goes to the token service, and the
 // registry is sent only the token that service gives.
 func TestIdentityTokenIsSentToTheTokenService(t *testing.T) {
@@ -581,6 +652,9 @@ func TestBadAuthFileIsAConfigurationError(t *testing.T) {
 		}},
 		"a key with no host": {path: func(t *testing.T) string {
 			return authFile(t, auths(map[string]entry{"https://": withPassword()}))
+		}},
+		"a key with a password": {path: func(t *testing.T) string {
+			return authFile(t, auths(map[string]entry{"https://" + user + ":" + password + "@reg.example/v1/": withPassword()}))
 		}},
 	}
 	for name, tc := range cases {

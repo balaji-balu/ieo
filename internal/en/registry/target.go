@@ -2,9 +2,12 @@ package registry
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -108,6 +111,7 @@ func (t *target) failure(op string, err error) error {
 	if f.answered == t.host {
 		f.answered = ""
 	}
+	f.answered = truncate(f.answered, maxHostBytes)
 
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -123,14 +127,49 @@ func (t *target) failure(op string, err error) error {
 	case errors.Is(err, io.ErrUnexpectedEOF):
 		f.kind, f.detail = io.ErrUnexpectedEOF, "the answer ended early"
 	case unsent != nil:
-		// What Go's HTTP client or this package says of a request with no answer: a dial, TLS
-		// or proxy failure, or a refused redirect. It quotes no URL.
-		f.detail = truncate(unsent.Err.Error(), maxDetailBytes)
+		f.detail = networkReason(unsent.Err)
 	default:
 		f.detail = "the registry's answer is not one of a registry"
 	}
 	return f
 }
+
+// networkReason says why a request got no answer, from err, the error of Go's HTTP client. Only
+// what a server cannot write is passed on: some of these errors quote a Location header, a
+// status line or the names of a certificate.
+func networkReason(err error) string {
+	var unknownAuthority x509.UnknownAuthorityError
+	var badCertificate *tls.CertificateVerificationError
+	var wrongName x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var op *net.OpError
+	var dns *net.DNSError
+	switch {
+	case errors.Is(err, errPlainHTTP), errors.Is(err, errProxy), errors.Is(err, errRedirects), errors.Is(err, errBodyRedirect):
+		return err.Error()
+	case errors.As(err, &unknownAuthority):
+		return "the certificate is signed by an unknown authority"
+	case errors.As(err, &wrongName):
+		return "the certificate is not for this host"
+	case errors.As(err, &badCertificate), errors.As(err, &invalid):
+		return "the certificate cannot be verified"
+	case err.Error() == plainAnswer:
+		return "the server answered in plain HTTP to an HTTPS request"
+	case errors.As(err, &op) && op.Op == "proxyconnect":
+		return "the proxy did not open the connection"
+	case errors.As(err, &dns):
+		return "the host name cannot be resolved"
+	case op != nil:
+		// A dial, read or write failure: the address and what the operating system said.
+		return truncate(op.Error(), maxDetailBytes)
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "the connection was closed"
+	}
+	return "the request failed"
+}
+
+// plainAnswer is the text of Go's error for a server that speaks plain HTTP on an HTTPS port.
+const plainAnswer = "http: server gave HTTP response to HTTPS client"
 
 func statusText(status int) string {
 	return fmt.Sprintf("%d %s", status, http.StatusText(status))
@@ -138,6 +177,7 @@ func statusText(status int) string {
 
 // The bounds of what a server decides in an error's text.
 const (
+	maxHostBytes   = 261 // a host name of 255 bytes and a port
 	maxDetailBytes = 200
 	maxErrorCodes  = 4
 	maxCodeBytes   = 64
