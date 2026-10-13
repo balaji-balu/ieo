@@ -1889,6 +1889,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - Until scoped NATS credentials, the LO and the EN accept a NATS URL other than `tls://` only when
   it is a `nats://` URL and `lo.nats_insecure`/`en.nats_insecure` is set, and exit at startup on
   any other; the NATS password reaches neither a workload nor the Compose CLI's environment (§15.6).
+- The EN sends a registry credential only to the registry it is listed for and to the token service
+  that registry names, never to the target of a redirect (ADR 0021).
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
 - `edgectl site add` produces a certificate whose SPIFFE ID matches §4.2.
 - Every tier writes each log line as one JSON object.
