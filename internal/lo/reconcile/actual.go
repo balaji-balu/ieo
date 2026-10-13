@@ -34,10 +34,17 @@ const (
 //     another digest, or for a deployment not held, the deployment's entry becomes that one
 //     component at the event's digest: no state is carried from one digest to another.
 //
+// An event made before the state a holds is stale, whatever it reports: the host's reports arrive
+// on two subscriptions, so an Inventory that already holds the event's outcome may have come first
+// (SPEC §7.5). One made at the same time is applied, as two events of one instant arrive in order.
+//
 // An event that reports what a already holds changes nothing. A changed state is reported at the
 // event's `at` and shares nothing with a or ev. a is not modified; it is returned as it is when
 // nothing changed.
 func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.HostActual, effect) {
+	if ev.At.Before(a.ReportedAt) {
+		return a, stale
+	}
 	i := slices.IndexFunc(a.Deployments, func(d contract.InventoryDeployment) bool { return d.DeploymentID == ev.DeploymentID })
 	removal := ev.State == contract.StateRemoving || ev.State == contract.StateRemoved
 	if removal && i < 0 {
@@ -77,8 +84,21 @@ func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.Ho
 	return out, changed
 }
 
-// applyInventory returns the actual state of a host after inv, and whether inv was applied.
+// applyInventory returns the actual state of a host after inv, and whether inv was applied (SPEC
+// §7.5, ADR 0015). held is the state inv is compared with, nil if there is none; lastNotApplied
+// says the host's last Inventory was not applied.
+//
+// An Inventory that is not made after held is not applied, and held is returned as it is: a status
+// event made after the host read inv may have come first, and inv would bring back what it
+// changed. If the host's last Inventory was not applied either, its clock went back, and inv is
+// applied so that the LO follows that clock again.
+//
+// An applied inv replaces the state whole: the state returned is reported at inv's `at` and shares
+// nothing with inv.
 func applyInventory(held *store.HostActual, inv contract.Inventory, lastNotApplied bool) (store.HostActual, bool) {
+	if held != nil && !lastNotApplied && !inv.At.After(held.ReportedAt) {
+		return *held, false
+	}
 	return store.HostActual{ReportedAt: inv.At, Deployments: cloneDeployments(inv.Deployments)}, true
 }
 

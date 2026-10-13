@@ -95,6 +95,9 @@ type host struct {
 	// online says the host has published an Inventory since the LO started (SPEC §7.3 interim
 	// rule). Only an online host is marked.
 	online bool
+	// lastNotApplied says the host's last Inventory was not applied, as it was not newer than
+	// actual; the next one is applied whatever its `at` (SPEC §7.5).
+	lastNotApplied bool
 	// marked says a pass is due, and running that one is in progress.
 	marked, running bool
 }
@@ -175,6 +178,10 @@ func (r *Reconciler) logUnknown(ctx context.Context) {
 // is `Online` from then on (SPEC §7.3 interim rule, §7.5). hostID is the host of the subject inv
 // arrived on: an inv that names another host is logged and dropped (SPEC §11.2). So is one the
 // store does not take; the host's next Inventory brings its state again (SPEC §7.6).
+//
+// An inv that is not newer than the actual state of an `Online` host is logged and not applied,
+// but still marks the host; if the host's next one is not newer either, that one is applied (SPEC
+// §7.5).
 func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, inv contract.Inventory) {
 	log := r.log.With(slog.String("host_id", string(hostID)))
 	if inv.HostID != hostID {
@@ -185,24 +192,42 @@ func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, in
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	actual, _ := applyInventory(nil, inv, false)
-	if err := r.store.PutActual(ctx, hostID, actual); err != nil {
-		log.LogAttrs(ctx, slog.LevelError, "inventory dropped", slog.String("reason", err.Error()))
-		return
-	}
 	h := r.hosts[hostID]
 	if h == nil {
 		h = &host{}
 		r.hosts[hostID] = h
 	}
-	h.actual, h.online = &actual, true
+	// SPEC §7.5: the Inventory that makes a host `Online` is applied whatever its `at`. What the
+	// host holds until then is from before the LO started, or nothing.
+	var held *store.HostActual
+	if h.online {
+		held = h.actual
+	}
+	actual, applied := applyInventory(held, inv, h.lastNotApplied)
+	if !applied {
+		h.lastNotApplied = true
+		log.LogAttrs(ctx, slog.LevelInfo, "inventory dropped", slog.Time("at", inv.At), slog.Time("reported_at", held.ReportedAt),
+			slog.String("reason", "it is not newer than the actual state held"))
+		// The state held is the newer one, and the status event it came from started no pass.
+		r.mark(h)
+		return
+	}
+	if err := r.store.PutActual(ctx, hostID, actual); err != nil {
+		log.LogAttrs(ctx, slog.LevelError, "inventory dropped", slog.String("reason", err.Error()))
+		return
+	}
+	if held != nil && !inv.At.After(held.ReportedAt) {
+		log.LogAttrs(ctx, slog.LevelWarn, "inventory applied", slog.Time("at", inv.At), slog.Time("reported_at", held.ReportedAt),
+			slog.String("reason", "the host's clock went back: two inventories in a row are not newer than the actual state held"))
+	}
+	h.actual, h.online, h.lastNotApplied = &actual, true, false
 	r.mark(h)
 }
 
 // OnStatus applies one status event to the actual state of host, the host of the subject ev
 // arrived on (SPEC §7.5, ADR 0015). It starts no pass (SPEC §7.5 interim rule). An event from a
-// host with no actual state is logged and dropped (SPEC §11.2), and so is one the store does not
-// take.
+// host with no actual state is logged and dropped (SPEC §11.2), and so are one that is older than
+// that state (SPEC §7.5) and one the store does not take.
 func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev contract.ComponentStatusEvent) {
 	log := r.log.With(slog.String("host_id", string(hostID)),
 		slog.String("deployment_id", ev.DeploymentID.String()), slog.String("digest", string(ev.Digest)))
@@ -215,7 +240,12 @@ func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev co
 		return
 	}
 	actual, effect := applyStatus(*h.actual, ev)
-	if effect != changed {
+	switch effect {
+	case stale:
+		log.LogAttrs(ctx, slog.LevelInfo, "status event dropped", slog.Time("at", ev.At), slog.Time("reported_at", h.actual.ReportedAt),
+			slog.String("reason", "it is older than the actual state held"))
+		return
+	case unchanged:
 		return
 	}
 	if err := r.store.PutActual(ctx, hostID, actual); err != nil {
