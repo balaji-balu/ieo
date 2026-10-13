@@ -10,8 +10,23 @@ import (
 	"github.com/balaji-balu/ieo/internal/lo/store"
 )
 
-// applyStatus returns the actual state of a host after one status event from it, and whether the
-// event changed anything (SPEC §7.5, ADR 0015):
+// effect says what a report did to the actual state held for its host.
+type effect int
+
+const (
+	// unchanged: the report says what is already held.
+	unchanged effect = iota
+	// changed: the state returned differs from the one held.
+	changed
+	// stale: the report is older than the state held, and is dropped (SPEC §7.5).
+	stale
+	// clockBack: the state returned is an Inventory's that is not newer than the state held; it is
+	// applied because the host's clock went back (SPEC §7.5).
+	clockBack
+)
+
+// applyStatus returns the actual state of a host after one status event from it, and what the
+// event did to it (SPEC §7.5, ADR 0015):
 //
 //   - `removing` sets every component held for the deployment to `removing`, without its error,
 //     and keeps the held digest;
@@ -22,14 +37,21 @@ import (
 //     another digest, or for a deployment not held, the deployment's entry becomes that one
 //     component at the event's digest: no state is carried from one digest to another.
 //
+// An event made before the state a holds is stale, whatever it reports: the host's reports arrive
+// on two subscriptions, so an Inventory that already holds the event's outcome may have come first
+// (SPEC §7.5). One made at the same time is applied, as two events of one instant arrive in order.
+//
 // An event that reports what a already holds changes nothing. A changed state is reported at the
 // event's `at` and shares nothing with a or ev. a is not modified; it is returned as it is when
 // nothing changed.
-func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.HostActual, bool) {
+func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.HostActual, effect) {
+	if ev.At.Before(a.ReportedAt) {
+		return a, stale
+	}
 	i := slices.IndexFunc(a.Deployments, func(d contract.InventoryDeployment) bool { return d.DeploymentID == ev.DeploymentID })
 	removal := ev.State == contract.StateRemoving || ev.State == contract.StateRemoved
 	if removal && i < 0 {
-		return a, false
+		return a, unchanged
 	}
 	out := store.HostActual{ReportedAt: ev.At, Deployments: cloneDeployments(a.Deployments)}
 	switch ev.State {
@@ -60,9 +82,31 @@ func applyStatus(a store.HostActual, ev contract.ComponentStatusEvent) (store.Ho
 		}
 	}
 	if slices.EqualFunc(out.Deployments, a.Deployments, sameDeployment) {
-		return a, false
+		return a, unchanged
 	}
-	return out, true
+	return out, changed
+}
+
+// applyInventory returns the actual state of a host after inv, and what inv did to it (SPEC §7.5,
+// ADR 0015). held is the state inv is compared with, nil if there is none; lastNotApplied says the
+// host's last Inventory was not applied, and no status event from it was accepted since.
+//
+// An Inventory that is not made after held is stale, and held is returned as it is: a status event
+// made after the host read inv may have come first, and inv would bring back what it changed. If
+// the host's last Inventory was not applied either, its clock went back: inv is applied, so that
+// the LO follows that clock again, and the effect is clockBack.
+//
+// An applied inv replaces the state whole, whether or not it lists what held does: the state
+// returned is reported at inv's `at` and shares nothing with inv.
+func applyInventory(held *store.HostActual, inv contract.Inventory, lastNotApplied bool) (store.HostActual, effect) {
+	applied := changed
+	if held != nil && !inv.At.After(held.ReportedAt) {
+		if !lastNotApplied {
+			return *held, stale
+		}
+		applied = clockBack
+	}
+	return store.HostActual{ReportedAt: inv.At, Deployments: cloneDeployments(inv.Deployments)}, applied
 }
 
 // sameDeployment reports whether x and y are one deployment at one digest with the same components

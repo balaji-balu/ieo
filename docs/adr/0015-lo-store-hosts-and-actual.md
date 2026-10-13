@@ -22,7 +22,21 @@ so new buckets need a layout version and a migration.
   dropped before it reaches the store (SPEC §11.2).
 - A host enters `hosts` with its first inventory, heartbeat or capabilities message, and leaves it
   only when it is decommissioned (§7.3, roadmap I). `actual[h]` is replaced whole by each
-  inventory from `h`.
+  inventory from `h` that the LO applies (SPEC §7.5).
+- `reportedAt` is the `at` of the newest report that changed `actual[h]`. A status event older than
+  it, and an inventory not newer than it, change nothing and are not written (SPEC §7.5,
+  balaji-balu/ieo#84): the two arrive on two subscriptions, so not in the order the host published
+  them. At an equal `at` the event is applied and the inventory is not. An inventory read before
+  the event would bring back what the event changed, and one read after it holds the same state.
+  - Two inventories are applied whatever their `at`: the first from a host since the LO started,
+    and one that follows an inventory that was not applied, if no status event from the host was
+    accepted between the two. Two in a row that are not newer, with every event between them
+    older than the state held, mean the host's clock went back, not that messages crossed; the LO
+    then follows that clock again, at most two `en.inventory.interval` after the clock moved. An
+    accepted event shows the clock is not behind, so the comparison holds again for the next
+    inventory. Whether the host's last inventory was not applied is held in memory only.
+  - An inventory that is not applied still starts a pass for the host: the state held is the
+    newer one, and the event that made it so started none (SPEC §7.5 interim rule).
 - A status event changes the one component it names (§7.5) when its digest is the digest
   `actual[h]` holds for that deployment. An event at another digest, or for a deployment `actual[h]`
   does not hold, replaces that deployment's entry with the event's digest and that one component.
@@ -48,7 +62,9 @@ so new buckets need a layout version and a migration.
   covered by that inventory. `actual` therefore never holds a host that `hosts` does not.
 - Every change to `actual[h]` from one message is one write transaction. A status event that
   reports what `actual[h]` already holds changes nothing and is not written; `reportedAt` then
-  stays the `at` of the report the state came from.
+  stays the `at` of the report the state came from. The comparison above stays right with it: a
+  host's events arrive in order, so every change before such an event is already applied, and an
+  inventory from between the last change and that event holds the same state.
 - `OpenBolt` migrates version 1 to 2 in one write transaction: it creates the empty `hosts` and
   `actual` buckets and sets `schema` to 2. A new file is created at version 2. A file at any other
   version is refused at open, as ADR 0014 says.
@@ -79,3 +95,11 @@ so new buckets need a layout version and a migration.
   buckets to keep consistent when a host is replaced or decommissioned.
 - Add the buckets without raising `schema`, and create them lazily: a missing bucket could then mean
   either an old file or damage, which ADR 0014 keeps distinct.
+- For the order of a host's reports (balaji-balu/ieo#84):
+  - A time per deployment, so that an old inventory is merged entry by entry: a removed deployment
+    then needs a record of when it was removed, and the store a layout version 3.
+  - A sequence number from the EN in place of `at`: no clock is involved, but the §11.2 schemas
+    change, the EN needs a durable counter, and a counter that starts again (a reinstalled EN)
+    blocks the host's reports for good, where a clock catches up.
+  - One subscription for both subjects: it keeps the server's order, but also delivers the LO its
+    own commands, and does not help with an EN that publishes out of order.

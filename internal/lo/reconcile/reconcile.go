@@ -95,6 +95,10 @@ type host struct {
 	// online says the host has published an Inventory since the LO started (SPEC §7.3 interim
 	// rule). Only an online host is marked.
 	online bool
+	// lastNotApplied says the host's last Inventory was not applied, as it was not newer than
+	// actual, and no status event from the host was accepted since; the next Inventory is then
+	// applied whatever its `at` (SPEC §7.5).
+	lastNotApplied bool
 	// marked says a pass is due, and running that one is in progress.
 	marked, running bool
 }
@@ -175,6 +179,10 @@ func (r *Reconciler) logUnknown(ctx context.Context) {
 // is `Online` from then on (SPEC §7.3 interim rule, §7.5). hostID is the host of the subject inv
 // arrived on: an inv that names another host is logged and dropped (SPEC §11.2). So is one the
 // store does not take; the host's next Inventory brings its state again (SPEC §7.6).
+//
+// An inv that is not newer than the actual state of an `Online` host is logged and not applied,
+// but still marks the host. If the host's next one is not newer either, and no status event from
+// the host was accepted between the two, that one is applied (SPEC §7.5).
 func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, inv contract.Inventory) {
 	log := r.log.With(slog.String("host_id", string(hostID)))
 	if inv.HostID != hostID {
@@ -182,27 +190,45 @@ func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, in
 			slog.String("reason", "the payload names another host than the subject"))
 		return
 	}
-	actual := store.HostActual{ReportedAt: inv.At, Deployments: cloneDeployments(inv.Deployments)}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	h := r.hosts[hostID]
+	// SPEC §7.5: a host's first Inventory since the LO started is applied whatever its `at`. What
+	// is held for the host until then is from before the LO started, or nothing.
+	var held *store.HostActual
+	if h != nil && h.online {
+		held = h.actual
+	}
+	actual, effect := applyInventory(held, inv, h != nil && h.lastNotApplied)
+	if effect == stale {
+		h.lastNotApplied = true
+		log.LogAttrs(ctx, slog.LevelInfo, "inventory dropped", slog.Time("at", inv.At), slog.Time("reported_at", held.ReportedAt),
+			slog.String("reason", "it is not newer than the actual state held"))
+		// The state held is the newer one, and the status event it came from started no pass.
+		r.mark(h)
+		return
+	}
 	if err := r.store.PutActual(ctx, hostID, actual); err != nil {
 		log.LogAttrs(ctx, slog.LevelError, "inventory dropped", slog.String("reason", err.Error()))
 		return
 	}
-	h := r.hosts[hostID]
+	if effect == clockBack {
+		log.LogAttrs(ctx, slog.LevelWarn, "inventory applied", slog.Time("at", inv.At), slog.Time("reported_at", held.ReportedAt),
+			slog.String("reason", "the host's clock went back: two inventories in a row are not newer than the actual state held"))
+	}
 	if h == nil {
 		h = &host{}
 		r.hosts[hostID] = h
 	}
-	h.actual, h.online = &actual, true
+	h.actual, h.online, h.lastNotApplied = &actual, true, false
 	r.mark(h)
 }
 
 // OnStatus applies one status event to the actual state of host, the host of the subject ev
 // arrived on (SPEC §7.5, ADR 0015). It starts no pass (SPEC §7.5 interim rule). An event from a
-// host with no actual state is logged and dropped (SPEC §11.2), and so is one the store does not
-// take.
+// host with no actual state is logged and dropped (SPEC §11.2), and so are one that is older than
+// that state (SPEC §7.5) and one the store does not take.
 func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev contract.ComponentStatusEvent) {
 	log := r.log.With(slog.String("host_id", string(hostID)),
 		slog.String("deployment_id", ev.DeploymentID.String()), slog.String("digest", string(ev.Digest)))
@@ -214,8 +240,16 @@ func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev co
 		log.LogAttrs(ctx, slog.LevelWarn, "status event dropped", slog.String("reason", "no actual state is held for the host"))
 		return
 	}
-	actual, changed := applyStatus(*h.actual, ev)
-	if !changed {
+	actual, effect := applyStatus(*h.actual, ev)
+	if effect == stale {
+		log.LogAttrs(ctx, slog.LevelInfo, "status event dropped", slog.Time("at", ev.At), slog.Time("reported_at", h.actual.ReportedAt),
+			slog.String("reason", "it is older than the actual state held"))
+		return
+	}
+	// An event that is not stale shows that the host's clock is not behind the state held, so an
+	// Inventory that was not applied had crossed an event (SPEC §7.5).
+	h.lastNotApplied = false
+	if effect == unchanged {
 		return
 	}
 	if err := r.store.PutActual(ctx, hostID, actual); err != nil {

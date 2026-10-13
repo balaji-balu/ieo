@@ -15,6 +15,13 @@ func (r *Reconciler) RunPending(ctx context.Context) {
 	}
 }
 
+// Holds reports whether the Reconciler holds anything for host.
+func (r *Reconciler) Holds(host contract.HostID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hosts[host] != nil
+}
+
 // PassRunning reports whether a pass of host is in progress.
 func (r *Reconciler) PassRunning(host contract.HostID) bool {
 	r.mu.Lock()
