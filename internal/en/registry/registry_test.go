@@ -141,7 +141,7 @@ func (f *fixture) mustPull(t *testing.T, c *registry.Client, host string) {
 }
 
 // mustFail is a pull that must fail with an error that holds each of texts.
-func (f *fixture) mustFail(t *testing.T, c *registry.Client, host string, texts ...string) error {
+func (f *fixture) mustFail(t *testing.T, c *registry.Client, host string, texts ...string) {
 	t.Helper()
 	err := f.pull(t, c, host, roomy)
 	if err == nil {
@@ -152,7 +152,6 @@ func (f *fixture) mustFail(t *testing.T, c *registry.Client, host string, texts 
 			t.Errorf("pull from %s: error %q; want %q in it", host, err, text)
 		}
 	}
-	return err
 }
 
 // logged returns the log lines that have the attribute key.

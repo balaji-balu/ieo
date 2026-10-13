@@ -27,7 +27,8 @@ Registry credentials are a §15 area (SPEC §15.4).
   - Two keys that name the same registry are a configuration error that names the host: the file
     does not say which of the two is meant.
   - The file is read once, at startup. A file that is set but missing, unreadable or not valid is a
-    configuration error (exit code 2) that names the file and never its contents.
+    configuration error (exit code 2) that names the file and never its contents. A file larger
+    than 1 MiB is not valid: a `config.json` is a few KiB.
   - No file set means every pull is anonymous.
 - **Which host gets a credential.** The entry whose key equals the repository's registry host
   (`host` or `host:port`, compared exactly, after removing a scheme and path from the key) is used
