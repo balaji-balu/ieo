@@ -331,7 +331,8 @@ Single authoritative state owned by the LO. Durable fields MUST survive restart.
 - `placements` (map `deployment_id` → Placement) — durable
 - `hosts` (map `host_id` → Host) — durable (capabilities, labels, `last_heartbeat_at`); liveness
   is derived from `last_heartbeat_at`
-- `actual` (map `host_id` → Host Actual State) — durable; replaced by each inventory
+- `actual` (map `host_id` → Host Actual State) — durable; replaced by each inventory the LO
+  applies (§7.5)
 - `retry` (map `(host_id, deployment_id)` → `{attempt, due_at, last_error}`) — in memory
 - `outbox` (map `deployment_id` → Outbox Entry) — durable
 
@@ -717,6 +718,17 @@ backoff and security handling differ.
 - `Reconcile Safety Timer Fired` → reconcile all hosts.
 - `Heartbeat Window Elapsed` → host `Offline`.
 - `CO Reachable Again` → flush outbox (§8.8).
+
+`[IEO]` The LO applies a host's reports in the order of their `at`, not of their arrival:
+`Inventory` and status events arrive on two subscriptions (§11.2). It compares a report's `at` with
+the `reported_at` it holds for the host (§4.1.8).
+
+- A `Component Status Event` whose `at` is before `reported_at` is logged and dropped.
+- An `Inventory` whose `at` is not after `reported_at` is logged and not applied. The host is still
+  reconciled.
+- Two Inventories are always applied: the one that makes a host `Online` (§7.3), and one that
+  follows an Inventory not applied. A host whose clock went back is therefore followed again after
+  at most `en.inventory.interval`.
 
 `[IEO, interim]` Until command retries are implemented (roadmap slice K), there are no retry
 entries (§8.5 step 6), so a `failed` component that reconciled its host would be applied again at
@@ -1219,6 +1231,10 @@ The normative schemas for these messages are the JSON Schemas (draft 2020-12) in
   REQUIRED otherwise. An event without it holds for the whole deployment on that host: a Remove
   carries no deployment, so the EN may not know the names of its components (§8.9).
 - `Inventory.deployments` and `Capabilities.labels` are present even when empty.
+
+`[IEO]` `at` is the EN's clock when it read the state the message reports. Of two reports from one
+host, the one with the later `at` never describes the earlier state. The LO orders a host's reports
+by it (§7.5).
 
 `[IEO]` A `hostId` in a payload MUST equal the `<h>` of the subject it arrived on; the LO logs and
 drops a message where they differ, and it changes no state. The LO keys host state by `<h>`.
@@ -1792,6 +1808,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - Offline hosts receive no commands and their deployments are reported `pending`.
 - A host returning online is reconciled after its inventory arrives.
 - Sending a command does not change actual state; only EN reports do.
+- A report older than the actual state held for its host changes no state: a status event after a
+  newer Inventory, and an Inventory after a newer status event.
 - Rejected or unacknowledged commands are retried with exponential backoff up to the cap; retries
   stop when the digest is reported `installed` or the deployment is no longer wanted.
 - Directed deployment to an unknown host → `failed`, code `101`, source = LO device ID.
