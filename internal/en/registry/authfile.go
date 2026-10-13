@@ -75,7 +75,7 @@ func readAuthFile(path string) (authFile, error) {
 		return authFile{}, &ConfigError{File: path, Reason: "not a Docker config.json: " + decodeReason(err)}
 	}
 	file := authFile{Credentials: map[string]auth.Credential{}}
-	if cfg.CredHelpers != nil {
+	if len(cfg.CredHelpers) > 0 {
 		file.Helpers = append(file.Helpers, "credHelpers")
 	}
 	if cfg.CredsStore != "" {
@@ -147,8 +147,9 @@ func decodeReason(err error) string {
 // hostOfKey returns the registry a key of `auths` names: the key without a scheme and a path, so
 // that `https://index.docker.io/v1/` and `reg.example:5000` are both understood (ADR 0021).
 func hostOfKey(key string) string {
-	key = strings.TrimPrefix(key, "https://")
-	key = strings.TrimPrefix(key, "http://")
+	if scheme, rest, ok := strings.Cut(key, "://"); ok && (strings.EqualFold(scheme, "https") || strings.EqualFold(scheme, "http")) {
+		key = rest
+	}
 	host, _, _ := strings.Cut(key, "/")
 	return registryOf(host)
 }
@@ -156,7 +157,8 @@ func hostOfKey(key string) string {
 // isHost reports whether host is `host` or `host:port` and nothing more, such as a user name.
 func isHost(host string) bool {
 	u, err := url.Parse("//" + host)
-	return err == nil && host != "" && u.Host == host && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+	return err == nil && u.Hostname() != "" && u.Host == host && !strings.HasSuffix(host, ":") &&
+		u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
 
 // credential returns what the entry holds, or why it cannot be decoded. `auth` is used when
@@ -172,6 +174,10 @@ func (a dockerAuth) credential() (cred auth.Credential, reason string) {
 		username, password, ok := strings.Cut(string(decoded), ":")
 		if !ok || username == "" {
 			return auth.EmptyCredential, "auth is not the base64 of username:password"
+		}
+		if password == "" && cred.RefreshToken == "" {
+			// `docker login` writes no password only beside an identity token.
+			return auth.EmptyCredential, "auth holds no password"
 		}
 		cred.Username, cred.Password = username, password
 		return cred, ""

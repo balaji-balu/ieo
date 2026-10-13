@@ -21,7 +21,8 @@ Registry credentials are a §15 area (SPEC §15.4).
   `username` and `password`, or `identitytoken`.
   - When an entry holds `auth` and also `username` and `password`, `auth` is used. An entry with
     none of the three forms is no entry: `docker login` leaves an empty one for a registry whose
-    credential is in a helper. `registrytoken` is not read.
+    credential is in a helper. `registrytoken` is not read. An `auth` with no
+    password is a configuration error unless an `identitytoken` is beside it.
   - `credsStore` and `credHelpers` are ignored, with one warning at startup that names the key.
     The EN never runs a credential helper: it would be a program chosen by a file.
   - Two keys that name the same registry are a configuration error that names the host: the file

@@ -64,7 +64,13 @@ type Client struct {
 	http *auth.Client
 	// plainHTTP is en.registry.insecure.
 	plainHTTP bool
+	// idle closes the connections kept for a next request.
+	idle func()
 }
+
+// Close closes the connections the Client keeps open between requests. A request in flight is
+// not ended, and the Client can still be used.
+func (c *Client) Close() { c.idle() }
 
 // New returns the Client for cfg. It reads cfg.AuthFile, once, and the proxy settings of the
 // environment (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`); neither is read again.
@@ -100,7 +106,7 @@ func New(cfg Config) (*Client, error) {
 		warnInsecure(log, len(hosts) > 0, proxy)
 	}
 
-	transport := http.RoundTripper(&http.Transport{
+	base := &http.Transport{
 		Proxy: func(req *http.Request) (*url.URL, error) {
 			u, err := proxy(req.URL)
 			if err != nil {
@@ -115,7 +121,8 @@ func New(cfg Config) (*Client, error) {
 		TLSHandshakeTimeout: 10 * time.Second,
 		// Certificates are always verified; nil roots are the system's.
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: cfg.roots},
-	})
+	}
+	transport := http.RoundTripper(base)
 	if !cfg.Insecure {
 		transport = httpsOnly{transport}
 	}
@@ -123,6 +130,7 @@ func New(cfg Config) (*Client, error) {
 	credentials := file.Credentials
 	return &Client{
 		plainHTTP: cfg.Insecure,
+		idle:      base.CloseIdleConnections,
 		// auth.Client answers a registry's challenge. It asks for the credential of the host the
 		// request goes to, and keeps each token for that host alone.
 		http: &auth.Client{

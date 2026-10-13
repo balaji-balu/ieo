@@ -109,6 +109,7 @@ func (f *fixture) client(t *testing.T, cfg registry.Config) *registry.Client {
 	if err != nil || c == nil {
 		t.Fatalf("New = %v, %v; want a Client", c, err)
 	}
+	t.Cleanup(c.Close)
 	return c
 }
 
@@ -595,6 +596,33 @@ func TestCredentialHelpersAreIgnoredWithOneWarning(t *testing.T) {
 	}
 }
 
+// ADR 0021: a key is understood with its scheme in any case, and an empty `credHelpers` asks for
+// no helper.
+func TestAuthFileKeysAndEmptyHelpers(t *testing.T) {
+	f := newFixture(t)
+	f.client(t, registry.Config{AuthFile: authFile(t, map[string]any{
+		"auths":       map[string]entry{"HTTPS://reg.example:5000/v1/": withPassword()},
+		"credHelpers": map[string]string{},
+	})})
+	hosts := f.logged(t, attrHosts)
+	if len(hosts) != 1 || !slices.Equal(anyStrings(hosts[0][attrHosts]), []string{"reg.example:5000"}) {
+		t.Errorf("the hosts with a credential were logged as %v; want reg.example:5000", hosts)
+	}
+	if warned := f.logged(t, attrHelpers); len(warned) != 0 {
+		t.Errorf("a credential helper warning for an empty credHelpers: %v", warned)
+	}
+}
+
+// ADR 0021: a proxy is named by its host. An address that cannot be read fails the pull without
+// being quoted: it can hold a password.
+func TestBadProxyAddressIsNotQuoted(t *testing.T) {
+	f := newFixture(t)
+	t.Setenv("HTTP_PROXY", "http://proxyuser:"+proxyPassword+"@[not-an-address")
+	f.push(t, "registry.other.test")
+	c := f.client(t, registry.Config{Insecure: true})
+	f.mustFail(t, c, "registry.other.test", "registry.other.test", "proxy")
+}
+
 // ADR 0021: "The EN never runs a credential helper". The package cannot: it does not import the
 // package that runs programs.
 func TestPackageRunsNoProgram(t *testing.T) {
@@ -652,6 +680,15 @@ func TestBadAuthFileIsAConfigurationError(t *testing.T) {
 		}},
 		"a key with no host": {path: func(t *testing.T) string {
 			return authFile(t, auths(map[string]entry{"https://": withPassword()}))
+		}},
+		"a key with only a scheme": {path: func(t *testing.T) string {
+			return authFile(t, auths(map[string]entry{"HTTPS://": withPassword()}))
+		}},
+		"auth with no password": {want: "reg.example", path: func(t *testing.T) string {
+			return authFile(t, auths(map[string]entry{"reg.example": {"auth": base64.StdEncoding.EncodeToString([]byte(user + ":"))}}))
+		}},
+		"larger than 1 MiB": {path: func(t *testing.T) string {
+			return authFile(t, `{"auths":{"reg.example":{"auth":"`+basicAuth+`"}}}`+strings.Repeat(" ", 1<<20))
 		}},
 		"a key with a password": {path: func(t *testing.T) string {
 			return authFile(t, auths(map[string]entry{"https://" + user + ":" + password + "@reg.example/v1/": withPassword()}))
@@ -783,6 +820,14 @@ func TestPullLimitsAndErrorsStay(t *testing.T) {
 		ComposeArchive(context.Background(), "oci://"+hostA+"/"+name, "9.9.9")
 	if !errors.Is(err, errdef.ErrNotFound) || !strings.Contains(err.Error(), hostA) {
 		t.Errorf("a tag that does not exist: %v; want errdef.ErrNotFound and the host %s", err, hostA)
+	}
+
+	// A registry that is not there is not the timeout of the pull.
+	gone := httptest.NewServer(f.reg.Handler())
+	hostG := strings.TrimPrefix(gone.URL, "http://")
+	gone.Close()
+	if err := f.pull(t, c, hostG, roomy); err == nil || errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), hostG) {
+		t.Errorf("a registry that is gone: %v; want an error that names %s and is not the deadline of the pull", err, hostG)
 	}
 }
 

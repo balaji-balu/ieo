@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -31,21 +32,22 @@ type target struct {
 
 func (t *target) Resolve(ctx context.Context, reference string) (ocispec.Descriptor, error) {
 	desc, err := t.repo.Resolve(ctx, reference)
-	return desc, t.failure("resolve", err)
+	return desc, t.failure(ctx, "resolve", err)
 }
 
 func (t *target) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.ReadCloser, error) {
 	body, err := t.repo.Fetch(ctx, desc)
 	if err != nil {
-		return nil, t.failure("fetch", err)
+		return nil, t.failure(ctx, "fetch", err)
 	}
-	return &content{ReadCloser: body, t: t}, nil
+	return &content{ReadCloser: body, ctx: ctx, t: t}, nil
 }
 
 // content is what a Fetch returned, with the errors of reading it rebuilt as the others are.
 type content struct {
 	io.ReadCloser
-	t *target
+	ctx context.Context // of the Fetch, which the body is read under
+	t   *target
 }
 
 func (c *content) Read(p []byte) (int, error) {
@@ -56,12 +58,12 @@ func (c *content) Read(p []byte) (int, error) {
 	case errors.Is(err, io.EOF):
 		return n, io.EOF // as it is: a reader's callers compare with it
 	}
-	return n, c.t.failure("read", err)
+	return n, c.t.failure(c.ctx, "read", err)
 }
 
 func (t *target) Exists(ctx context.Context, desc ocispec.Descriptor) (bool, error) {
 	exists, err := t.repo.Exists(ctx, desc)
-	return exists, t.failure("look up", err)
+	return exists, t.failure(ctx, "look up", err)
 }
 
 // failure is the error of one operation on a repository. Its text is built from what this package
@@ -73,9 +75,8 @@ type failure struct {
 	// answered is the host that failed the operation when it is not the registry: a token
 	// service or the target of a redirect.
 	answered string
-	// kind is what errors.Is finds: a context error, errdef.ErrNotFound or
-	// io.ErrUnexpectedEOF; nil otherwise. The
-	// registry client's error is not kept, as it could then be printed.
+	// kind is what errors.Is finds: a context error, errdef.ErrNotFound or io.ErrUnexpectedEOF; nil
+	// otherwise. The registry client's error is not kept, as it could then be printed.
 	kind error
 }
 
@@ -90,8 +91,9 @@ func (f *failure) Error() string {
 // Unwrap returns the kind of failure, if it has one.
 func (f *failure) Unwrap() error { return f.kind }
 
-// failure returns err, an error of the registry client, as a *failure; nil for nil.
-func (t *target) failure(op string, err error) error {
+// failure returns err, an error of the registry client for a call under ctx, as a *failure; nil
+// for nil.
+func (t *target) failure(ctx context.Context, op string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -113,11 +115,12 @@ func (t *target) failure(op string, err error) error {
 	}
 	f.answered = truncate(f.answered, maxHostBytes)
 
+	// The end of the context, not a timeout of the network, which Go also calls a deadline: only
+	// the first is en.pull.timeout.
+	ended := ctx.Err()
 	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		f.kind, f.detail = context.DeadlineExceeded, context.DeadlineExceeded.Error()
-	case errors.Is(err, context.Canceled):
-		f.kind, f.detail = context.Canceled, context.Canceled.Error()
+	case ended != nil && errors.Is(err, ended):
+		f.kind, f.detail = ended, ended.Error()
 	case refused != nil:
 		f.detail = statusText(refused.StatusCode) + errorCodes(refused.Errors)
 	case errors.Is(err, errdef.ErrNotFound):
@@ -159,6 +162,8 @@ func networkReason(err error) string {
 		return "the proxy did not open the connection"
 	case errors.As(err, &dns):
 		return "the host name cannot be resolved"
+	case errors.Is(err, os.ErrDeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		return "no answer in time"
 	case op != nil:
 		// A dial, read or write failure: the address and what the operating system said.
 		return truncate(op.Error(), maxDetailBytes)
