@@ -24,6 +24,7 @@ import (
 type Registry struct {
 	mu       sync.Mutex
 	repos    map[string]*memory.Store
+	pushed   map[blobKey]ocispec.Descriptor // what Handler finds by digest
 	tampered map[blobKey][]byte
 	stalled  map[string]bool
 	served   map[string]int64
@@ -39,6 +40,7 @@ type blobKey struct {
 func NewRegistry() *Registry {
 	return &Registry{
 		repos:    map[string]*memory.Store{},
+		pushed:   map[blobKey]ocispec.Descriptor{},
 		tampered: map[blobKey][]byte{},
 		stalled:  map[string]bool{},
 		served:   map[string]int64{},
@@ -178,6 +180,7 @@ func (r *Registry) Push(t testing.TB, repository, tag string, a Artifact) ocispe
 		if err := repo.Push(ctx, d, bytes.NewReader(l.Data)); err != nil && !errors.Is(err, errdef.ErrAlreadyExists) {
 			t.Fatalf("push blob %s to %s: %v", l.MediaType, repository, err)
 		}
+		r.record(repository, d)
 		return d
 	}
 	opts := oras.PackManifestOptions{}
@@ -195,6 +198,7 @@ func (r *Registry) Push(t testing.TB, repository, tag string, a Artifact) ocispe
 	if err := repo.Tag(ctx, m, tag); err != nil {
 		t.Fatalf("tag %s:%s: %v", repository, tag, err)
 	}
+	r.record(repository, m)
 	return m
 }
 
@@ -217,6 +221,13 @@ func (r *Registry) PushComposeArchive(t testing.TB, repository, tag string, arch
 		{MediaType: contract.ComposeArchiveMediaType, Data: archive},
 	}})
 	return manifest, content.NewDescriptorFromBytes(contract.ComposeArchiveMediaType, archive)
+}
+
+// record keeps the descriptor of a blob or manifest pushed to repository.
+func (r *Registry) record(repository string, d ocispec.Descriptor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pushed[blobKey{repository, d.Digest.String()}] = d
 }
 
 func (r *Registry) repo(repository string) *memory.Store {
