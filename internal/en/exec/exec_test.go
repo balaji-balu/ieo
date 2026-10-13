@@ -97,10 +97,20 @@ func (h *hookedRunner) Up(ctx context.Context, p compose.Project, o compose.UpOp
 	return h.Fake.Up(ctx, p, o)
 }
 
-// failingStore is the EN store with writes that can be made to fail.
+// failingStore is the EN store with writes that can be made to fail, and a hook after a read.
 type failingStore struct {
 	*store.Bolt
 	putApplied error
+	// afterLoad, if set, runs when Load has read the store and before it returns.
+	afterLoad func()
+}
+
+func (s *failingStore) Load(ctx context.Context) (map[uuid.UUID]store.Deployment, error) {
+	out, err := s.Bolt.Load(ctx)
+	if s.afterLoad != nil {
+		s.afterLoad()
+	}
+	return out, err
 }
 
 func (s *failingStore) PutApplied(ctx context.Context, id uuid.UUID, a store.Applied) error {

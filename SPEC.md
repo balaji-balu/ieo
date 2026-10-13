@@ -1865,6 +1865,8 @@ endpoints (§11.3 holds IEO-specific operations).
   back to `installed`.
 - After EN restart, inventory reflects the containers actually running.
 - Inventory is published on start and on every NATS reconnect.
+- A status event for a change made after the EN read an Inventory has a later `at` than that
+  Inventory (§11.2).
 - Commands for the same deployment are processed one at a time.
 - A command for a deployment with an Apply in flight runs after the in-flight component finishes;
   the superseded Apply starts no later component.

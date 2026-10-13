@@ -408,3 +408,42 @@ func TestInventory(t *testing.T) {
 		t.Errorf("the inventory is not one the LO would accept: %v", err)
 	}
 }
+
+// SPEC §17.6: "A status event for a change made after the EN read an Inventory"
+//
+// The LO drops a status event that is older than the Inventory it holds (SPEC §7.5). An Inventory
+// stamped after its read would make it drop the event of a change the Inventory does not show.
+func TestSpec_17_6_StatusEventAfterAnInventoryReadHasALaterAt(t *testing.T) {
+	f := newFixture(t)
+	host := contract.HostID("host-03")
+	if err := f.store.Bolt.PutApplied(ctx, deploymentID, store.Applied{Digest: digestA}); err != nil {
+		t.Fatal(err)
+	}
+	// Between the read of the store and the return of the Inventory, time passes, the deployment
+	// is removed, and more time passes.
+	f.store.afterLoad = func() {
+		f.store.afterLoad = nil
+		f.clock.Advance(time.Second)
+		if err := f.exec.Remove(ctx, removeCommand(digestA)); err != nil {
+			t.Errorf("Remove: %v", err)
+		}
+		f.clock.Advance(time.Second)
+	}
+
+	inv, err := f.exec.Inventory(ctx, host)
+	if err != nil {
+		t.Fatalf("Inventory: %v", err)
+	}
+	if len(inv.Deployments) != 1 {
+		t.Fatalf("the inventory lists %+v, want the deployment as it was when the store was read", inv.Deployments)
+	}
+	events := f.pub.all()
+	if len(events) == 0 {
+		t.Fatal("the Remove published no status event")
+	}
+	for _, e := range events {
+		if !e.At.After(inv.At) {
+			t.Errorf("`%s` has at %v, not later than the inventory's %v, which does not show it", e.State, e.At, inv.At)
+		}
+	}
+}
