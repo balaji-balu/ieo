@@ -15,7 +15,6 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.0
 	github.com/knadh/koanf/v2 v2.3.0
 	github.com/lib/pq v1.10.9
-	github.com/looplab/fsm v1.0.3
 	github.com/nats-io/nats-server/v2 v2.10.29
 	github.com/nats-io/nats.go v1.47.0
 	github.com/opencontainers/image-spec v1.1.1
