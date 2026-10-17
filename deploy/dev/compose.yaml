@@ -10,10 +10,10 @@
 #   docker compose -f deploy/dev/compose.yaml down -v
 #
 # CO, LO and EN are built from this checkout (deploy/dev/Dockerfile). The LO syncs with the CO's
-# Margo API and connects to NATS as the site's user (SPEC §15.6). Until roadmap slices D5.6–E
-# replace it, the old, Git-based code runs beside it: the CO and LO clone public GitHub repos at
-# startup and log an error if that fails, and EN runs a mock runtime, does not use its host's
-# engine yet, and does not answer the LO's commands.
+# Margo API and connects to NATS as the site's user (SPEC §15.6). Each EN connects to NATS as its
+# host, takes the LO's commands and runs them with the Compose CLI on its host's engine. Until
+# roadmap slices D5.6c–E replace it, the old, Git-based code runs beside them: the CO and LO clone
+# public GitHub repos at startup and log an error if that fails.
 #
 # Each simulated host is two containers that act as one machine: hostN runs its own Docker engine
 # (docker:dind) and enN shares its network namespace, so enN reaches that engine, and only that
@@ -47,21 +47,24 @@ x-host: &host
     retries: 30
   restart: unless-stopped
 
+x-en-env: &en-env
+  EN_SITE_ID: 00000000-0000-4000-8000-000000000001 # LO_SITE_ID
+  EN_DATA_DIR: /var/lib/ieo/en # a volume: the host ID and the EN store survive a restart (SPEC §9.1)
+  EN_NATS_URL: nats://nats:4222
+  EN_NATS_INSECURE: "true" # no TLS on the compose network; the EN logs a warning (SPEC §15.6)
+  # The site's NATS login, as the LO's below: values for this harness only, until roadmap D5.6c
+  # takes the password from deploy/dev/.env.
+  EN_NATS_USERNAME: site
+  EN_NATS_PASSWORD: dev-harness-only
+  # Required (SPEC §6.3); nothing listens there until roadmap slice M adds the collector.
+  EN_OTEL_HTTP_ENDPOINT: http://otel-collector.invalid:4318
+  EN_REGISTRY_INSECURE: "true" # registry:5000 is plain HTTP; the EN logs a warning (ADR 0021)
+  DOCKER_HOST: tcp://127.0.0.1:2375 # this host's engine, which the Compose CLI uses
+
 x-en: &en
   build:
     <<: *ieo-build
-    args: { CMD: en }
-  environment:
-    APP_ENV: prod
-    IEO_EN_NATS_URL: nats://nats:4222
-    IEO_EN_LO_URL: http://lo:9010
-    DOCKER_HOST: tcp://127.0.0.1:2375 # this host's engine; used once slice D wires EN to Docker
-  # EN keeps its host ID here. tmpfs starts empty on every container start, so each start registers
-  # a new ID: the current CO rejects a host ID it already has, so a kept ID could never register
-  # again after a restart.
-  tmpfs:
-    - /var/lib/ieo/en
-  # EN registers with the LO once at startup and exits if that fails; restart retries it.
+    args: { CMD: en, BASE: "docker:27-cli" } # the EN runs the Compose CLI (ADR 0003)
   restart: unless-stopped
 
 services:
@@ -177,6 +180,11 @@ services:
       - host1-engine:/var/lib/docker
   en1:
     <<: *en
+    environment:
+      <<: *en-env
+      EN_HOST_ID: host-1 # a deployment's target is 00000000-0000-4000-8000-000000000001/host-1
+    volumes:
+      - en1-data:/var/lib/ieo/en
     network_mode: service:host1
     depends_on:
       host1: { condition: service_healthy }
@@ -189,6 +197,11 @@ services:
       - host2-engine:/var/lib/docker
   en2:
     <<: *en
+    environment:
+      <<: *en-env
+      EN_HOST_ID: host-2
+    volumes:
+      - en2-data:/var/lib/ieo/en
     network_mode: service:host2
     depends_on:
       host2: { condition: service_healthy }
@@ -200,3 +213,5 @@ volumes:
   lo-data:
   host1-engine:
   host2-engine:
+  en1-data:
+  en2-data:

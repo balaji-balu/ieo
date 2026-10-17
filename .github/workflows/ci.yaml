@@ -162,11 +162,40 @@ jobs:
             echo "a log contains the site token"; exit 1
           fi
 
-      - name: A restarted EN registers again
+      # SPEC §11.2, §13.1: each EN connects as its own host, and says so in a JSON line with
+      # site_id and host_id.
+      - name: Each EN connects to the site NATS server as its host
+        run: |
+          for n in 1 2; do
+            for i in $(seq 30); do
+              if $COMPOSE logs --no-color "en$n" | grep '"msg":"connected to the site NATS server"' | grep -qF "\"host_id\":\"host-$n\""; then
+                continue 2
+              fi
+              sleep 2
+            done
+            echo "en$n did not connect as host-$n"; $COMPOSE logs --no-color "en$n" | tail -20; exit 1
+          done
+
+      - name: The NATS password appears in no log (SPEC §15.4)
+        run: |
+          if $COMPOSE logs --no-color | grep -qF dev-harness-only; then
+            echo "a log contains the NATS password"; exit 1
+          fi
+
+      # ADR 0016: the host ID is kept in the EN's data volume, so a restart keeps it.
+      - name: A restarted EN keeps its host ID
         run: |
           $COMPOSE restart en1
-          sleep 15
-          $COMPOSE logs en1 | tail -5
+          for i in $(seq 30); do
+            n=$($COMPOSE logs --no-color en1 | grep -c '"msg":"connected to the site NATS server"' || true)
+            if [ "$n" -ge 2 ]; then break; fi
+            sleep 2
+          done
+          $COMPOSE logs --no-color en1 | tail -5
+          test "$n" -ge 2 || { echo "en1 did not connect again after its restart"; exit 1; }
+          if $COMPOSE logs --no-color en1 | grep '"msg":"connected to the site NATS server"' | grep -vqF '"host_id":"host-1"'; then
+            echo "en1 connected with another host ID"; exit 1
+          fi
           test "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$($COMPOSE ps -q en1)")" = "true 0"
 
       - name: Logs

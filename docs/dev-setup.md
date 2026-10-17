@@ -76,8 +76,9 @@ docker compose -f deploy/dev/compose.yaml logs lo | Select-String outcome   # Po
 **Simulated hosts.** A host is two containers that act as one machine. `hostN` runs a Docker engine;
 `enN` shares its network, so the EN reaches that engine at `tcp://127.0.0.1:2375` and cannot reach
 the other host's. Workloads the EN starts run inside `hostN`, isolated from the laptop's own
-containers and from the other host. The EN keeps no state across restarts: each start registers
-with a new host ID, and the CO keeps a row for every old one. To look inside a host:
+containers and from the other host. Each EN keeps its host ID (`host-1`, `host-2`) and its store
+in a volume (`en1-data`, `en2-data`), so a restart keeps both; `down -v` deletes them. To look
+inside a host:
 
 ```sh
 docker compose -f deploy/dev/compose.yaml exec host1 docker ps
@@ -85,19 +86,19 @@ docker compose -f deploy/dev/compose.yaml exec host1 docker ps
 
 **Current code.** CO, LO and EN are built from `cmd/co`, `cmd/lo` and `cmd/en`. The CO serves the
 Margo API, and the LO polls it every 60 s and keeps the site's desired state in
-`/var/lib/lo/lo.db`. The old, Git-based code still runs beside them until roadmap slices C3b–E
-replace it: the CO and LO clone public GitHub repositories at startup (they log an error and keep
-running if that fails), and the EN uses a mock runtime, so it does not start workloads in its host
-yet.
+`/var/lib/lo/lo.db`. Each EN takes the LO's commands and runs them with the Compose CLI on its
+host's engine. The old, Git-based code still runs beside the CO and LO until roadmap slices D5.6c–E
+replace it: they clone public GitHub repositories at startup (they log an error and keep running if
+that fails).
 
 The LO reaches the CO over plain HTTP on the compose network (`LO_CO_INSECURE=true`), so it logs a
 warning at startup. It uses no HTTP proxy, whatever `HTTP_PROXY` and `HTTPS_PROXY` say (SPEC §15.6).
 
 The LO also connects to the `nats` container as the site's user, without TLS
 (`LO_NATS_INSECURE=true`, a second warning at startup), and asks the hosts for their inventories.
-Nothing answers yet: the old EN does not speak the site messages, so the LO sends no command until
-the new EN arrives (roadmap D5.6). Until then the NATS server also checks no login, and ignores
-the one the LO sends.
+The ENs connect the same way, as `host-1` and `host-2`, and answer: each logs the same warning, and
+one for `EN_REGISTRY_INSECURE=true`, since the `registry` container is plain HTTP (ADR 0021). Until
+roadmap D5.6c the NATS server checks no login, and ignores the one the LO and the ENs send.
 
 ## Adding a site
 
@@ -148,6 +149,6 @@ Don't run the full stack at the same time: the `go run` services use the same po
 | golangci-lint: `the Go language version (go1.24) used to build golangci-lint is lower than the targeted Go version (1.25)` | Reinstall it with `go install` as in Prerequisites |
 | `gofmt -l` or golangci-lint reports `File is not properly formatted (gofmt)` for many files you didn't touch | The clone predates `.gitattributes`, so its working copies are still CRLF, and gofmt reports every CRLF file. Commit or stash your work, then check everything out again with LF: `git rm -r --cached -q .` followed by `git reset --hard`. New clones need nothing: `.gitattributes` checks Go files out with LF whatever `core.autocrlf` says |
 | Merging or rebasing onto `main` reports a legacy Go file as conflicting on every line | The branch predates `.gitattributes` and edits a file that was stored with CRLF. Abort, then repeat with `-X renormalize` (`git merge -X renormalize origin/main`, or `git rebase -X renormalize origin/main`) |
-| `en1` or `en2` keeps restarting | It registers with the LO once at startup and exits on failure; check `logs lo en1` |
+| `en1` or `en2` keeps restarting | It exits 2 on an invalid configuration and 1 when it cannot start, for example when `docker compose version` does not run; its last log line says which. Check `logs en1` |
 | `lo` keeps restarting, its log says `LO_SITE_TOKEN (lo.site_token) is not set` | Add the site and write `deploy/dev/.env` (Start, inspect, stop) |
 | LO: `"outcome":"Unreachable"` with `status 401` | The token in `deploy/dev/.env` is not the site's: rotate it (Adding a site) |
