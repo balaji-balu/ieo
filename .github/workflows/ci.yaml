@@ -114,6 +114,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The Compose bundle is not started here; that it still parses with its keys is checked.
+      - name: The Compose bundle is valid
+        run: |
+          SITE_NATS_PASSWORD=abc SITE_ID=site-1 LO_SITE_TOKEN=t EN_OTEL_HTTP_ENDPOINT=http://otel.test:4318 \
+            PG_USER=u PG_PASSWORD=p PG_DB=d PG_HOST=postgres GITHUB_TOKEN= \
+            docker compose -f deploy/compose/docker-compose.yaml config -q
+
+      # SPEC §15.6: the site's NATS password, new for each run. Compose needs it for every command.
+      - name: Make the site's NATS password
+        run: |
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          echo "SITE_NATS_PASSWORD=$password" >> "$GITHUB_ENV"
+
       # The LO needs its site's token, which only the CO issues (docs/dev-setup.md).
       - name: Start the CO
         run: $COMPOSE up -d --build --wait --wait-timeout 300 co
@@ -178,9 +192,16 @@ jobs:
 
       - name: The NATS password appears in no log (SPEC §15.4)
         run: |
-          if $COMPOSE logs --no-color | grep -qF dev-harness-only; then
+          if $COMPOSE logs --no-color | grep -qF "$SITE_NATS_PASSWORD"; then
             echo "a log contains the NATS password"; exit 1
           fi
+
+      # SPEC §15.6: the server takes only the site's login. A CONNECT without it is refused.
+      - name: The site NATS server refuses a client without the password
+        run: |
+          answer=$($COMPOSE exec -T en1 sh -c 'printf "CONNECT {\"verbose\":true}\r\nPING\r\n" | nc -w 3 nats 4222' || true)
+          echo "$answer"
+          echo "$answer" | grep -q "Authorization Violation"
 
       # ADR 0016: the host ID is kept in the EN's data volume, so a restart keeps it.
       - name: A restarted EN keeps its host ID

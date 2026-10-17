@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ .Release.Name }}-lo
-spec:
-  selector:
-    app: lo
-  ports:
-    - port: {{ .Values.lo.port }}

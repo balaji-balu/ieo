@@ -36,12 +36,50 @@ or invalid:
 The LO uses no HTTP proxy for the CO (SPEC §15.6). A NATS server it cannot reach, or that refuses
 its login, does not stop it: it logs a warning, keeps trying, and goes on syncing with the CO
 (SPEC §11.2). A site ID that contains `.` is refused at startup, since it goes into every NATS
-subject (SPEC §4.2). The old LO runs beside it while `LO_PORT` is set; it reads `LO_NATS_URL`
-too, and registers with the old CO API at `LO_LEGACY_CO_URL` (until roadmap slice E).
+subject (SPEC §4.2). The LO serves no HTTP port.
 
-The Compose bundle (`deploy/compose`) and the `ieo-lo` Helm chart do not set these keys yet, so
-an LO image built from current code exits at startup with them. `deploy/dev/compose.yaml` does
-(see `docs/dev-setup.md`).
+The Compose bundle (`deploy/compose`) sets these keys from its `.env`: `SITE_ID`, `LO_SITE_TOKEN`
+and `SITE_NATS_PASSWORD` (letters and digits), which the NATS server, the LO and the EN share
+(SPEC §15.6). Get the
+token with `docker compose exec co ./ieo-co site add <SITE_ID>`. The `ieo-lo` Helm chart takes the
+site ID from `site.id`, and the token and the NATS password from a Secret it does not create (see
+its `values.yaml`). `deploy/dev/compose.yaml` is the laptop harness (see `docs/dev-setup.md`).
+
+### EN configuration
+
+The EN runs on each host, beside its container engine, and takes the LO's commands over the site
+NATS server (SPEC §8.9). It reads these keys from the environment, or from the flag in brackets,
+which wins (SPEC §6.1, §6.3). It exits with code 2 if one is missing or invalid, and 1 if it
+cannot start, for example when `docker compose version` does not run (ADR 0003):
+
+| Variable | Flag | Key | |
+| --- | --- | --- | --- |
+| `EN_SITE_ID` | `--site-id` | `en.site_id` | REQUIRED |
+| `EN_HOST_ID` | `--host-id` | `en.host_id` | optional; kept in `host.id` in the data directory, generated on first start if unset (ADR 0016) |
+| `EN_DATA_DIR` | `--data-dir` | `en.data_dir` | REQUIRED; the store is `state.db` in it |
+| `EN_RUNTIME` | `--runtime` | `en.runtime` | `docker` (default) or `podman` |
+| `EN_NATS_URL` | `--nats-url` | `en.nats_url` | REQUIRED; the site NATS server, `tls://host[:port]` |
+| `EN_NATS_USERNAME` | `--nats-username` | `en.nats.username` | REQUIRED; the site's NATS user (SPEC §15.6) |
+| `EN_NATS_PASSWORD` | none | `en.nats.password` | REQUIRED; environment only |
+| `EN_NATS_CA_FILE` | `--nats-ca-file` | `en.nats.ca_file` | optional; verifies the NATS server, instead of the system roots |
+| `EN_NATS_INSECURE` | `--nats-insecure` | `en.nats_insecure` | default `false`; `true` allows a `nats://` `EN_NATS_URL`, which does not require TLS |
+| `EN_INVENTORY_INTERVAL` | `--inventory-interval` | `en.inventory.interval` | default `60s` |
+| `EN_OTEL_HTTP_ENDPOINT` | `--otel-http-endpoint` | `en.otel.http_endpoint` | REQUIRED; given to workloads as `HTTP_OTEL_EXPORTER_OTLP_ENDPOINT` (SPEC §9.3) |
+| `EN_OTEL_GRPC_ENDPOINT` | `--otel-grpc-endpoint` | `en.otel.grpc_endpoint` | optional; `GRPC_OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `EN_REGISTRY_AUTH_FILE` | `--registry-auth-file` | `en.registry.auth_file` | optional; a Docker `config.json` of which only `auths` is read (ADR 0021) |
+| `EN_REGISTRY_INSECURE` | `--registry-insecure` | `en.registry.insecure` | default `false`; `true` reaches every registry over plain HTTP |
+| `EN_PULL_MAX_BYTES` | `--pull-max-bytes` | `en.pull.max_bytes` | default `268435456` (256 MiB) |
+| `EN_PULL_TIMEOUT` | `--pull-timeout` | `en.pull.timeout` | default `5m` |
+| `EN_ARCHIVE_MAX_EXTRACTED_BYTES` | `--archive-max-extracted-bytes` | `en.archive.max_extracted_bytes` | default `1073741824` (1 GiB) |
+| `EN_ARCHIVE_MAX_ENTRIES` | `--archive-max-entries` | `en.archive.max_entries` | default `10000` |
+| `EN_START_TIMEOUT` | `--start-timeout` | `en.start_timeout` | default `5m` |
+
+The Compose bundle runs one EN with the engine of the machine it runs on, through
+`/var/run/docker.sock`: whoever controls the EN controls that engine. Its data directory is
+`/var/lib/ieo/en` on the machine too, so the paths in a deployment's `compose.yaml` find its files. Its workloads run on that same
+engine, beside the CO, LO and NATS containers, so a workload that is given the socket could read
+their settings; the laptop harness keeps them apart, with an engine per host. The `ieo-lo` Helm
+chart has no EN.
 
 ### Database schema
 

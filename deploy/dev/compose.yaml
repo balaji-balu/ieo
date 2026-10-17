@@ -1,19 +1,21 @@
 # Laptop harness (ADR 0009): 1 CO, 1 LO and 2 simulated hosts, plus NATS, Postgres and an OCI
-# registry. Works the same from PowerShell and bash, on Docker Desktop (WSL 2) and in CI. The LO
-# needs its site's token, which only the CO issues, so the stack starts in two steps
+# registry. Works the same from PowerShell and bash, on Docker Desktop (WSL 2) and in CI. Every
+# command needs SITE_NATS_PASSWORD, the site's NATS password, in deploy/dev/.env (gitignored). The
+# LO needs its site's token, which only the CO issues, so the stack starts in two steps
 # (docs/dev-setup.md):
 #
+#   put SITE_NATS_PASSWORD=<a random value> in deploy/dev/.env
 #   docker compose -f deploy/dev/compose.yaml up -d --build --wait co
 #   docker compose -f deploy/dev/compose.yaml exec -T co app site add 00000000-0000-4000-8000-000000000001
-#     then put the printed token in deploy/dev/.env as LO_SITE_TOKEN=<token> (gitignored)
+#     then add the printed token to deploy/dev/.env as LO_SITE_TOKEN=<token>
 #   docker compose -f deploy/dev/compose.yaml up -d --build --wait
 #   docker compose -f deploy/dev/compose.yaml down -v
 #
 # CO, LO and EN are built from this checkout (deploy/dev/Dockerfile). The LO syncs with the CO's
 # Margo API and connects to NATS as the site's user (SPEC §15.6). Each EN connects to NATS as its
 # host, takes the LO's commands and runs them with the Compose CLI on its host's engine. Until
-# roadmap slices D5.6c–E replace it, the old, Git-based code runs beside them: the CO and LO clone
-# public GitHub repos at startup and log an error if that fails.
+# roadmap slice E replaces it, the old, Git-based CO runs beside the new one: it clones public
+# GitHub repos at startup and logs an error if that fails.
 #
 # Each simulated host is two containers that act as one machine: hostN runs its own Docker engine
 # (docker:dind) and enN shares its network namespace, so enN reaches that engine, and only that
@@ -52,10 +54,9 @@ x-en-env: &en-env
   EN_DATA_DIR: /var/lib/ieo/en # a volume: the host ID and the EN store survive a restart (SPEC §9.1)
   EN_NATS_URL: nats://nats:4222
   EN_NATS_INSECURE: "true" # no TLS on the compose network; the EN logs a warning (SPEC §15.6)
-  # The site's NATS login, as the LO's below: values for this harness only, until roadmap D5.6c
-  # takes the password from deploy/dev/.env.
+  # The site's NATS login, as the LO's below (SPEC §15.6).
   EN_NATS_USERNAME: site
-  EN_NATS_PASSWORD: dev-harness-only
+  EN_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in deploy/dev/.env (docs/dev-setup.md)}
   # Required (SPEC §6.3); nothing listens there until roadmap slice M adds the collector.
   EN_OTEL_HTTP_ENDPOINT: http://otel-collector.invalid:4318
   EN_REGISTRY_INSECURE: "true" # registry:5000 is plain HTTP; the EN logs a warning (ADR 0021)
@@ -68,11 +69,22 @@ x-en: &en
   restart: unless-stopped
 
 services:
-  # LO ↔ EN messaging. 8222 is the monitoring endpoint. The server asks for no login until the old
-  # EN, which has none, is replaced (roadmap D5.6); it ignores the one the LO sends.
+  # LO ↔ EN messaging, with the site's one login until scoped credentials (SPEC §15.6). 8222 is
+  # the monitoring endpoint, which asks for none and takes no client.
   nats:
     image: nats:2.10-alpine
-    command: ["--http_port", "8222"]
+    # The server reads the password from a config file written at start, quoted, from this
+    # environment: so it is in no process listing, and a value such as 3e5... is not read as a
+    # number, as nats-server reads an unquoted $VARIABLE. Letters and digits only.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        case "$$SITE_NATS_PASSWORD" in *[!A-Za-z0-9]*) echo "SITE_NATS_PASSWORD holds letters and digits only" >&2; exit 2;; esac
+        umask 077
+        printf 'port: 4222\nhttp_port: 8222\nauthorization { user: site, password: "%s" }\n' "$$SITE_NATS_PASSWORD" > /tmp/site.conf
+        exec nats-server -c /tmp/site.conf
+    environment:
+      SITE_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in deploy/dev/.env (docs/dev-setup.md)}
     ports: ["4222:4222", "8222:8222"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
@@ -125,7 +137,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
-      # Both APIs: the old LO still registers on 9001, once, at startup (until roadmap slice E).
+      # Both APIs: the old one on 9001 runs until roadmap slice E.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9002/healthz && wget -qO- http://127.0.0.1:9001/api/v1/sites"]
       interval: 5s
       timeout: 3s
@@ -134,8 +146,8 @@ services:
     restart: unless-stopped
 
   # Local Orchestrator for the one site. It polls the CO's Margo API with the site's token, keeps
-  # its store in /var/lib/lo/lo.db, and reconciles the hosts over NATS. The old LO (LO_PORT set)
-  # registers with the old CO API once at startup, which needs a UUID site ID until roadmap slice E.
+  # its store in /var/lib/lo/lo.db, and reconciles the hosts over NATS. It has no health endpoint:
+  # the ENs wait only for it to start, and CI checks its log for an accepted manifest.
   lo:
     build:
       <<: *ieo-build
@@ -149,28 +161,16 @@ services:
       # From deploy/dev/.env or the shell. Empty until the site is added: the LO then exits with a
       # configuration error.
       LO_SITE_TOKEN: ${LO_SITE_TOKEN:-}
-      LO_PORT: "9010"
-      LO_METRICS_PORT: "9200"
-      LO_NATS_URL: nats://nats:4222 # also read by the old LO
+      LO_NATS_URL: nats://nats:4222
       LO_NATS_INSECURE: "true" # no TLS on the compose network; the LO logs a warning (SPEC §15.6)
-      # The site's NATS login (SPEC §15.6). Values for this harness only, like the Postgres ones
-      # above: the server checks no login until roadmap D5.6. When it does, the password must
-      # come from deploy/dev/.env, as LO_SITE_TOKEN does, not from this file.
+      # The site's NATS login (SPEC §15.6), from deploy/dev/.env as the server's is.
       LO_NATS_USERNAME: site
-      LO_NATS_PASSWORD: dev-harness-only
-      LO_LEGACY_CO_URL: http://co:9001
-    ports: ["9010:9010"]
+      LO_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in deploy/dev/.env (docs/dev-setup.md)}
     volumes:
       - lo-data:/var/lib/lo
     depends_on:
       nats: { condition: service_healthy }
       co: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9010/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-      start_period: 30s
     restart: unless-stopped
 
   # Simulated host 1: its engine, and its EN.
@@ -188,7 +188,7 @@ services:
     network_mode: service:host1
     depends_on:
       host1: { condition: service_healthy }
-      lo: { condition: service_healthy }
+      lo: { condition: service_started } # the LO has no healthcheck
 
   # Simulated host 2.
   host2:
@@ -205,7 +205,7 @@ services:
     network_mode: service:host2
     depends_on:
       host2: { condition: service_healthy }
-      lo: { condition: service_healthy }
+      lo: { condition: service_started } # the LO has no healthcheck
 
 volumes:
   pgdata:

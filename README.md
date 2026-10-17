@@ -70,7 +70,7 @@ Known baseline issues are listed in [`CLAUDE.md`](CLAUDE.md#commands).
 | Binaries | `ieo-co`, `ieo-lo`, `ieo-en`, `edgectl` |
 | Images | `ghcr.io/balaji-balu/ieo-co`, `ieo-lo`, `ieo-en` |
 | Helm charts | `deploy/helm/ieo-co`, `deploy/helm/ieo-lo` |
-| EN environment variables | `IEO_EN_*` |
+| EN environment variables | `EN_*` (see [deploy/README.md](deploy/README.md#en-configuration)) |
 
 See [ADR 0001](docs/adr/0001-name-and-module-path.md) and
 [ADR 0008](docs/adr/0008-rename-era-to-en.md).

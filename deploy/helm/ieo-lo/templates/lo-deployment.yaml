@@ -1,3 +1,4 @@
+{{- $secret := .Values.lo.secretName | default (printf "%s-lo" .Release.Name) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,33 +17,33 @@ spec:
         - name: lo
           image: {{ .Values.lo.image }}
           env:
-            - name: LO_PORT
-              value: "{{ .Values.lo.port }}"
-
-            - name: LO_DB_TYPE
-              value: boltdb
-
-            - name: LO_DB_PATH
-              value: "{{ .Values.lo.boltdb.path }}"
-
-            - name: LO_NATS_URL
-              value: nats://{{ .Values.nats.host }}:{{ .Values.nats.port }}
-
-            - name: GITHUB_TOKEN
+            - name: LO_SITE_ID
+              value: {{ required "site.id is required" .Values.site.id | quote }}
+            - name: LO_CO_URL
+              value: "{{ if .Values.lo.co.insecure }}http{{ else }}https{{ end }}://{{ .Values.lo.co.host }}:{{ .Values.lo.co.port }}"
+            - name: LO_CO_INSECURE
+              value: {{ .Values.lo.co.insecure | quote }}
+            - name: LO_SITE_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-github
-                  key: GITHUB_TOKEN       
-
-            - name: LO_CO_URL
-              value: http://{{ .Values.lo.co.host }}:{{ .Values.lo.co.port }}
-          ports:
-            - containerPort: {{ .Values.lo.port }}
-
+                  name: {{ $secret }}
+                  key: site-token
+            - name: LO_DATA_DIR
+              value: /data
+            - name: LO_NATS_URL
+              value: "{{ if .Values.nats.insecure }}nats{{ else }}tls{{ end }}://{{ .Values.nats.host }}:{{ .Values.nats.port }}"
+            - name: LO_NATS_INSECURE
+              value: {{ .Values.nats.insecure | quote }}
+            - name: LO_NATS_USERNAME
+              value: {{ .Values.nats.username | quote }}
+            - name: LO_NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: nats-password
           volumeMounts:
             - name: lo-data
               mountPath: /data
-
       volumes:
         - name: lo-data
           persistentVolumeClaim:

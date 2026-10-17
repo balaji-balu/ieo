@@ -30,7 +30,6 @@ type config struct {
 	SiteToken    string          // lo.site_token (SPEC §15.6); never logged (§15.4)
 	DataDir      string          // lo.data_dir
 	PollInterval time.Duration   // lo.poll.interval, greater than 0
-	LegacyPort   string          // LO_PORT: the old LO runs only when it is set (legacy.go)
 
 	// The site NATS server until Appendix B step 4 (SPEC §15.6); sitenats.Config.Check accepts them.
 	NATSURL      string // lo.nats.url
@@ -199,7 +198,6 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 	if cfg.ReconcileInterval, err = duration(keyReconcileInterval, defaultReconcileInterval, "5m"); err != nil {
 		return config{}, err
 	}
-	cfg.LegacyPort = getenv("LO_PORT")
 	return cfg, nil
 }
 

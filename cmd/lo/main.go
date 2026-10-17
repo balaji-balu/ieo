@@ -1,8 +1,7 @@
 // Command lo is the Local Orchestrator (SPEC §3). It keeps its site's desired state in step with
 // the CO over the Margo API (SPEC §8.2) and stores it in <lo.data_dir>/lo.db (SPEC §12, ADR 0014).
 // Over the site NATS server it takes what the hosts report and sends them the commands that
-// converge them on desired state (SPEC §8.5, §11.2, §16.2). Until roadmap slice D5.6 deletes it,
-// it also runs the old, Git-based LO when LO_PORT is set (legacy.go).
+// converge them on desired state (SPEC §8.5, §11.2, §16.2).
 //
 // It is configured from the environment and flags, which win (SPEC §6.1, §6.3); a .env file in
 // the working directory sets variables that are not set. It logs JSON on stderr (SPEC §13.1) and
@@ -62,7 +61,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 		return 2
 	}
 	defer transport.CloseIdleConnections()
-	if err := serve(ctx, cfg, transport, getenv, log); err != nil {
+	if err := serve(ctx, cfg, transport, log); err != nil {
 		log.Error("lo failed", "site_id", string(cfg.SiteID), "error", err.Error())
 		return 1
 	}
@@ -70,11 +69,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 }
 
 // serve opens the LO store, connects to the site NATS server, and runs the sync loop and the
-// reconciler until ctx ends (SPEC §16.2), with the old LO beside them when cfg.LegacyPort is set;
-// when one stops, all do. It fails at startup if the store cannot be opened, and never deletes or
+// reconciler until ctx ends (SPEC §16.2); when one stops, both do. It fails at startup if the store cannot be opened, and never deletes or
 // overwrites the file (SPEC §14.2). A NATS server that cannot be reached is not a failure: the
 // connection is made, and made again, in the background (SPEC §11.2, ADR 0020).
-func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv func(string) string, base *slog.Logger) error {
+func serve(ctx context.Context, cfg config, transport http.RoundTripper, base *slog.Logger) error {
 	log := base.With(slog.String("site_id", string(cfg.SiteID)))  // SPEC §13.1
 	if strings.HasPrefix(strings.ToLower(cfg.COURL), "http://") { // the scheme is case-insensitive
 		// SPEC §15.6: the URL, never the token.
@@ -128,14 +126,10 @@ func serve(ctx context.Context, cfg config, transport http.RoundTripper, getenv 
 		Reconcile: reconciler.ReconcileAll, // SPEC §8.2 step 7
 	}, s)
 
-	errs := make(chan error, 3)
+	errs := make(chan error, 2)
 	running := 2
 	go func() { errs <- syncer.Run(ctx) }()     // SPEC §16.2: the first tick at delay 0
 	go func() { errs <- reconciler.Run(ctx) }() // the passes, and the reconcile safety timer
-	if cfg.LegacyPort != "" {
-		running++
-		go func() { errs <- legacy(ctx, cfg, getenv) }()
-	}
 	log.Info("syncing with the CO", "co_url", cfg.COURL, "poll_interval", cfg.PollInterval.String())
 	var first error
 	for range running {
