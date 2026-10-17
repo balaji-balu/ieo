@@ -70,10 +70,20 @@ x-en: &en
 
 services:
   # LO ↔ EN messaging, with the site's one login until scoped credentials (SPEC §15.6). 8222 is
-  # the monitoring endpoint, which asks for none.
+  # the monitoring endpoint, which asks for none and takes no client.
   nats:
     image: nats:2.10-alpine
-    command: ["--http_port", "8222", "--user", "site", "--pass", "${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in deploy/dev/.env (docs/dev-setup.md)}"]
+    # The server reads the password from a config file written at start, quoted, from this
+    # environment: so it is in no process listing, and a value such as 3e5... is not read as a
+    # number, as nats-server reads an unquoted $VARIABLE. Letters and digits only.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        umask 077
+        printf 'port: 4222\nhttp_port: 8222\nauthorization { user: site, password: "%s" }\n' "$$SITE_NATS_PASSWORD" > /tmp/site.conf
+        exec nats-server -c /tmp/site.conf
+    environment:
+      SITE_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in deploy/dev/.env (docs/dev-setup.md)}
     ports: ["4222:4222", "8222:8222"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]

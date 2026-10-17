@@ -12,9 +12,20 @@ services:
     networks:
       - edge-net
   # The site NATS server, with the site's one login until scoped credentials (SPEC §15.6).
+  # 4222 is published for ENs on other machines; this bundle's LO and EN use edge-net.
   nats:
-    image: nats:2.10
-    command: ["--user", "site", "--pass", "${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in .env}"]
+    image: nats:2.10-alpine # it has the shell the start below needs
+    # The server reads the password from a config file written at start, quoted, from this
+    # environment: so it is in no process listing, and a value such as 3e5... is not read as a
+    # number, as nats-server reads an unquoted $VARIABLE. Letters and digits only.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        umask 077
+        printf 'port: 4222\nauthorization { user: site, password: "%s" }\n' "$$SITE_NATS_PASSWORD" > /tmp/site.conf
+        exec nats-server -c /tmp/site.conf
+    environment:
+      SITE_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in .env}
     ports: ["4222:4222"]
     networks:
       - edge-net

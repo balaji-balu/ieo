@@ -39,7 +39,8 @@ its login, does not stop it: it logs a warning, keeps trying, and goes on syncin
 subject (SPEC §4.2). The LO serves no HTTP port.
 
 The Compose bundle (`deploy/compose`) sets these keys from its `.env`: `SITE_ID`, `LO_SITE_TOKEN`
-and `SITE_NATS_PASSWORD`, which the NATS server, the LO and the EN share (SPEC §15.6). Get the
+and `SITE_NATS_PASSWORD` (letters and digits), which the NATS server, the LO and the EN share
+(SPEC §15.6). Get the
 token with `docker compose exec co ./ieo-co site add <SITE_ID>`. The `ieo-lo` Helm chart takes the
 site ID from `site.id`, and the token and the NATS password from a Secret it does not create (see
 its `values.yaml`). `deploy/dev/compose.yaml` is the laptop harness (see `docs/dev-setup.md`).
@@ -74,8 +75,10 @@ cannot start, for example when `docker compose version` does not run (ADR 0003):
 | `EN_START_TIMEOUT` | `--start-timeout` | `en.start_timeout` | default `5m` |
 
 The Compose bundle runs one EN with the engine of the machine it runs on, through
-`/var/run/docker.sock`: whoever controls the EN controls that engine. The `ieo-lo` Helm chart has no
-EN.
+`/var/run/docker.sock`: whoever controls the EN controls that engine. Its workloads run on that same
+engine, beside the CO, LO and NATS containers, so a workload that is given the socket could read
+their settings; the laptop harness keeps them apart, with an engine per host. The `ieo-lo` Helm
+chart has no EN.
 
 ### Database schema
 
