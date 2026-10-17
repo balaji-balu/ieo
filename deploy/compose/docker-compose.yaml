@@ -11,16 +11,19 @@ services:
       - ./db:/docker-entrypoint-initdb.d
     networks:
       - edge-net
+  # The site NATS server, with the site's one login until scoped credentials (SPEC §15.6).
   nats:
     image: nats:2.10
+    command: ["--user", "site", "--pass", "${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in .env}"]
     ports: ["4222:4222"]
     networks:
       - edge-net
 
+  # The old CO (CO_PORT, until roadmap slice E). The LO uses its Margo API, on :9002 by default.
   co:
     image: ghcr.io/balaji-balu/ieo-co:latest
     depends_on: [postgres]
-    ports: ["9001:9001"]
+    ports: ["9001:9001", "9002:9002"]
     expose:
       - "9200"
     environment:
@@ -31,45 +34,45 @@ services:
       CO_METRICS_PORT: 9200
     networks:
       - edge-net
+
+  # The LO of the site SITE_ID (keys: deploy/README.md, "LO configuration"). Its token comes from
+  # `docker compose exec co ./ieo-co site add <SITE_ID>`.
   lo:
-    # build:
-    #   dockerfile: ./dockerfile.lo 
-    image: ghcr.io/balaji-balu/ieo-lo:latest   
-    depends_on: [nats]
-    ports: ["9010:9010"]
-    expose:
-      - "9200"
+    image: ghcr.io/balaji-balu/ieo-lo:latest
+    depends_on: [nats, co]
     environment:
-      APP_ENV: prod
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      BOLT_DIR: 
-      LO_PORT: 9010
-      LO_METRICS_PORT: 9200
+      LO_SITE_ID: ${SITE_ID:?set SITE_ID in .env}
+      LO_CO_URL: http://co:9002
+      LO_CO_INSECURE: "true" # plain HTTP on this compose network; the LO logs a warning (SPEC §15.6)
+      LO_SITE_TOKEN: ${LO_SITE_TOKEN:?set LO_SITE_TOKEN in .env, from co site add}
+      LO_DATA_DIR: /var/lib/lo
       LO_NATS_URL: nats://nats:4222
-      LO_CO_URL: http://co:9001
+      LO_NATS_INSECURE: "true" # no TLS on this compose network; the LO logs a warning (SPEC §15.6)
+      LO_NATS_USERNAME: site
+      LO_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in .env}
     volumes:
-      - ./local-cache:/tmp/repo-cache
+      - lo-data:/var/lib/lo
     networks:
       - edge-net
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
 
-
+  # One EN, on the machine that runs this file (keys: deploy/README.md, "EN configuration"). It
+  # runs deployments with the Compose CLI on this machine's engine, through its socket: whoever
+  # controls the EN controls the engine (ADR 0003).
   en:
-    # build:
-    #   dockerfile: ./dockerfile.en 
-    image: ghcr.io/balaji-balu/ieo-en:latest   
+    image: ghcr.io/balaji-balu/ieo-en:latest
     depends_on: [nats]
-    ports: ["9011:9011"]
-    expose:
-      - "9200"
     environment:
-      APP_ENV: prod
-      IEO_EN_PORT: 9011
-      IEO_EN_METRICS_PORT: 9200
-      IEO_EN_NATS_URL: nats://nats:4222
-      IEO_EN_LO_URL: http://lo:9010
+      EN_SITE_ID: ${SITE_ID:?set SITE_ID in .env}
+      EN_HOST_ID: ${EN_HOST_ID:-host-1}
+      EN_DATA_DIR: /var/lib/ieo/en
+      EN_NATS_URL: nats://nats:4222
+      EN_NATS_INSECURE: "true" # no TLS on this compose network; the EN logs a warning (SPEC §15.6)
+      EN_NATS_USERNAME: site
+      EN_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in .env}
+      EN_OTEL_HTTP_ENDPOINT: ${EN_OTEL_HTTP_ENDPOINT:?set EN_OTEL_HTTP_ENDPOINT in .env}
+    volumes:
+      - en-data:/var/lib/ieo/en
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - edge-net
 
@@ -79,3 +82,5 @@ networks:
 
 volumes:
   pgdata1:
+  lo-data:
+  en-data:

@@ -62,22 +62,26 @@ CO_METRICS_PORT=9201
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
 
 # --- LO --- (keys: deploy/README.md, "LO configuration")
-LO_SITE_ID=00000000-0000-4000-8000-000000000001   # a UUID while the old LO runs (until roadmap slice E)
+LO_SITE_ID=00000000-0000-4000-8000-000000000001   # a UUID while the old CO API runs (until roadmap slice E)
 LO_CO_URL=http://localhost:9002     # the Margo API; no /api/v1 suffix, the LO adds it
 LO_CO_INSECURE=true                 # allows http:// on this machine; the LO logs a warning
-LO_DATA_DIR=data/lo                 # the LO store is data/lo/lo.db; the old LO uses data/lo/db/bolt.db
+LO_DATA_DIR=data/lo                 # the LO store is data/lo/lo.db
 LO_SITE_TOKEN=                      # printed by `go run ./cmd/co site add <LO_SITE_ID>` (step 4)
-LO_PORT=9010                        # the old LO, run only when set
-LO_METRICS_PORT=9202
-LO_NATS_URL=nats://localhost:4222   # the site NATS server; the old LO reads it too
+LO_NATS_URL=nats://localhost:4222   # the site NATS server
 LO_NATS_INSECURE=true               # allows nats:// on this machine; the LO logs a warning
-LO_NATS_USERNAME=site               # the site's NATS login (SPEC §15.6); the harness NATS server
-LO_NATS_PASSWORD=dev-harness-only   #   checks none yet (roadmap D5.6), so any value does
-LO_LEGACY_CO_URL=http://localhost:9001   # the old CO API, where the old LO registers
+LO_NATS_USERNAME=site               # the site's NATS login (SPEC §15.6): the harness server's,
+LO_NATS_PASSWORD=                   #   SITE_NATS_PASSWORD in deploy/dev/.env
 
-# --- EN ---
-IEO_EN_NATS_URL=nats://localhost:4222
-IEO_EN_LO_URL=http://localhost:9010
+# --- EN --- (keys: deploy/README.md, "EN configuration")
+EN_SITE_ID=00000000-0000-4000-8000-000000000001   # LO_SITE_ID
+EN_HOST_ID=host-1
+EN_DATA_DIR=data/en                 # host.id and the EN store, state.db
+EN_NATS_URL=nats://localhost:4222
+EN_NATS_INSECURE=true
+EN_NATS_USERNAME=site
+EN_NATS_PASSWORD=                   # the same as LO_NATS_PASSWORD
+EN_OTEL_HTTP_ENDPOINT=http://localhost:4318   # required; nothing listens there until roadmap slice M
+EN_REGISTRY_INSECURE=true           # the harness registry, localhost:5000, is plain HTTP
 
 # --- Git-based delivery (being replaced, Appendix B step 2) ---
 # GITHUB_TOKEN=                     # read access to the deployments repo; without it the
@@ -100,25 +104,24 @@ Then:
 
 ```sh
 go run ./cmd/co      # wait for: CO API running on : {"": "9001"} (old API) and "serving the Margo API"
-go run ./cmd/lo      # wait for: "outcome":"Accepted" (the Margo sync) and HTTP server started on : {"port": "9010"}
-go run ./cmd/en      # expect:   LO {"siteid": "..."}
+go run ./cmd/lo      # wait for: "outcome":"Accepted" (the Margo sync)
+go run ./cmd/en      # wait for: "taking commands"; it needs `docker compose` on PATH
 go run ./cmd/edgectl --help
 ```
 
-The LO registers its site with the CO once, at startup, and the EN registers with the LO once,
-at startup; neither retries. If you start them out of order, restart the later one.
+The LO and the EN keep trying to reach the site NATS server, and the LO keeps polling the CO, so
+they can start in any order. An `.env` file sets the variables of every service at once: give the
+LO and the EN their own working directory, or run one with its variables in the shell.
 
 ### Troubleshooting
 
 | Symptom | Cause |
 | --- | --- |
-| EN: `Post "http://localhost:9010/register" … actively refused` | LO not running, or `LO_PORT` unset (the LO then listens on a random port; check its `HTTP server started` line) |
+| EN: exit 1, `the Compose CLI` in its last line | `docker compose version` does not run; install Docker with the Compose plugin |
+| LO or EN: `cannot connect to the site NATS server` | NATS not running, or the password is not the server's `SITE_NATS_PASSWORD` |
 | LO: `invalid configuration` naming a variable | That variable is missing or invalid in `.env` |
 | LO: `"outcome":"Unreachable"` with `status 401` | `LO_SITE_TOKEN` is not the site's token; `go run ./cmd/co site rotate-token <LO_SITE_ID>` prints a new one |
-| LO: `unsupported protocol scheme ""` (old LO) | `LO_LEGACY_CO_URL` unset |
-| LO: `Post "http://localhost:9001/api/v1/register" … actively refused` (old LO) | CO not running; start it, then restart the LO |
 | LO: `CO rejected: {"error":"db query failed"}` | Schema missing; see step 2 |
-| LO: `CO rejected: {"error":"site already exists"}` | Harmless: the site was registered on an earlier run |
 | CO/LO: `clone failed: authentication required: Repository not found` | Git-based delivery without `GITHUB_TOKEN`; harmless for registration |
 
 ### Data model changes
@@ -156,7 +159,7 @@ cp deploy/helm/ieo-co/schemas/init.sql db/init.sql
 | --- | --- |
 | `deploy/helm/ieo-co/schemas/init.sql` | Helm chart `ieo-co` (Postgres init ConfigMap) |
 | `deploy/compose/db/init.sql` | `deploy/compose/docker-compose.yaml` |
-| `db/init.sql` | `docker-compose-demo.yaml` |
+| `db/init.sql` | no bundle since `docker-compose-demo.yaml` was deleted (roadmap D5.6c); kept with the Git-based code's schema |
 
 ### CO store schema (`internal/co/store/postgres`)
 

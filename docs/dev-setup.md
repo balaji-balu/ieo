@@ -22,26 +22,34 @@ Each simulated host runs its own Docker engine and needs about 1–2 GB.
 
 ## Start, inspect, stop
 
-The LO needs its site's token, which only the CO issues. The first start therefore has two steps:
-start the CO and add the site, then start the rest. In PowerShell:
+Every `docker compose` command on this file needs `SITE_NATS_PASSWORD`, the site's NATS password,
+which the NATS server, the LO and the ENs share (SPEC §15.6). The LO also needs its site's token,
+which only the CO issues. The first start therefore makes the password, starts the CO and adds the
+site, then starts the rest. In PowerShell:
 
 ```powershell
+$bytes = New-Object byte[] 24; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+"SITE_NATS_PASSWORD=" + -join ($bytes | ForEach-Object { $_.ToString('x2') }) | Set-Content -Encoding ascii deploy/dev/.env
 docker compose -f deploy/dev/compose.yaml up -d --build --wait co
 $token = docker compose -f deploy/dev/compose.yaml exec -T co app site add 00000000-0000-4000-8000-000000000001
-"LO_SITE_TOKEN=$token" | Set-Content -Encoding ascii deploy/dev/.env
+"LO_SITE_TOKEN=$token" | Add-Content -Encoding ascii deploy/dev/.env
 docker compose -f deploy/dev/compose.yaml up -d --build --wait
 ```
 
-In bash, lines 2 and 3 are:
+In bash:
 
 ```sh
+echo "SITE_NATS_PASSWORD=$(openssl rand -hex 24)" > deploy/dev/.env
+docker compose -f deploy/dev/compose.yaml up -d --build --wait co
 token=$(docker compose -f deploy/dev/compose.yaml exec -T co app site add 00000000-0000-4000-8000-000000000001)
-echo "LO_SITE_TOKEN=$token" > deploy/dev/.env
+echo "LO_SITE_TOKEN=$token" >> deploy/dev/.env
+docker compose -f deploy/dev/compose.yaml up -d --build --wait
 ```
 
-Compose reads `deploy/dev/.env`, which git ignores; the token stays there for later starts, as long
-as the Postgres volume is kept. The site ID is a UUID because the old LO, which still runs beside the
-new one, registers with the old CO API, and that API takes only UUIDs (until roadmap slice E).
+Compose reads `deploy/dev/.env`, which git ignores. Both values stay there for later starts; the
+token works as long as the Postgres volume is kept. Without the password, compose stops with
+`required variable SITE_NATS_PASSWORD is missing a value`. The site ID is a UUID because the old CO
+API, which runs beside the new one until roadmap slice E, takes only UUIDs.
 
 ```sh
 docker compose -f deploy/dev/compose.yaml up -d --build --wait   # later starts: build CO, LO, EN from this checkout and start
@@ -66,7 +74,7 @@ docker compose -f deploy/dev/compose.yaml logs lo | Select-String outcome   # Po
 | Service | Laptop port | Role |
 | --- | --- | --- |
 | `co` | 9002, 9001 | Central Orchestrator: Margo API for LOs on 9002 (health check at `/healthz`); the old API on 9001 until roadmap slice E |
-| `lo` | 9010 | Local Orchestrator for the one site |
+| `lo` | — | Local Orchestrator for the one site |
 | `nats` | 4222, 8222 (monitoring) | LO ↔ EN messaging |
 | `postgres` | 5432 | CO database (`postgres` / `postgres`, database `orchestration`) |
 | `registry` | 5000 | Application Registry (OCI) |
@@ -97,8 +105,9 @@ warning at startup. It uses no HTTP proxy, whatever `HTTP_PROXY` and `HTTPS_PROX
 The LO also connects to the `nats` container as the site's user, without TLS
 (`LO_NATS_INSECURE=true`, a second warning at startup), and asks the hosts for their inventories.
 The ENs connect the same way, as `host-1` and `host-2`, and answer: each logs the same warning, and
-one for `EN_REGISTRY_INSECURE=true`, since the `registry` container is plain HTTP (ADR 0021). Until
-roadmap D5.6c the NATS server checks no login, and ignores the one the LO and the ENs send.
+one for `EN_REGISTRY_INSECURE=true`, since the `registry` container is plain HTTP (ADR 0021). The
+NATS server takes only the site's login, `site` with `SITE_NATS_PASSWORD`. The LO has no health
+endpoint, so `ps` shows it as running, not healthy.
 
 ## Adding a site
 
@@ -112,9 +121,11 @@ restart the LO (PowerShell):
 
 ```powershell
 $token = docker compose -f deploy/dev/compose.yaml exec -T co app site rotate-token 00000000-0000-4000-8000-000000000001
-"LO_SITE_TOKEN=$token" | Set-Content -Encoding ascii deploy/dev/.env
+(@(Get-Content deploy/dev/.env) -notmatch '^LO_SITE_TOKEN=') + "LO_SITE_TOKEN=$token" | Set-Content -Encoding ascii deploy/dev/.env
 docker compose -f deploy/dev/compose.yaml up -d --wait lo
 ```
+
+The second line keeps `SITE_NATS_PASSWORD` and replaces only the token.
 
 ## Using the registry
 
@@ -141,7 +152,7 @@ Don't run the full stack at the same time: the `go run` services use the same po
 
 | Symptom | Fix |
 | --- | --- |
-| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 9001, 9002, 9010) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
+| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 9001, 9002) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
 | `up --wait` times out on `host1` or `host2` | Docker Desktop must allow privileged containers (the default). Check `docker compose -f deploy/dev/compose.yaml logs host1` |
 | Containers killed or very slow | Not enough memory for two engines; raise the WSL 2 memory limit (see Prerequisites) |
 | LO: `CO rejected: {"error":"db query failed"}` | The Postgres volume predates the current schema; reset it with `down -v` (deletes data) |
@@ -151,4 +162,5 @@ Don't run the full stack at the same time: the `go run` services use the same po
 | Merging or rebasing onto `main` reports a legacy Go file as conflicting on every line | The branch predates `.gitattributes` and edits a file that was stored with CRLF. Abort, then repeat with `-X renormalize` (`git merge -X renormalize origin/main`, or `git rebase -X renormalize origin/main`) |
 | `en1` or `en2` keeps restarting | It exits 2 on an invalid configuration and 1 when it cannot start, for example when `docker compose version` does not run; its last log line says which. Check `logs en1` |
 | `lo` keeps restarting, its log says `LO_SITE_TOKEN (lo.site_token) is not set` | Add the site and write `deploy/dev/.env` (Start, inspect, stop) |
+| `required variable SITE_NATS_PASSWORD is missing a value` | `deploy/dev/.env` has no `SITE_NATS_PASSWORD`; add one (Start, inspect, stop). Changing it needs `up -d` of `nats`, `lo`, `en1` and `en2` together |
 | LO: `"outcome":"Unreachable"` with `status 401` | The token in `deploy/dev/.env` is not the site's: rotate it (Adding a site) |

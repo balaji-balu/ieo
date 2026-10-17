@@ -1,44 +1,31 @@
-# boltdb:
-#   path: 
-
-# nats:
-#   image: nats:2.10
-#   port: 4222
-
-# lo:
-#   image: ghcr.io/balaji-balu/ieo-lo:latest
-#   replicas: 1
-#   port: 9010
-
-
+# The LO of one site (keys: deploy/README.md, "LO configuration"). The EN is not in this chart: it
+# runs on each host, beside that host's container engine.
 
 site:
-  name: site-1
-
-github:
-  token: ""   
+  # REQUIRED: the site ID, as `co site add` was given it.
+  id: ""
 
 nats:
+  # The site NATS server. Until it has TLS (SPEC §15.6), insecure allows its nats:// URL; with it,
+  # set insecure to false and the LO uses tls://.
   host: co-nats.default.svc.cluster.local
   port: 4222
+  insecure: true
+  username: site
 
 lo:
   image: ghcr.io/balaji-balu/ieo-lo:latest
   replicas: 1
-  port: 9010
-
-  boltdb:
-    path: /data/lo.db
 
   co:
+    # The CO's Margo API. insecure allows plain HTTP to it (SPEC §15.6).
     host: co-co.default.svc.cluster.local
-    port: 9001
+    port: 9002
+    insecure: true
 
-en:
-  image: ghcr.io/balaji-balu/ieo-en:latest
-  replicas: 1
-  port: 9011
-
-  lo:
-    host: ieo-site-1-lo
-    port: 9010
+  # A Secret with the keys site-token (from `co site add`) and nats-password, which the chart reads
+  # and never writes, so neither is kept in a values file (SPEC §15.4). Empty means
+  # <release>-lo. Create it before installing:
+  #   kubectl create secret generic <release>-lo \
+  #     --from-literal=site-token=<token> --from-literal=nats-password=<password>
+  secretName: ""
