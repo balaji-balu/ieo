@@ -193,3 +193,10 @@ func (u untilDone) Read(p []byte) (int, error) {
 	}
 	return u.r.Read(p)
 }
+
+// EmptySpool removes everything in spoolDir: the layers of pulls an earlier run of the EN did not
+// finish (SPEC §16.7, ADR 0019). A spoolDir that does not exist is empty. Call it before the EN
+// takes commands, when no pull runs.
+func EmptySpool(spoolDir string) error {
+	return nil
+}

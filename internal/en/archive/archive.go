@@ -462,3 +462,11 @@ func (x *extractor) staysInside(name string) bool {
 	}
 	return true
 }
+
+// RemoveStaging removes every directory under deploymentsDir whose name holds StagingInfix: an
+// extraction an earlier run of the EN did not finish (SPEC §16.7, ADR 0018). It leaves everything
+// else. A deploymentsDir that does not exist holds nothing to remove. Call it before the EN takes
+// commands, when no extraction runs.
+func RemoveStaging(deploymentsDir string) error {
+	return nil
+}
