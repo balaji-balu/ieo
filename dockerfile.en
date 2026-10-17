@@ -6,13 +6,17 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-# RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o en ./cmd/en
-RUN go build -ldflags="-s -w" -o /go/bin/ieo-en ./cmd/en
+# Static: it runs on Alpine.
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /go/bin/ieo-en ./cmd/en
 
-FROM debian:bookworm-slim
+# The EN runs the Compose CLI (ADR 0003) and exits at startup without it: docker:27-cli is Alpine
+# with the Docker CLI and its Compose plugin. The engine is the host's, reached through DOCKER_HOST
+# or a mounted socket.
+FROM docker.io/library/docker:27-cli
 WORKDIR /app
 COPY --from=builder /go/bin/ieo-en .
 
-CMD ["./ieo-en"]
+ENTRYPOINT ["./ieo-en"]
+CMD []
 
 

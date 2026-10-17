@@ -516,7 +516,8 @@ Resolution order (later wins):
 4. Command-line flags.
 
 A tier MUST validate its configuration at startup and exit non-zero with an operator-readable error
-if validation fails.
+if validation fails. `[IEO]` The LO and the EN exit with code 2 on an invalid configuration and 1 on
+any other failure.
 
 ### 6.2 Dynamic Reload
 
@@ -1321,6 +1322,8 @@ Rules:
 - Structured (JSON) logs on every tier.
 - Every log line about a deployment MUST include `deployment_id`, and `digest` when known.
 - LO and EN log lines MUST include `site_id`; EN and host-scoped LO lines MUST include `host_id`.
+  `[IEO]` A tier's lines logged before its configuration is read, and an EN's before its host ID is
+  known, carry what is known of the two.
 - Sync attempts MUST log their outcome (§7.4) and `manifest_version`.
 - `RejectedRollback` and `AbortedDigestMismatch` MUST be logged at a security/warning level with
   the offending values: the stored and received `manifestVersion`, the expected and computed
@@ -1509,7 +1512,7 @@ function upsert_deployment(req):
 
 ```text
 function start_lo():
-  cfg = load_and_validate_config() or exit(1)
+  cfg = load_and_validate_config() or exit non-zero (§6.1)
   store = open_store(cfg.data_dir)
   state = store.load()          # version, etag, desired, placements, hosts, outbox
   start_site_nats(cfg)          # until Appendix B step 4: connect to the external server (§15.6)
@@ -1697,7 +1700,7 @@ function fail(cmd, c, code):
 
 ```text
 function start_en():
-  cfg = load_and_validate_config() or exit(1)
+  cfg = load_and_validate_config() or exit non-zero (§6.1)
   host_id = load_or_create_host_id(cfg)
   store = open_store(cfg.data_dir)
   connect_nats(cfg, on_reconnect=publish_inventory)

@@ -462,3 +462,55 @@ func (x *extractor) staysInside(name string) bool {
 	}
 	return true
 }
+
+// RemoveStaging removes the extractions an earlier run of the EN did not finish (SPEC §16.7, ADR
+// 0018): the directories whose name holds StagingInfix where Extract makes them, beside a
+// component's directory at <deploymentsDir>/<deployment>/<digest>/. It looks nowhere else, so a
+// name an archive chose inside a component's directory is left alone, and it follows no symbolic
+// link. A deploymentsDir that does not exist holds nothing to remove. Call it before the EN takes
+// commands, when no extraction runs.
+func RemoveStaging(deploymentsDir string) error {
+	deployments, err := subdirs(deploymentsDir)
+	if err != nil {
+		return err
+	}
+	for _, deployment := range deployments {
+		digests, err := subdirs(deployment)
+		if err != nil {
+			return err
+		}
+		for _, digest := range digests {
+			components, err := subdirs(digest)
+			if err != nil {
+				return err
+			}
+			for _, dir := range components {
+				if strings.Contains(filepath.Base(dir), StagingInfix) {
+					if err := os.RemoveAll(dir); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// subdirs returns the directories in dir, not the symbolic links to one. A dir that does not exist
+// has none.
+func subdirs(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() { // the type of the entry itself: a link is not a directory here
+			dirs = append(dirs, filepath.Join(dir, e.Name()))
+		}
+	}
+	return dirs, nil
+}

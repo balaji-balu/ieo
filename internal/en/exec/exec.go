@@ -289,9 +289,15 @@ func (e *Executor) logFor(id uuid.UUID, digest contract.Digest) *slog.Logger {
 	return e.log.With("deployment_id", id.String(), "digest", digest.String())
 }
 
+// DeploymentsDir is the directory under which an Executor with this en.data_dir keeps the working
+// directory of each deployment (SPEC §9.1).
+func DeploymentsDir(dataDir string) string {
+	return filepath.Join(dataDir, "deployments")
+}
+
 // deploymentDir is the working directory of a deployment (SPEC §9.1).
 func (e *Executor) deploymentDir(id uuid.UUID) string {
-	return filepath.Join(e.cfg.DataDir, "deployments", id.String())
+	return filepath.Join(DeploymentsDir(e.cfg.DataDir), id.String())
 }
 
 // componentDir is the directory of one component of a deployment at a digest (SPEC §9.1): the
