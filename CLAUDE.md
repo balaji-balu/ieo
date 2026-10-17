@@ -55,10 +55,10 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 | Path | Contents |
 | --- | --- |
 | `cmd/co`, `internal/co`, `pkg/co` | Central Orchestrator (CO); `internal/co/store/postgres` is its Postgres store (own ent schema, `co_*` tables, embedded migrations) |
-| `cmd/lo`, `internal/lo` | Local Orchestrator (LO): reconciler, boltstore, watcher, actuators |
+| `cmd/lo`, `internal/lo` | Local Orchestrator (LO): sync (Margo API), store, plan, reconcile, sitelink (site messages) |
 | `cmd/en`, `internal/en` | Edge Node agent (EN): agent (site messages), exec (Apply/Remove), store, compose, registry, pull, archive |
 | `cmd/edgectl` | Operator CLI |
-| `internal/natsbroker`, `internal/streammanager` | NATS messaging |
+| `internal/sitenats`, `internal/streammanager` | Site NATS client (ADR 0020); the old CO's stream manager |
 | `internal/git*`, `internal/ocifetch` | Git-based delivery (being replaced, Appendix B step 2) and OCI fetch |
 | `ent/`, `db/`, `atlas.hcl` | ent schema (generated) and migrations of the Git-based code |
 | `pkg/model`, `pkg/deployment`, `pkg/application` | Shared domain types |
