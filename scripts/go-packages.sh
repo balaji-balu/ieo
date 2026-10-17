@@ -19,8 +19,6 @@ KNOWN_BROKEN=(
 # Production code compiles, test files don't: built and linted without tests.
 BROKEN_TESTS=(
   internal/config        # config_test.go: undefined ResolveRootDir
-  internal/lo/boltstore  # store_test.go imports missing package rec/store
-  internal/lo/reconciler # reconciler_test.go does not parse
 )
 
 mode=${1:-build}
