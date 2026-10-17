@@ -197,9 +197,20 @@ func (u untilDone) Read(p []byte) (int, error) {
 }
 
 // EmptySpool removes everything in spoolDir: the layers of pulls an earlier run of the EN did not
-// finish (SPEC §16.7, ADR 0019). A spoolDir that does not exist is empty. Call it before the EN
+// finish (SPEC §16.7, ADR 0019). A spoolDir that does not exist is empty; one that is not a
+// directory, such as a symbolic link, is an error, and nothing is removed. Call it before the EN
 // takes commands, when no pull runs.
 func EmptySpool(spoolDir string) error {
+	info, err := os.Lstat(spoolDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", spoolDir)
+	}
 	entries, err := os.ReadDir(spoolDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil

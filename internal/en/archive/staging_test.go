@@ -37,6 +37,21 @@ func TestRemoveStaging(t *testing.T) {
 	}
 }
 
+// A name with StagingInfix that an archive put inside a component is the component's own file.
+func TestRemoveStagingLooksOnlyWhereExtractWorks(t *testing.T) {
+	deployments := filepath.Join(t.TempDir(), "deployments")
+	inside := filepath.Join(deployments, "0a0a0a0a-0000-4000-8000-00000000000a", "sha256-0123", "web", "app", "data"+archive.StagingInfix+"1")
+	if err := os.MkdirAll(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.RemoveStaging(deployments); err != nil {
+		t.Fatalf("RemoveStaging: %v", err)
+	}
+	if _, err := os.Stat(inside); err != nil {
+		t.Errorf("a directory inside a finished component was removed: %v", err)
+	}
+}
+
 // A data directory with no deployments yet holds nothing to remove.
 func TestRemoveStagingWithoutDeployments(t *testing.T) {
 	if err := archive.RemoveStaging(filepath.Join(t.TempDir(), "deployments")); err != nil {
