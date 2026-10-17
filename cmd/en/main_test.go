@@ -643,6 +643,20 @@ func TestConfigErrorExits2(t *testing.T) {
 	refusedAtStartup(t, enEnv(t, srv), "argument", "an argument that is not a flag", "now")
 }
 
+// A data directory that cannot be created is a failure of the host, not of the configuration
+// (SPEC §6.1), and the error names en.data_dir.
+func TestDataDirThatCannotBeCreatedExits1(t *testing.T) {
+	srv := natstest.Start(t, siteLogin)
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stderr := runEN(t, enEnv(t, srv, "EN_DATA_DIR", filepath.Join(file, "en")), fake(composetest.New()))
+	if code != 1 || !strings.Contains(stderr.String(), "EN_DATA_DIR") {
+		t.Errorf("a data directory under a file: exit %d, want 1 with an error naming EN_DATA_DIR:\n%s", code, stderr)
+	}
+}
+
 // ADR 0016: a host.id that differs from en.host_id is a configuration error.
 func TestHostIDThatDiffersExits2(t *testing.T) {
 	srv := natstest.Start(t, siteLogin)

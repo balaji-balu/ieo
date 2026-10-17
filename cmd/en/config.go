@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -193,16 +194,16 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 	if cfg.RegistryInsecure, err = r.boolean(keyRegistryInsecure); err != nil {
 		return config{}, err
 	}
-	if cfg.Pull.MaxBytes, err = r.size(keyPullMaxBytes, defaultPullMaxBytes); err != nil {
+	if cfg.Pull.MaxBytes, err = r.size(keyPullMaxBytes, defaultPullMaxBytes, math.MaxInt64); err != nil {
 		return config{}, err
 	}
 	if cfg.Pull.Timeout, err = r.duration(keyPullTimeout, defaultPullTimeout, "5m"); err != nil {
 		return config{}, err
 	}
-	if cfg.Archive.MaxExtractedBytes, err = r.size(keyMaxExtractedBytes, defaultMaxExtractedBytes); err != nil {
+	if cfg.Archive.MaxExtractedBytes, err = r.size(keyMaxExtractedBytes, defaultMaxExtractedBytes, math.MaxInt64); err != nil {
 		return config{}, err
 	}
-	entries, err := r.size(keyMaxEntries, defaultMaxEntries)
+	entries, err := r.size(keyMaxEntries, defaultMaxEntries, math.MaxInt) // an int on this platform
 	if err != nil {
 		return config{}, err
 	}
@@ -267,15 +268,15 @@ func (r reader) duration(k key, def time.Duration, example string) (time.Duratio
 	return d, nil
 }
 
-// size returns the value of a key that is a whole number greater than 0, or def if it is not set.
-func (r reader) size(k key, def int64) (int64, error) {
+// size returns the value of a key that is a whole number from 1 to most, or def if it is not set.
+func (r reader) size(k key, def, most int64) (int64, error) {
 	s := r.value(k)
 	if s == "" {
 		return def, nil
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || n <= 0 {
-		return 0, configError(fmt.Sprintf("%s: %q is not a whole number greater than 0, such as %d", k, s, def))
+	if err != nil || n <= 0 || n > most {
+		return 0, configError(fmt.Sprintf("%s: %q is not a whole number from 1 to %d, such as %d", k, s, most, def))
 	}
 	return n, nil
 }

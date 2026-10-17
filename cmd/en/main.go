@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -71,32 +72,37 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	}
 	log = log.With(slog.String("site_id", string(cfg.SiteID))) // SPEC §13.1
 	site, host, err := hostOf(cfg)
-	if err != nil {
+	if err == nil {
+		log = log.With(slog.String("host_id", string(host.ID())))
+		err = serve(ctx, cfg, site, host, runner, log)
+	}
+	switch {
+	case err == nil:
+		log.Info("stopped")
+		return 0
+	case isConfigError(err):
 		log.Error("invalid configuration", "error", err.Error())
 		return 2
 	}
-	log = log.With(slog.String("host_id", string(host.ID())))
-	if err := serve(ctx, cfg, site, host, runner, log); err != nil {
-		if isConfigError(err) {
-			log.Error("invalid configuration", "error", err.Error())
-			return 2
-		}
-		log.Error("en failed", "error", err.Error())
-		return 1
-	}
-	return 0
+	log.Error("en failed", "error", err.Error())
+	return 1
 }
 
 // hostOf returns the subjects of the EN's site and host. The host ID is the one kept in
-// <en.data_dir>/host.id, or en.host_id, or a new one (ADR 0016); a file that does not agree with
-// en.host_id is a configError.
+// <en.data_dir>/host.id, or en.host_id, or a new one (ADR 0016). A file that does not agree with
+// en.host_id, or holds no valid ID, is a configError; a data directory or file that cannot be
+// created or read is a failure of the host, not of the configuration.
 func hostOf(cfg config) (sitenats.Site, sitenats.Host, error) {
 	site, err := sitenats.ForSite(cfg.SiteID) // loadConfig has checked it
 	if err != nil {
 		return sitenats.Site{}, sitenats.Host{}, configError(fmt.Sprintf("%s: %v", keySiteID, err))
 	}
 	id, err := store.HostID(cfg.DataDir, cfg.HostID)
-	if err != nil {
+	var pathErr *fs.PathError
+	switch {
+	case errors.As(err, &pathErr):
+		return sitenats.Site{}, sitenats.Host{}, fmt.Errorf("%s: %w", keyDataDir, err)
+	case err != nil:
 		return sitenats.Site{}, sitenats.Host{}, configError(fmt.Sprintf("%s: %v", keyHostID, err))
 	}
 	host, err := site.Host(id) // an ID in host.id that a subject cannot hold
@@ -156,14 +162,17 @@ func serve(ctx context.Context, cfg config, site sitenats.Site, host sitenats.Ho
 	}
 	defer conn.Close() // ADR 0020: after the subscriptions and the commands
 	ag := agent.New(conn, site, host, log)
-	defer ag.Stop()
 	ex := exec.New(exec.Config{
 		DataDir: cfg.DataDir, Archive: cfg.Archive, StartTimeout: cfg.StartTimeout, OTel: cfg.OTel,
 	}, pull.New(reg.Open, spool, cfg.Pull), runner, s, ag, platform.SystemClock(), log)
 	// The commands are ended by the EN, after it has stopped taking new ones, not by ctx itself.
 	commandsCtx, endCommands := context.WithCancel(context.WithoutCancel(ctx))
-	defer endCommands()
 	commands := exec.NewDispatcher(commandsCtx, ex, log)
+	defer func() { // SPEC §16.7, also when Listen fails: no command is taken, then those in flight end
+		ag.Stop()
+		endCommands()
+		commands.Wait()
+	}()
 	inventory := func(ctx context.Context) (contract.Inventory, error) { return ex.Inventory(ctx, host.ID()) }
 	if err := ag.Listen(ctx, commands, inventory, agent.Config{Interval: cfg.InventoryInterval}); err != nil {
 		return err
@@ -171,9 +180,5 @@ func serve(ctx context.Context, cfg config, site sitenats.Site, host sitenats.Ho
 	log.Info("taking commands", "data_dir", cfg.DataDir, "runtime", cfg.Runtime)
 
 	<-ctx.Done()
-	ag.Stop() // SPEC §16.7: no command is taken after this
-	endCommands()
-	commands.Wait()
-	log.Info("stopped")
 	return nil
 }
