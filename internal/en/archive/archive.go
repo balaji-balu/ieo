@@ -468,5 +468,20 @@ func (x *extractor) staysInside(name string) bool {
 // else. A deploymentsDir that does not exist holds nothing to remove. Call it before the EN takes
 // commands, when no extraction runs.
 func RemoveStaging(deploymentsDir string) error {
-	return nil
+	err := filepath.WalkDir(deploymentsDir, func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case !d.IsDir() || !strings.Contains(d.Name(), StagingInfix):
+			return nil
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		return filepath.SkipDir
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }

@@ -56,7 +56,7 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 | --- | --- |
 | `cmd/co`, `internal/co`, `pkg/co` | Central Orchestrator (CO); `internal/co/store/postgres` is its Postgres store (own ent schema, `co_*` tables, embedded migrations) |
 | `cmd/lo`, `internal/lo` | Local Orchestrator (LO): reconciler, boltstore, watcher, actuators |
-| `cmd/en`, `internal/en`, `pkg/en` | Edge Node agent (EN): runtime plugins, lifecycle, heartbeat |
+| `cmd/en`, `internal/en` | Edge Node agent (EN): agent (site messages), exec (Apply/Remove), store, compose, registry, pull, archive |
 | `cmd/edgectl` | Operator CLI |
 | `internal/natsbroker`, `internal/streammanager` | NATS messaging |
 | `internal/git*`, `internal/ocifetch` | Git-based delivery (being replaced, Appendix B step 2) and OCI fetch |

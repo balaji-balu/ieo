@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -198,5 +200,17 @@ func (u untilDone) Read(p []byte) (int, error) {
 // finish (SPEC §16.7, ADR 0019). A spoolDir that does not exist is empty. Call it before the EN
 // takes commands, when no pull runs.
 func EmptySpool(spoolDir string) error {
+	entries, err := os.ReadDir(spoolDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(spoolDir, e.Name())); err != nil {
+			return err
+		}
+	}
 	return nil
 }

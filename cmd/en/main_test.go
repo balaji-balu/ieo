@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -239,7 +241,10 @@ type lo struct {
 // playLO connects to srv as the LO, and subscribes to host-1's reports.
 func playLO(t *testing.T, srv *natstest.Server) *lo {
 	t.Helper()
-	conn, err := sitenats.Connect(sitenats.Config{URL: srv.URL(), Username: natsUser, Password: natsPassword, Insecure: true})
+	conn, err := sitenats.Connect(sitenats.Config{
+		URL: srv.URL(), Username: natsUser, Password: natsPassword, Insecure: true,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -445,22 +450,15 @@ func TestSpec_17_7_EveryENLogLineCarriesSiteAndHostID(t *testing.T) {
 	reg := ocitest.NewRegistry()
 	host := startRegistry(t, reg, nil)
 	pushWeb(t, reg, host)
-	en := endToEnd(t, srv, enEnv(t, srv, "EN_HOST_ID", ""), reg, host) // the ID is generated
+	en := endToEnd(t, srv, enEnv(t, srv), reg, host)
 	en.stop()
 	lines := en.stderr.lines(t)
 	if len(lines) < 3 {
 		t.Fatalf("%d log lines; want those of a whole run:\n%s", len(lines), en.stderr)
 	}
-	var generated any
 	for _, line := range lines {
-		if line["site_id"] != siteID || line["host_id"] == nil || line["host_id"] == "" {
-			t.Errorf("a line without site_id %s and a host_id: %v", siteID, line)
-			continue
-		}
-		if generated == nil {
-			generated = line["host_id"]
-		} else if line["host_id"] != generated {
-			t.Errorf("host_id %v, then %v", generated, line["host_id"])
+		if line["site_id"] != siteID || line["host_id"] != hostID {
+			t.Errorf("a line without site_id %s and host_id %s: %v", siteID, hostID, line)
 		}
 	}
 }
@@ -470,7 +468,8 @@ func TestSpec_17_7_EveryENLogLineCarriesSiteAndHostID(t *testing.T) {
 func refusedAtStartup(t *testing.T, env map[string]string, key, what string, args ...string) *logBuffer {
 	t.Helper()
 	code, stderr := runEN(t, env, fake(composetest.New()), args...)
-	if code != 2 || !strings.Contains(stderr.String(), key) {
+	// Decoded, so a Windows path is not escaped as it is in JSON.
+	if code != 2 || !strings.Contains(fmt.Sprint(stderr.lines(t)), key) {
 		t.Errorf("%s: exit %d, want 2 with an error naming %s:\n%s", what, code, key, stderr)
 	}
 	if strings.Contains(stderr.String(), msgNATSConnected) {
