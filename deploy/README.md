@@ -75,7 +75,8 @@ cannot start, for example when `docker compose version` does not run (ADR 0003):
 | `EN_START_TIMEOUT` | `--start-timeout` | `en.start_timeout` | default `5m` |
 
 The Compose bundle runs one EN with the engine of the machine it runs on, through
-`/var/run/docker.sock`: whoever controls the EN controls that engine. Its workloads run on that same
+`/var/run/docker.sock`: whoever controls the EN controls that engine. Its data directory is
+`/var/lib/ieo/en` on the machine too, so the paths in a deployment's `compose.yaml` find its files. Its workloads run on that same
 engine, beside the CO, LO and NATS containers, so a workload that is given the socket could read
 their settings; the laptop harness keeps them apart, with an engine per host. The `ieo-lo` Helm
 chart has no EN.

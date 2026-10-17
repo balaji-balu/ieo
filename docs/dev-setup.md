@@ -146,6 +146,9 @@ To run CO, LO and EN with `go run` instead (see [`contributing.md`](contributing
 docker compose -f deploy/dev/compose.yaml up -d --wait nats postgres
 ```
 
+It needs `SITE_NATS_PASSWORD` in `deploy/dev/.env`, as every compose command does (Start, inspect,
+stop), and the `go run` LO and EN take the same value as `LO_NATS_PASSWORD` and `EN_NATS_PASSWORD`.
+
 Don't run the full stack at the same time: the `go run` services use the same ports.
 
 ## Troubleshooting

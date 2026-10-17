@@ -110,8 +110,7 @@ go run ./cmd/edgectl --help
 ```
 
 The LO and the EN keep trying to reach the site NATS server, and the LO keeps polling the CO, so
-they can start in any order. An `.env` file sets the variables of every service at once: give the
-LO and the EN their own working directory, or run one with its variables in the shell.
+they can start in any order. One `.env` holds the keys of all three, as their prefixes differ.
 
 ### Troubleshooting
 

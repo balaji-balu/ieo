@@ -21,6 +21,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        case "$$SITE_NATS_PASSWORD" in *[!A-Za-z0-9]*) echo "SITE_NATS_PASSWORD holds letters and digits only" >&2; exit 2;; esac
         umask 077
         printf 'port: 4222\nauthorization { user: site, password: "%s" }\n' "$$SITE_NATS_PASSWORD" > /tmp/site.conf
         exec nats-server -c /tmp/site.conf
@@ -68,7 +69,9 @@ services:
 
   # One EN, on the machine that runs this file (keys: deploy/README.md, "EN configuration"). It
   # runs deployments with the Compose CLI on this machine's engine, through its socket: whoever
-  # controls the EN controls the engine (ADR 0003).
+  # controls the EN controls the engine (ADR 0003). Its data directory is the same path on the
+  # machine and in the container, so the paths in a deployment's compose.yaml, which the engine
+  # resolves on the machine, find the files the EN extracted.
   en:
     image: ghcr.io/balaji-balu/ieo-en:latest
     depends_on: [nats]
@@ -82,7 +85,7 @@ services:
       EN_NATS_PASSWORD: ${SITE_NATS_PASSWORD:?set SITE_NATS_PASSWORD in .env}
       EN_OTEL_HTTP_ENDPOINT: ${EN_OTEL_HTTP_ENDPOINT:?set EN_OTEL_HTTP_ENDPOINT in .env}
     volumes:
-      - en-data:/var/lib/ieo/en
+      - /var/lib/ieo/en:/var/lib/ieo/en
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - edge-net
@@ -94,4 +97,3 @@ networks:
 volumes:
   pgdata1:
   lo-data:
-  en-data:
