@@ -308,13 +308,13 @@ func (e *Executor) componentDir(id uuid.UUID, digest contract.Digest, component 
 }
 
 // Remove runs a Remove command. If the deployment is not applied, it reports `removed` with
-// cmd.Digest and does nothing else. Otherwise it reports `removing`, brings down every recorded
+// cmd.Digest and does nothing else. Otherwise it records and reports `removing`, brings down every recorded
 // project, deletes the deployment's directory and record, and reports `removed`; both events carry
 // the applied digest, and neither names a component (SPEC §11.2).
 //
 // A project that can't be brought down, or a directory that can't be deleted, is not an error of
-// Remove: it is logged, the record is kept and `removed` is not reported, so the LO sends Remove
-// again. Remove returns an error only when the EN could not read or change its record, or when
+// Remove: it is logged, the record is kept with every component `removing` and `removed` is not
+// reported, so the LO sends Remove again, or Apply if the deployment is wanted again. Remove returns an error only when the EN could not read or change its record, or when
 // ctx ended.
 func (e *Executor) Remove(ctx context.Context, cmd contract.Command) error {
 	if err := e.remove(ctx, cmd); err != nil {
@@ -339,6 +339,11 @@ func (e *Executor) remove(ctx context.Context, cmd contract.Command) error {
 		}
 		e.publish(ctx, e.logFor(id, cmd.Digest), contract.ComponentStatusEvent{DeploymentID: id, Digest: cmd.Digest, State: contract.StateRemoved})
 		return nil
+	}
+	// SPEC §8.9 Remove step 2: `removing` is recorded for every component before it is published,
+	// so an inventory built from here on lists it (ADR 0016). A Remove that does not finish leaves it.
+	if err := e.store.MarkRemoving(ctx, id); err != nil {
+		return err
 	}
 	// SPEC §8.9: the events of a Remove carry the applied digest and name no component.
 	log := e.logFor(id, current.Applied.Digest)

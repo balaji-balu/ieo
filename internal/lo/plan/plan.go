@@ -35,7 +35,8 @@ type Command struct {
 // ForHost returns the commands that converge one host from have to want (SPEC §8.5 steps 3–5):
 //
 //   - Apply for each deployment in want that is absent from have, present at another digest, or
-//     present at the same digest with any component failed;
+//     present at the same digest with any component failed or removing (a Remove that did not
+//     finish);
 //   - Remove for each deployment in have that is not in want;
 //   - nothing for the rest.
 //
@@ -47,7 +48,7 @@ func ForHost(want map[uuid.UUID]contract.Digest, have map[uuid.UUID]Actual) []Co
 	var applies, removes []Command
 	for id, digest := range want {
 		a, ok := have[id]
-		if !ok || a.Digest != digest || anyFailed(a) { // SPEC §8.5 step 3
+		if !ok || a.Digest != digest || needsApply(a) { // SPEC §8.5 step 3
 			applies = append(applies, Command{Action: contract.ActionApply, DeploymentID: id, Digest: digest})
 		}
 	}
@@ -62,9 +63,11 @@ func ForHost(want map[uuid.UUID]contract.Digest, have map[uuid.UUID]Actual) []Co
 	return append(applies, removes...)
 }
 
-func anyFailed(a Actual) bool {
+// needsApply reports whether a deployment at the wanted digest has a component to bring back: one
+// `failed`, or one left `removing` by a Remove that did not finish (SPEC §8.5 step 3, §8.9).
+func needsApply(a Actual) bool {
 	for _, state := range a.Components {
-		if state == contract.StateFailed {
+		if state == contract.StateFailed || state == contract.StateRemoving {
 			return true
 		}
 	}
