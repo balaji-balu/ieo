@@ -305,6 +305,13 @@ func (b *Bolt) PutComponentStatus(_ context.Context, id uuid.UUID, s contract.Co
 	return nil
 }
 
+// MarkRemoving records every component recorded for the deployment as `removing`, without an
+// error, in one transaction (SPEC §8.9 Remove step 2, ADR 0016). The EN calls it before it
+// publishes `removing`. A deployment with no recorded component is left as it is.
+func (b *Bolt) MarkRemoving(_ context.Context, _ uuid.UUID) error {
+	return nil // not yet: #92
+}
+
 // DeleteDeployment deletes the deployment's Applied record and component states in one
 // transaction (SPEC §8.9 Remove step 2). Deleting a deployment that is not stored succeeds.
 func (b *Bolt) DeleteDeployment(_ context.Context, id uuid.UUID) error {

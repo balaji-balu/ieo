@@ -81,11 +81,19 @@ func (r *recorder) all() []contract.ComponentStatusEvent {
 	return append([]contract.ComponentStatusEvent(nil), r.events...)
 }
 
-// hookedRunner is the fake runtime with a hook before Up, for tests that look at the EN's record
-// at that moment or end the context there.
+// hookedRunner is the fake runtime with hooks before Up and Down, for tests that look at the EN's
+// record at that moment or end the context there.
 type hookedRunner struct {
 	*composetest.Fake
-	beforeUp func(p compose.Project) error
+	beforeUp   func(p compose.Project) error
+	beforeDown func(project string)
+}
+
+func (h *hookedRunner) Down(ctx context.Context, project string) error {
+	if h.beforeDown != nil {
+		h.beforeDown(project)
+	}
+	return h.Fake.Down(ctx, project)
 }
 
 func (h *hookedRunner) Up(ctx context.Context, p compose.Project, o compose.UpOptions) error {
@@ -100,7 +108,8 @@ func (h *hookedRunner) Up(ctx context.Context, p compose.Project, o compose.UpOp
 // failingStore is the EN store with writes that can be made to fail, and a hook after a read.
 type failingStore struct {
 	*store.Bolt
-	putApplied error
+	putApplied   error
+	markRemoving error
 	// afterLoad, if set, runs when Load has read the store and before it returns.
 	afterLoad func()
 }
@@ -118,6 +127,13 @@ func (s *failingStore) PutApplied(ctx context.Context, id uuid.UUID, a store.App
 		return s.putApplied
 	}
 	return s.Bolt.PutApplied(ctx, id, a)
+}
+
+func (s *failingStore) MarkRemoving(ctx context.Context, id uuid.UUID) error {
+	if s.markRemoving != nil {
+		return s.markRemoving
+	}
+	return s.Bolt.MarkRemoving(ctx, id)
 }
 
 type fixture struct {
@@ -661,9 +677,66 @@ func TestSpec_17_6_RemoveReportsAppliedDigest(t *testing.T) {
 	}
 }
 
+// assertInventoryStates checks that an Inventory built now lists the deployment at digest with the
+// component states ("name state"), in order of name.
+func (f *fixture) assertInventoryStates(digest contract.Digest, states ...string) {
+	f.t.Helper()
+	inv, err := f.exec.Inventory(ctx, "host-03")
+	if err != nil {
+		f.t.Fatalf("Inventory: %v", err)
+	}
+	if len(inv.Deployments) != 1 || inv.Deployments[0].Digest != digest {
+		f.t.Fatalf("inventory lists %+v, want the deployment at %s", inv.Deployments, digest)
+	}
+	var got []string
+	for _, c := range inv.Deployments[0].Components {
+		got = append(got, c.Name+" "+string(c.State))
+		if c.Error != nil {
+			f.t.Errorf("component %q is listed with error %+v", c.Name, c.Error)
+		}
+	}
+	if !reflect.DeepEqual(got, states) {
+		f.t.Errorf("inventory component states = %q, want %q", got, states)
+	}
+}
+
+// SPEC §17.6: "An Inventory built while a Remove runs, or after a Remove that could not bring a
+// project down, lists every component of the deployment `removing`." This is the first half.
+func TestSpec_17_6_InventoryDuringRemove(t *testing.T) {
+	f := newFixture(t)
+	f.push("web", "db")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+	// The db component failed after its Apply: `removing` replaces the state and its error.
+	if err := f.store.PutComponentStatus(ctx, deploymentID, contract.ComponentStatus{Name: "db", State: contract.StateFailed,
+		Error: &contract.StatusError{Code: contract.CodeComposeFailed, Source: "db", Message: "exit 1"}}); err != nil {
+		t.Fatal(err)
+	}
+	downs := 0
+	f.runner.beforeDown = func(string) {
+		downs++
+		if downs == 1 {
+			f.assertEvents("removing")
+			f.assertInventoryStates(digestA, "db removing", "web removing")
+		}
+	}
+
+	if err := f.exec.Remove(ctx, removeCommand(digestA)); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	if downs == 0 {
+		t.Fatal("the Remove brought no project down")
+	}
+	f.assertEvents("removed")
+}
+
+// SPEC §17.6: "An Inventory built while a Remove runs, or after a Remove that could not bring a
+// project down, lists every component of the deployment `removing`." This is the second half.
+//
 // A Remove that can't bring a project down keeps the record and does not report `removed`, so the
 // LO sends Remove again; the other projects are still brought down (SPEC §8.9).
-func TestRemoveKeepsRecordWhenDownFails(t *testing.T) {
+func TestSpec_17_6_InventoryAfterFailedRemove(t *testing.T) {
 	f := newFixture(t)
 	f.push("web", "db")
 	f.apply(digestA, deployment("web", "db"))
@@ -678,7 +751,8 @@ func TestRemoveKeepsRecordWhenDownFails(t *testing.T) {
 	if got, want := f.runner.Projects(), []string{project("web")}; !reflect.DeepEqual(got, want) {
 		t.Errorf("projects up = %v, want only the one that could not be brought down", got)
 	}
-	f.assertStored(digestA, []string{project("web"), project("db")}, "web installed", "db installed")
+	f.assertStored(digestA, []string{project("web"), project("db")}, "web removing", "db removing")
+	f.assertInventoryStates(digestA, "db removing", "web removing")
 
 	f.runner.Fail(composetest.OpDown, project("web"), nil)
 	if err := f.exec.Remove(ctx, removeCommand(digestA)); err != nil {
@@ -688,6 +762,51 @@ func TestRemoveKeepsRecordWhenDownFails(t *testing.T) {
 	if _, ok := f.stored(); ok {
 		t.Error("the deployment is still in the EN store after the second Remove")
 	}
+}
+
+// An Apply at the applied digest after a Remove that did not finish brings every component back
+// (SPEC §7.1, §8.5 step 3): `removing` is not `installed`, so the Apply is not skipped.
+func TestApplyAfterUnfinishedRemove(t *testing.T) {
+	f := newFixture(t)
+	f.push("web", "db")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+	f.runner.Fail(composetest.OpDown, project("web"), errors.New("engine not reachable"))
+	if err := f.exec.Remove(ctx, removeCommand(digestA)); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	f.pub.take()
+	f.runner.Fail(composetest.OpDown, project("web"), nil)
+
+	f.apply(digestA, deployment("web", "db"))
+
+	f.assertEvents("web installing", "web installed", "db installing", "db installed")
+	if got, want := f.runner.Projects(), []string{project("db"), project("web")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("projects up = %v, want %v", got, want)
+	}
+	f.assertStored(digestA, []string{project("web"), project("db")}, "web installed", "db installed")
+}
+
+// A Remove that can't record `removing` publishes nothing and brings nothing down, so no event
+// says more than the record (ADR 0016).
+func TestRemoveStopsWhenRecordFails(t *testing.T) {
+	f := newFixture(t)
+	f.push("web")
+	f.apply(digestA, deployment("web"))
+	f.pub.take()
+	f.store.markRemoving = errors.New("disk full")
+	callsBefore := len(f.calls())
+
+	err := f.exec.Remove(ctx, removeCommand(digestA))
+
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Errorf("Remove error = %v, want the store's error", err)
+	}
+	f.assertEvents()
+	if got := f.calls()[callsBefore:]; len(got) != 0 {
+		t.Errorf("runtime calls after the failed record = %q, want none", got)
+	}
+	f.assertStored(digestA, []string{project("web")}, "web installed")
 }
 
 // A Remove after a failed first Apply, which recorded the digest and no project, still clears

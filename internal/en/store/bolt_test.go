@@ -197,6 +197,41 @@ func TestStoreDeleteDeployment(t *testing.T) {
 	}
 }
 
+// MarkRemoving sets every component of one deployment to `removing` without its error, and keeps
+// the applied record; other deployments are not changed, and an unknown deployment gets no record
+// (SPEC §8.9 Remove step 2, ADR 0016).
+func TestStoreMarkRemoving(t *testing.T) {
+	b := open(t, t.TempDir())
+	defer closeStore(t, b)
+	applied := store.Applied{Digest: digestA, ComposeProjects: []string{"p1", "p2"}}
+	must(t, b.PutApplied(ctx, idA, applied))
+	must(t, b.PutComponentStatus(ctx, idA, contract.ComponentStatus{Name: "web", State: contract.StateInstalled}))
+	must(t, b.PutComponentStatus(ctx, idA, contract.ComponentStatus{Name: "db/primary", State: contract.StateFailed,
+		Error: &contract.StatusError{Code: "IEO-COMPOSE-FAILED", Source: "db/primary", Message: "exit 1"}}))
+	must(t, b.PutApplied(ctx, idB, store.Applied{Digest: digestB, ComposeProjects: []string{"p3"}}))
+	must(t, b.PutComponentStatus(ctx, idB, contract.ComponentStatus{Name: "web", State: contract.StateInstalled}))
+	unknown := uuid.MustParse("00000000-0000-4000-8000-000000000000")
+
+	must(t, b.MarkRemoving(ctx, idA))
+	must(t, b.MarkRemoving(ctx, unknown))
+
+	want := map[uuid.UUID]store.Deployment{
+		idA: {Applied: applied, Components: map[string]contract.ComponentStatus{
+			"web":        {Name: "web", State: contract.StateRemoving},
+			"db/primary": {Name: "db/primary", State: contract.StateRemoving},
+		}},
+		idB: {Applied: store.Applied{Digest: digestB, ComposeProjects: []string{"p3"}}, Components: map[string]contract.ComponentStatus{
+			"web": {Name: "web", State: contract.StateInstalled},
+		}},
+	}
+	if got := load(t, b); !reflect.DeepEqual(got, want) {
+		t.Errorf("Load after MarkRemoving = %+v, want %+v", got, want)
+	}
+	if _, ok, err := b.Get(ctx, unknown); err != nil || ok {
+		t.Errorf("Get of the unknown deployment = %v, %v; want not stored", ok, err)
+	}
+}
+
 // A new file gets every bucket of layout version 1 (ADR 0016).
 func TestStoreNewFileLayout(t *testing.T) {
 	dataDir := t.TempDir()

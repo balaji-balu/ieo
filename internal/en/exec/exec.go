@@ -50,6 +50,7 @@ type Store interface {
 	Get(ctx context.Context, id uuid.UUID) (store.Deployment, bool, error)
 	PutApplied(ctx context.Context, id uuid.UUID, a store.Applied) error
 	PutComponentStatus(ctx context.Context, id uuid.UUID, s contract.ComponentStatus) error
+	MarkRemoving(ctx context.Context, id uuid.UUID) error
 	DeleteDeployment(ctx context.Context, id uuid.UUID) error
 }
 

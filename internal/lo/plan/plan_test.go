@@ -98,11 +98,11 @@ func TestSpec_17_4_DiffRules(t *testing.T) {
 			cmds: []plan.Command{apply(idA, digest2)},
 		},
 		{
-			// SPEC §8.5 step 3 names only failed; removed is not re-applied.
-			name: "equal, removing and removed",
+			// SPEC §8.5 step 3 names failed and removing; removed is not re-applied.
+			name: "equal, installed and removed",
 			want: map[uuid.UUID]contract.Digest{idA: digest1},
 			have: map[uuid.UUID]plan.Actual{
-				idA: actual(digest1, components{"web": contract.StateRemoving, "db": contract.StateRemoved}),
+				idA: actual(digest1, components{"web": contract.StateInstalled, "db": contract.StateRemoved}),
 			},
 		},
 		{
@@ -129,6 +129,22 @@ func TestSpec_17_4_DiffRules(t *testing.T) {
 				t.Errorf("%s: ForHost = %+v, want %+v", tt.name, got, tt.cmds)
 			}
 		})
+	}
+}
+
+// SPEC §17.4: "A deployment wanted at the digest its host reports, with a component `removing`,
+// gets Apply." A Remove that did not finish left it so (SPEC §8.5 step 3, §8.9).
+func TestSpec_17_4_ApplyWhenRemoving(t *testing.T) {
+	want := map[uuid.UUID]contract.Digest{idA: digest1, idB: digest1}
+	have := map[uuid.UUID]plan.Actual{
+		idA: actual(digest1, components{"web": contract.StateRemoving, "db": contract.StateRemoving}),
+		idB: actual(digest1, components{"web": contract.StateInstalled, "db": contract.StateRemoving}),
+	}
+
+	got := plan.ForHost(want, have)
+
+	if cmds := []plan.Command{apply(idA, digest1), apply(idB, digest1)}; !reflect.DeepEqual(got, cmds) {
+		t.Errorf("ForHost = %+v, want %+v", got, cmds)
 	}
 }
 
