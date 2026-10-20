@@ -648,6 +648,7 @@ that authority, which turns them into explicit transitions.
 | `installed` | Apply of a different digest | `installing` |
 | any | Remove received | `removing` |
 | `removing` | all Compose projects down | `removed` |
+| `removing` | Apply received (a Remove that did not finish, §8.9) | `installing` `[IEO]` |
 
 Rules:
 
@@ -889,7 +890,9 @@ For one host that is `Online` (§7.3, including its interim rule):
 1. `want` = desired deployments resolved to this host (with digests).
 2. `have` = actual state for this host.
 3. For each deployment in `want` not in `have`, in `have` with a different digest, or in `have` at the
-   same digest with any component `failed` → **Apply**.
+   same digest with any component `failed` or `removing` → **Apply**. `[IEO]` A component left
+   `removing` by a Remove that did not finish (§8.9) belongs to a deployment that is wanted again,
+   so an Apply brings it back.
 4. For each deployment in `have` not in `want` → **Remove**, carrying the digest in `have` `[IEO]`.
 5. Otherwise, nothing.
 6. Skip any `(host, deployment)` whose retry entry is not yet due.
@@ -997,16 +1000,21 @@ On **Apply** (deployment ID, digest, deployment YAML):
 On **Remove** (deployment ID, digest):
 
 1. If the deployment is not in `applied`, ack `accepted: true`, publish `removed`, and stop.
-2. Ack, publish `removing`, bring down all its Compose projects, delete its working directory,
-   remove it from `applied`, publish `removed`.
+2. Ack, record every component of the deployment as `removing`, publish `removing`, bring down all
+   its Compose projects, delete its working directory, remove it from `applied`, publish `removed`.
+
+`[IEO]` `removing` is recorded in `component_states` (§4.1.12) for every component in one write,
+before it is published. So an Inventory built while a Remove runs lists the deployment's
+components `removing`, not the states they had before it.
 
 `[IEO]` The status events of a Remove carry the digest in `applied` when the Remove runs (step 1),
 or the command's digest when the deployment is not in `applied` then. They name no component
 (§11.2): each is one event for the whole deployment.
 
 `[IEO]` When a Remove cannot bring a project down or delete the working directory, the EN still
-brings down the other projects, keeps the deployment in `applied` and publishes nothing after
-`removing`. The host still reports the deployment, so the LO sends Remove again (§8.5).
+brings down the other projects, keeps the deployment in `applied` with its components `removing`,
+and publishes nothing after `removing`. The host still reports the deployment, so the LO sends
+Remove again, or Apply if the deployment is wanted again (§8.5).
 
 `[IEO]` An Apply records every component of the deployment as `pending` before its first component
 starts, without publishing it, so inventory never shows a state from an earlier Apply for a
@@ -1603,7 +1611,7 @@ function reconcile_host(state, host):
 
   for id, digest in want:
     h = have.get(id)
-    needs_apply = h is null or h.digest != digest or any_failed(h.components)
+    needs_apply = h is null or h.digest != digest or any_failed_or_removing(h.components)
     if needs_apply and retry_due(host.id, id):
       send_command(host, "apply", id, digest, state.desired[id].yaml)
   for id in keys(have):
@@ -1665,6 +1673,7 @@ function remove_deployment(cmd):
   digest = a.digest if a else cmd.digest     # every status event of this Remove uses it
   if a is null:
     return publish_removal(cmd, digest, removed)   # status events as §8.9 Remove
+  store.set_all_components(cmd.deploymentId, removing)   # one write, before the event (§8.9)
   publish_removal(cmd, digest, removing)
   compose_down(a.compose_projects); delete_dir(deployment_dir(cmd.deploymentId))
   store.delete_applied(cmd.deploymentId)
@@ -1825,6 +1834,7 @@ endpoints (§11.3 holds IEO-specific operations).
 - No eligible host → `failed`, `IEO-NO-ELIGIBLE-HOST`, retried on next pass.
 - A component reported `failed` at the desired digest triggers a re-Apply after backoff, not
   immediately and not never.
+- A deployment wanted at the digest its host reports, with a component `removing`, gets Apply.
 - After LO restart the LO publishes `site.<s>.inventory.request` and every online EN answers.
 - Placement disabled → autonomous deployments report `103`.
 - No two reconcile passes for the same host run concurrently.
@@ -1870,6 +1880,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - Inventory is published on start and on every NATS reconnect.
 - A status event for a change made after the EN read an Inventory has a later `at` than that
   Inventory (§11.2).
+- An Inventory built while a Remove runs, or after a Remove that could not bring a project down,
+  lists every component of the deployment `removing`.
 - Commands for the same deployment are processed one at a time.
 - A command for a deployment with an Apply in flight runs after the in-flight component finishes;
   the superseded Apply starts no later component.
