@@ -1673,7 +1673,7 @@ function remove_deployment(cmd):
   digest = a.digest if a else cmd.digest     # every status event of this Remove uses it
   if a is null:
     return publish_removal(cmd, digest, removed)   # status events as §8.9 Remove
-  store.set_all_components(cmd.deploymentId, removing)   # one write, before the event (§8.9)
+  store.mark_removing(cmd.deploymentId)       # every component, one write, before the event
   publish_removal(cmd, digest, removing)
   compose_down(a.compose_projects); delete_dir(deployment_dir(cmd.deploymentId))
   store.delete_applied(cmd.deploymentId)
