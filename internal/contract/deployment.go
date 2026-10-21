@@ -178,6 +178,37 @@ func DecodeApplicationDeployment(id uuid.UUID, b []byte) (ApplicationDeployment,
 	return d, nil
 }
 
+// OutlineOfDeployment reads what it can of deployment YAML that DecodeApplicationDeployment
+// refuses: the target in `metadata.deviceId` and the names in
+// `spec.deploymentProfile.components`, for the status that reports the deployment (SPEC §8.7). A
+// target that is missing or does not parse is the zero DeviceID. YAML that is not one plain
+// document (SPEC §5.3) gives neither.
+func OutlineOfDeployment(b []byte) (target DeviceID, components []string) {
+	if checkPlainYAML(b) != nil {
+		return DeviceID{}, nil
+	}
+	var outline struct {
+		Metadata struct {
+			DeviceID string `yaml:"deviceId"`
+		} `yaml:"metadata"`
+		Spec struct {
+			DeploymentProfile struct {
+				Components []struct {
+					Name string `yaml:"name"`
+				} `yaml:"components"`
+			} `yaml:"deploymentProfile"`
+		} `yaml:"spec"`
+	}
+	if yaml.Unmarshal(b, &outline) != nil {
+		return DeviceID{}, nil
+	}
+	target, _ = ParseDeviceID(outline.Metadata.DeviceID) // a target that does not parse is none
+	for _, c := range outline.Spec.DeploymentProfile.Components {
+		components = append(components, c.Name)
+	}
+	return target, components
+}
+
 func decodeDeploymentYAML(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
 	if err := checkPlainYAML(b); err != nil {
 		return ApplicationDeployment{}, err

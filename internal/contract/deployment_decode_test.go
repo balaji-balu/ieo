@@ -130,3 +130,28 @@ func TestDecodeApplicationDeploymentRejects(t *testing.T) {
 		})
 	}
 }
+
+// OutlineOfDeployment reads the target and component names of a deployment the decoder refuses,
+// for the status that reports it (SPEC §8.7).
+func TestOutlineOfDeployment(t *testing.T) {
+	refused := "id: not-a-uuid\nmetadata:\n  deviceId: site-1/host-1\nspec:\n  deploymentProfile:\n    components:\n      - name: web\n      - name: db\n"
+	cases := []struct {
+		name       string
+		yaml       string
+		target     contract.DeviceID
+		components []string
+	}{
+		{"refused deployment", refused, contract.DeviceID{Site: "site-1", Host: "host-1"}, []string{"web", "db"}},
+		{"target that does not parse", "metadata:\n  deviceId: a/b/c\n", contract.DeviceID{}, nil},
+		{"not YAML", "id: [", contract.DeviceID{}, nil},
+		{"aliases", "a: &x [1]\nb: *x\n", contract.DeviceID{}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			target, components := contract.OutlineOfDeployment([]byte(tc.yaml))
+			if target != tc.target || !reflect.DeepEqual(components, tc.components) {
+				t.Fatalf("OutlineOfDeployment = %v, %v; want %v, %v", target, components, tc.target, tc.components)
+			}
+		})
+	}
+}

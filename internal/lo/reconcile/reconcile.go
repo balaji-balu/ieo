@@ -7,10 +7,12 @@
 package reconcile
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/balaji-balu/ieo/internal/contract"
 	"github.com/balaji-balu/ieo/internal/lo/plan"
+	"github.com/balaji-balu/ieo/internal/lo/status"
 	"github.com/balaji-balu/ieo/internal/lo/store"
 	losync "github.com/balaji-balu/ieo/internal/lo/sync"
 	"github.com/balaji-balu/ieo/internal/platform"
@@ -76,6 +79,7 @@ type Reconciler struct {
 	interval   time.Duration
 	clock      platform.Clock
 	log        *slog.Logger
+	status     StatusSink // nil: no status is built
 
 	// wake tells Run that a host was marked. It holds at most one signal: Run looks at every host
 	// each time it wakes.
@@ -95,6 +99,16 @@ type Reconciler struct {
 	known bool
 	// stale says the last read of desired state failed, so want may be older than the store's.
 	stale bool
+	// reported holds the gateway error each deployment was last reported with in this LO run, so
+	// it is reported once per digest and code (SPEC §8.7). It holds only deployments that fail
+	// target resolution now.
+	reported map[uuid.UUID]gatewayError
+}
+
+// gatewayError is a gateway error of one deployment at one digest (SPEC §8.4).
+type gatewayError struct {
+	digest contract.Digest
+	code   string
 }
 
 // host is what the Reconciler holds for one host.
@@ -127,9 +141,10 @@ func New(ctx context.Context, cfg Config, st Store, sender Sender) (*Reconciler,
 	}
 	r := &Reconciler{
 		site: cfg.SiteID, store: st, sender: sender, ackTimeout: cfg.AckTimeout, interval: cfg.Interval,
-		clock: cfg.Clock, log: cfg.Log,
-		wake:  make(chan struct{}, 1),
-		hosts: map[contract.HostID]*host{},
+		clock: cfg.Clock, log: cfg.Log, status: cfg.Status,
+		wake:     make(chan struct{}, 1),
+		hosts:    map[contract.HostID]*host{},
+		reported: map[uuid.UUID]gatewayError{},
 	}
 	if r.clock == nil {
 		r.clock = platform.SystemClock()
@@ -170,6 +185,7 @@ func (r *Reconciler) loadDesired(ctx context.Context) error {
 			slog.String("deployment_id", u.id.String()), slog.String("digest", string(u.digest)), slog.String("reason", u.reason))
 	}
 	r.want, r.skipped, r.stale = byHost, skipped, false
+	r.reportGateway(ctx, unresolved)
 	// The sync loop replaces desired state and starts reconciling before it commits the version
 	// (SPEC §8.2 steps 6–8), so desired state that holds a deployment is a manifest's too.
 	r.known = st.Version > 0 || len(st.Desired) > 0
@@ -230,7 +246,9 @@ func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, in
 		h = &host{}
 		r.hosts[hostID] = h
 	}
+	prev := h.actual
 	h.actual, h.online, h.lastNotApplied = &actual, true, false
+	r.reportHost(ctx, hostID, prev, h.actual)
 	r.mark(h)
 }
 
@@ -265,8 +283,80 @@ func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev co
 		log.LogAttrs(ctx, slog.LevelError, "status event dropped", slog.String("reason", err.Error()))
 		return
 	}
+	prev := h.actual
 	h.actual = &actual
+	r.reportHost(ctx, hostID, prev, h.actual)
 }
+
+// reportHost hands on the status of every deployment desired on host whose state there differs
+// between prev and next, the host's actual state before and after a report; prev is nil when none
+// was held (SPEC §8.7). r.mu is held.
+func (r *Reconciler) reportHost(ctx context.Context, hostID contract.HostID, prev, next *store.HostActual) {
+	if r.status == nil {
+		return
+	}
+	device := contract.DeviceID{Site: r.site, Host: hostID}
+	for _, id := range slices.SortedFunc(maps.Keys(r.want[hostID]), compareIDs) {
+		before, after := find(prev, id), find(next, id)
+		if before == nil && after == nil || before != nil && after != nil && sameDeployment(*before, *after) {
+			continue
+		}
+		w := r.want[hostID][id]
+		r.status.Put(ctx, status.FromHost(device, w.desired(id), after), w.digest)
+	}
+}
+
+// find returns the entry of deployment id in a; nil if a is nil or holds none.
+func find(a *store.HostActual, id uuid.UUID) *contract.InventoryDeployment {
+	if a == nil {
+		return nil
+	}
+	for i := range a.Deployments {
+		if a.Deployments[i].DeploymentID == id {
+			return &a.Deployments[i]
+		}
+	}
+	return nil
+}
+
+// reportGateway hands on the gateway status of each desired deployment that fails target
+// resolution: those in unresolved, and those directed to a host the LO has no record of (`101`,
+// SPEC §8.4). Each is handed on once per LO run for its digest and error code (SPEC §8.7). r.mu is
+// held, and r.want is the desired state just resolved.
+func (r *Reconciler) reportGateway(ctx context.Context, unresolved []unresolved) {
+	if r.status == nil {
+		return
+	}
+	lo := contract.DeviceID{Site: r.site}
+	now := make(map[uuid.UUID]gatewayError, len(r.reported))
+	report := func(id uuid.UUID, d status.Desired, device contract.DeviceID, code, message string) {
+		e := gatewayError{digest: d.Digest, code: code}
+		now[id] = e
+		if r.reported[id] == e {
+			return
+		}
+		r.status.Put(ctx, status.Gateway(lo, device, d, code, message), d.Digest)
+	}
+	for _, u := range unresolved {
+		device := u.target
+		if device == (contract.DeviceID{}) {
+			device = lo
+		}
+		report(u.id, u.desired(), device, u.code, u.reason)
+	}
+	for _, hostID := range slices.Sorted(maps.Keys(r.want)) {
+		if r.hosts[hostID] != nil {
+			continue
+		}
+		device := contract.DeviceID{Site: r.site, Host: hostID}
+		for _, id := range slices.SortedFunc(maps.Keys(r.want[hostID]), compareIDs) {
+			report(id, r.want[hostID][id].desired(id), device, contract.CodeUnknownChildDevice, "unknown host "+device.String())
+		}
+	}
+	r.reported = now
+}
+
+func compareIDs(x, y uuid.UUID) int { return bytes.Compare(x[:], y[:]) }
 
 // ReconcileAll reads desired state from the store and marks every `Online` host for a pass (SPEC
 // §7.5 `Manifest Accepted` and `Reconcile Safety Timer Fired`). It returns once the hosts are
@@ -291,8 +381,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) {
 }
 
 // logWaiting logs each desired deployment whose host has published no Inventory since the LO
-// started: it gets no command until the host does (SPEC §7.3 interim rule). Status reporting
-// replaces this trace (SPEC §8.4, roadmap slice E). r.mu is held.
+// started: it gets no command until the host does (SPEC §7.3 interim rule). A host the LO has no
+// record of at all is also reported `101` (reportGateway); one it knows from before it started is
+// not, until liveness reports it (roadmap slice I). r.mu is held.
 func (r *Reconciler) logWaiting(ctx context.Context) {
 	for hostID, wants := range r.want {
 		if h := r.hosts[hostID]; h != nil && h.online {

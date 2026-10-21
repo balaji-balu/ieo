@@ -56,7 +56,8 @@ func gateway(id uuid.UUID, d losync.Desired, deviceID string, code string, compo
 	e := &contract.StatusError{Code: code, Source: string(site)}
 	s := contract.DeploymentStatus{
 		DeploymentID: id, DeviceID: device, AdoptedManifestVersion: d.AdoptedVersion,
-		Status: contract.DeploymentState{State: contract.StateFailed, Error: e},
+		Status:     contract.DeploymentState{State: contract.StateFailed, Error: e},
+		Components: []contract.ComponentStatus{},
 	}
 	for _, c := range components {
 		s.Components = append(s.Components, contract.ComponentStatus{Name: c, State: contract.StateFailed, Error: e})
@@ -138,7 +139,7 @@ func TestStoredHostIsNotUnknown(t *testing.T) {
 }
 
 // SPEC §17.5: "A desired deployment the LO cannot resolve (§8.4) is reported once per LO run at its
-// digest and error code, …"
+// digest and error code"
 func TestSpec_17_5_UnresolvableDeploymentReportedOncePerRun(t *testing.T) {
 	ids := map[string]uuid.UUID{}
 	for i, name := range []string{"autonomous", "other site", "the LO itself", "not a deployment", "another id"} {

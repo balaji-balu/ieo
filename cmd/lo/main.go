@@ -24,6 +24,8 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/balaji-balu/ieo/internal/lo/coapi"
+	"github.com/balaji-balu/ieo/internal/lo/outbox"
 	"github.com/balaji-balu/ieo/internal/lo/reconcile"
 	"github.com/balaji-balu/ieo/internal/lo/sitelink"
 	"github.com/balaji-balu/ieo/internal/lo/store"
@@ -68,8 +70,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	return 0
 }
 
-// serve opens the LO store, connects to the site NATS server, and runs the sync loop and the
-// reconciler until ctx ends (SPEC §16.2); when one stops, both do. It fails at startup if the store cannot be opened, and never deletes or
+// serve opens the LO store, connects to the site NATS server, and runs the sync loop, the
+// reconciler and the status outbox until ctx ends (SPEC §16.2); when one stops, all do. It fails at startup if the store cannot be opened, and never deletes or
 // overwrites the file (SPEC §14.2). A NATS server that cannot be reached is not a failure: the
 // connection is made, and made again, in the background (SPEC §11.2, ADR 0020).
 func serve(ctx context.Context, cfg config, transport http.RoundTripper, base *slog.Logger) error {
@@ -109,8 +111,14 @@ func serve(ctx context.Context, cfg config, transport http.RoundTripper, base *s
 	}
 	defer conn.Close() // ADR 0020: last, after the subscriptions and the passes
 	link := sitelink.New(conn, site, log)
+	// SPEC §8.8: until roadmap slice J, a status the CO refuses is sent again every poll interval.
+	box := outbox.New(outbox.Config{
+		SiteID: cfg.SiteID, Client: coapi.NewClient(cfg.COURL, cfg.SiteToken, transport),
+		RetryInterval: cfg.PollInterval, Log: base, // the Outbox adds site_id
+	})
 	reconciler, err := reconcile.New(ctx, reconcile.Config{
 		SiteID: cfg.SiteID, AckTimeout: cfg.AckTimeout, Interval: cfg.ReconcileInterval, Log: base, // the Reconciler adds site_id
+		Status: box, // SPEC §8.7
 	}, s, link)
 	if err != nil {
 		return err
@@ -126,14 +134,16 @@ func serve(ctx context.Context, cfg config, transport http.RoundTripper, base *s
 		Reconcile: reconciler.ReconcileAll, // SPEC §8.2 step 7
 	}, s)
 
-	errs := make(chan error, 2)
-	running := 2
+	errs := make(chan error, 3)
+	running := 3
 	go func() { errs <- syncer.Run(ctx) }()     // SPEC §16.2: the first tick at delay 0
 	go func() { errs <- reconciler.Run(ctx) }() // the passes, and the reconcile safety timer
+	go func() { errs <- box.Run(ctx) }()        // SPEC §8.8: the statuses to the CO
 	log.Info("syncing with the CO", "co_url", cfg.COURL, "poll_interval", cfg.PollInterval.String())
 	var first error
 	for range running {
-		// The sync loop and the reconciler end only with ctx; that is a stop, not a failure.
+		// The sync loop, the reconciler and the outbox end only with ctx; that is a stop, not a
+		// failure.
 		if err := <-errs; err != nil && !errors.Is(err, context.Canceled) && first == nil {
 			first = err
 		}

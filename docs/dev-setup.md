@@ -175,6 +175,15 @@ docker compose -f deploy/dev/compose.yaml exec -T host1 docker ps -q --filter "l
 
 The ID is the same. `down -v` deletes the deployment with everything else.
 
+The LO sends the deployment's status to the CO (SPEC §8.7), which keeps it as the current status.
+Until `edgectl deployment status` exists (roadmap E5), read it from Postgres; it shows
+`installed|<site>/host-1` once `en1` has installed the component:
+
+```powershell
+$id = ($out | Select-String '^DEPLOYMENT_ID=(.*)').Matches.Groups[1].Value
+docker compose -f deploy/dev/compose.yaml exec -T postgres psql -U postgres -d orchestration -tA -c "SELECT convert_from(current_status, 'UTF8')::json #>> '{status,state}', convert_from(current_status, 'UTF8')::json ->> 'deviceId' FROM co_deployments WHERE id = '$id'"
+```
+
 ## Only NATS and Postgres
 
 To run CO, LO and EN with `go run` instead (see [`contributing.md`](contributing.md#get-started)):

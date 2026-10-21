@@ -423,8 +423,15 @@ func TestLOSyncsAndPersistsToDataDir(t *testing.T) {
 	second := startLO(t, env)
 	second.waitOutcome("NotModified")
 	second.stop()
-	reqs := co.TakeRequests()
-	if len(reqs) == 0 || reqs[0].Header.Get("If-None-Match") != etag {
+	// The first manifest request; the LO also sends statuses (SPEC §8.7), on other paths.
+	var poll *http.Request
+	for _, r := range co.TakeRequests() {
+		if r.URL.Path == manifestPath {
+			poll = r
+			break
+		}
+	}
+	if poll == nil || poll.Header.Get("If-None-Match") != etag {
 		t.Errorf("the restarted LO did not send If-None-Match %s", etag)
 	}
 }
