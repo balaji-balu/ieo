@@ -232,6 +232,36 @@ func TestStoreMarkRemoving(t *testing.T) {
 	}
 }
 
+// ResetComponents sets every named component of one deployment to `pending` and deletes its other
+// component states, keeping the applied record; other deployments are not changed (SPEC §8.9,
+// ADR 0016).
+func TestStoreResetComponents(t *testing.T) {
+	b := open(t, t.TempDir())
+	defer closeStore(t, b)
+	applied := store.Applied{Digest: digestA, ComposeProjects: []string{"p1", "p2"}}
+	must(t, b.PutApplied(ctx, idA, applied))
+	must(t, b.PutComponentStatus(ctx, idA, contract.ComponentStatus{Name: "web", State: contract.StateRemoving}))
+	must(t, b.PutComponentStatus(ctx, idA, contract.ComponentStatus{Name: "db", State: contract.StateFailed,
+		Error: &contract.StatusError{Code: "IEO-COMPOSE-FAILED", Source: "db", Message: "exit 1"}}))
+	must(t, b.PutComponentStatus(ctx, idB, contract.ComponentStatus{Name: "web", State: contract.StateInstalled}))
+	must(t, b.PutApplied(ctx, idB, store.Applied{Digest: digestB, ComposeProjects: []string{"p3"}}))
+
+	must(t, b.ResetComponents(ctx, idA, []string{"web", "api"}))
+
+	want := map[uuid.UUID]store.Deployment{
+		idA: {Applied: applied, Components: map[string]contract.ComponentStatus{
+			"web": {Name: "web", State: contract.StatePending},
+			"api": {Name: "api", State: contract.StatePending},
+		}},
+		idB: {Applied: store.Applied{Digest: digestB, ComposeProjects: []string{"p3"}}, Components: map[string]contract.ComponentStatus{
+			"web": {Name: "web", State: contract.StateInstalled},
+		}},
+	}
+	if got := load(t, b); !reflect.DeepEqual(got, want) {
+		t.Errorf("Load after ResetComponents = %+v, want %+v", got, want)
+	}
+}
+
 // A new file gets every bucket of layout version 1 (ADR 0016).
 func TestStoreNewFileLayout(t *testing.T) {
 	dataDir := t.TempDir()

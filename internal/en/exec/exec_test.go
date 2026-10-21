@@ -787,6 +787,29 @@ func TestApplyAfterUnfinishedRemove(t *testing.T) {
 	f.assertStored(digestA, []string{project("web"), project("db")}, "web installed", "db installed")
 }
 
+// SPEC §17.6: "An Apply after a Remove that did not finish, at a digest whose profile drops a
+// component, leaves no state for that component, so the Inventory lists only the profile's
+// components." A `removing` left for db would get Apply from the LO forever (SPEC §8.5 step 3).
+func TestSpec_17_6_ApplyDropsStateOfRemovedComponent(t *testing.T) {
+	f := newFixture(t)
+	f.push("web", "db")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+	f.runner.Fail(composetest.OpDown, project("web"), errors.New("engine not reachable"))
+	if err := f.exec.Remove(ctx, removeCommand(digestA)); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	f.pub.take()
+	f.runner.Fail(composetest.OpDown, project("web"), nil)
+
+	f.apply(digestB, deployment("web"))
+
+	f.assertEvents("web installing", "web installed")
+	// The db project stays recorded until SPEC §8.9 step 5 or a Remove brings it down.
+	f.assertStored(digestB, []string{project("web"), project("db")}, "web installed")
+	f.assertInventoryStates(digestB, "web installed")
+}
+
 // A Remove that can't record `removing` publishes nothing and brings nothing down, so no event
 // says more than the record (ADR 0016).
 func TestRemoveStopsWhenRecordFails(t *testing.T) {

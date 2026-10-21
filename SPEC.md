@@ -1017,8 +1017,11 @@ and publishes nothing after `removing`. The host still reports the deployment, s
 Remove again, or Apply if the deployment is wanted again (§8.5).
 
 `[IEO]` An Apply records every component of the deployment as `pending` before its first component
-starts, without publishing it, so inventory never shows a state from an earlier Apply for a
-component this one has not reached. When the EN is stopped during an Apply, the Apply ends at the
+starts, and deletes the recorded state of every component the deployment no longer has, in one
+write and without publishing it. So inventory never shows a state from an earlier Apply for a
+component this one has not reached, or for one it no longer has: a component left `failed` or
+`removing` that is not in the new profile would otherwise get Apply forever (§8.5 step 3). Its
+Compose project stays recorded until step 5 or a Remove brings it down. When the EN is stopped during an Apply, the Apply ends at the
 call that was cut short, records `applied` (step 6) and publishes nothing more; the component stays
 `installing`.
 
@@ -1680,6 +1683,7 @@ function remove_deployment(cmd):
   publish_removal(cmd, digest, removed)
 
 function apply_deployment(cmd):
+  store.reset_components(cmd.deploymentId, component_names(cmd))   # pending; others deleted; one write
   for c in cmd.deployment.spec.deploymentProfile.components:
     publish_status(cmd, c.name, installing)
     layer = oci_pull(c.repository, c.revision,   # revision is the tag (§4.2)
@@ -1874,6 +1878,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - A tag that holds anything but a Margo Compose Archive (§5.1) fails the component with
   `IEO-PULL-FAILED`.
 - Updating to a new digest removes Compose projects of components that no longer exist.
+- An Apply after a Remove that did not finish, at a digest whose profile drops a component, leaves
+  no state for that component, so the Inventory lists only the profile's components.
 - A container that exits and does not recover moves its component to `failed`; recovery moves it
   back to `installed`.
 - After EN restart, inventory reflects the containers actually running.

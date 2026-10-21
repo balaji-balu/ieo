@@ -50,6 +50,7 @@ type Store interface {
 	Get(ctx context.Context, id uuid.UUID) (store.Deployment, bool, error)
 	PutApplied(ctx context.Context, id uuid.UUID, a store.Applied) error
 	PutComponentStatus(ctx context.Context, id uuid.UUID, s contract.ComponentStatus) error
+	ResetComponents(ctx context.Context, id uuid.UUID, names []string) error
 	MarkRemoving(ctx context.Context, id uuid.UUID) error
 	DeleteDeployment(ctx context.Context, id uuid.UUID) error
 }
@@ -121,14 +122,17 @@ func (e *Executor) apply(ctx context.Context, cmd contract.Command, superseded f
 		return nil // SPEC §8.9 step 1
 	}
 	// SPEC §8.9: components this Apply has not reached are `pending`, not what an earlier Apply
-	// left.
+	// left, and a component the profile no longer has keeps no state, so the LO does not re-Apply
+	// it forever (§8.5 step 3).
+	names := make([]string, 0, len(components))
 	for _, c := range components {
 		if contract.ComponentSlug(c.Name) == "" {
 			return errors.New("a component has no name; the command was not validated")
 		}
-		if err := e.store.PutComponentStatus(ctx, cmd.DeploymentID, contract.ComponentStatus{Name: c.Name, State: contract.StatePending}); err != nil {
-			return err
-		}
+		names = append(names, c.Name)
+	}
+	if err := e.store.ResetComponents(ctx, cmd.DeploymentID, names); err != nil {
+		return err
 	}
 	// Projects recorded by an earlier Apply stay recorded, so a Remove brings them down too.
 	r := &applyRun{Executor: e, cmd: cmd, log: e.logFor(cmd.DeploymentID, cmd.Digest), projects: current.Applied.ComposeProjects}
