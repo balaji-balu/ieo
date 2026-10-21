@@ -30,7 +30,7 @@ type Options struct {
 	// turns the verification of a certificate off.
 	Insecure bool
 	// InsecureKey is the configuration key of Insecure (`en.registry.insecure`), as the startup
-	// warning and the errors name it.
+	// warning and the errors name it. Every caller sets it.
 	InsecureKey string
 	// Credential returns the credential of the registry a request goes to; its host is
 	// `host:port` as RegistryOf names it. It is asked only for the host a request was first sent
@@ -70,6 +70,9 @@ func New(opts Options) *Client {
 	if log == nil {
 		log = slog.Default()
 	}
+	if opts.InsecureKey == "" {
+		opts.InsecureKey = "the insecure setting"
+	}
 	proxy := httpproxy.FromEnvironment().ProxyFunc()
 	if opts.Insecure {
 		warnInsecure(log, opts.InsecureKey, opts.Credential != nil, proxy)
@@ -96,10 +99,6 @@ func New(opts Options) *Client {
 		transport = httpsOnly{next: transport, refusal: &plainHTTPRefused{key: opts.InsecureKey}}
 	}
 	transport = firstHostOnly{transport}
-	credential := opts.Credential
-	if credential == nil {
-		credential = func(context.Context, string) (auth.Credential, error) { return auth.EmptyCredential, nil }
-	}
 	return &Client{
 		plainHTTP: opts.Insecure,
 		idle:      base.CloseIdleConnections,
@@ -110,7 +109,7 @@ func New(opts Options) *Client {
 			Client:     &http.Client{Transport: transport, CheckRedirect: checkRedirect},
 			Header:     http.Header{"User-Agent": {opts.UserAgent}},
 			Cache:      auth.NewCache(),
-			Credential: credential,
+			Credential: opts.Credential, // nil: auth.EmptyCredential for every host
 		},
 	}
 }

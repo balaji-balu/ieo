@@ -53,7 +53,7 @@ func (r *requests) count() (int, []string) {
 }
 
 // registryServer serves h on 127.0.0.1 (G-F4), over HTTPS when secure, and returns its
-// `host:port`. A secure server's certificate is verified with roots.
+// `host:port` and the server, whose Certificate verifies a secure one.
 func registryServer(t *testing.T, h http.Handler, secure bool) (host string, srv *httptest.Server) {
 	t.Helper()
 	if secure {
@@ -190,6 +190,18 @@ func TestSpec_17_2_ImportSendsNoCredentialAndPlainHTTPOnlyWhenInsecure(t *testin
 		mustBeClean(t, "import of a tag the registry does not have", err, hostA)
 		if !errors.Is(err, errdef.ErrNotFound) {
 			t.Errorf("import of a tag the registry does not have: %v; want errdef.ErrNotFound in it", err)
+		}
+	})
+
+	// What is not a repository is the request's fault, not the registry's (SPEC §11.3).
+	t.Run("not a repository", func(t *testing.T) {
+		reg := catalog.NewRegistry(false, quiet)
+		t.Cleanup(reg.Close)
+		for _, repository := range []string{"https://reg.example/app", "reg.example/app:1.2.3", "app"} {
+			_, err := catalog.New(reg.Open, store.NewMemory()).Import(context.Background(), repository, version)
+			if !errors.Is(err, catalog.ErrInvalidRepository) || errors.Is(err, catalog.ErrRegistry) {
+				t.Errorf("import from %q: %v; want ErrInvalidRepository and not ErrRegistry", repository, err)
+			}
 		}
 	})
 }

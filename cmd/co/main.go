@@ -33,9 +33,9 @@ const usage = `usage:
   co site rotate-token <site-id>   print a new token for a site, replacing its old one
   co sites raise-versions --by N   after a database restore, raise every site's manifestVersion by N
 environment:
-  DATABASE_URL    Postgres URL of the CO store (required)
-  CO_MARGO_ADDR   address of the Margo API (default ` + defaultMargoAddr + `)
-  CO_PORT         port of the old API, served only when set (until roadmap slice E)
+  DATABASE_URL          Postgres URL of the CO store (required)
+  CO_MARGO_ADDR         address of the Margo API (default ` + defaultMargoAddr + `)
+  CO_PORT               port of the old API, served only when set (until roadmap slice E)
   CO_REGISTRY_INSECURE  true: import from registries over plain HTTP (default false)`
 
 const defaultMargoAddr = ":9002"
