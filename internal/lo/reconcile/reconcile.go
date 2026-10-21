@@ -77,6 +77,7 @@ type Reconciler struct {
 	interval   time.Duration
 	clock      platform.Clock
 	log        *slog.Logger
+	status     StatusSink // nil: no status is built
 
 	// wake tells Run that a host was marked. It holds at most one signal: Run looks at every host
 	// each time it wakes.
@@ -96,6 +97,9 @@ type Reconciler struct {
 	known bool
 	// stale says the last read of desired state failed, so want may be older than the store's.
 	stale bool
+	// reported holds, for each desired deployment that fails target resolution, the digest and
+	// code it was reported at in this LO run (SPEC §8.7).
+	reported map[uuid.UUID]gatewayKey
 }
 
 // host is what the Reconciler holds for one host.
@@ -128,7 +132,7 @@ func New(ctx context.Context, cfg Config, st Store, sender Sender) (*Reconciler,
 	}
 	r := &Reconciler{
 		site: cfg.SiteID, store: st, sender: sender, ackTimeout: cfg.AckTimeout, interval: cfg.Interval,
-		clock: cfg.Clock, log: cfg.Log,
+		clock: cfg.Clock, log: cfg.Log, status: cfg.Status,
 		wake:  make(chan struct{}, 1),
 		hosts: map[contract.HostID]*host{},
 	}
@@ -157,7 +161,8 @@ func New(ctx context.Context, cfg Config, st Store, sender Sender) (*Reconciler,
 }
 
 // loadDesired reads desired state from the store and resolves it, logging each deployment that
-// gets no command (SPEC §8.4 interim rule). On an error nothing changes. r.mu is held.
+// gets no command (SPEC §8.4 interim rule), and reports the deployments that fail target
+// resolution (SPEC §8.7). On an error nothing changes. r.mu is held.
 func (r *Reconciler) loadDesired(ctx context.Context) error {
 	st, err := r.store.Load(ctx)
 	if err != nil {
@@ -171,6 +176,7 @@ func (r *Reconciler) loadDesired(ctx context.Context) error {
 			slog.String("deployment_id", u.id.String()), slog.String("digest", string(u.digest)), slog.String("reason", u.reason))
 	}
 	r.want, r.skipped, r.stale = byHost, skipped, false
+	r.reportGateway(ctx, byHost, unresolved)
 	// The sync loop replaces desired state and starts reconciling before it commits the version
 	// (SPEC §8.2 steps 6–8), so desired state that holds a deployment is a manifest's too.
 	r.known = st.Version > 0 || len(st.Desired) > 0
@@ -223,6 +229,11 @@ func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, in
 		log.LogAttrs(ctx, slog.LevelError, "inventory dropped", slog.String("reason", err.Error()))
 		return
 	}
+	var before *store.HostActual // what the LO holds for the host, from before it started too
+	if h != nil {
+		before = h.actual
+	}
+	r.reportHost(ctx, hostID, before, &actual)
 	if effect == clockBack {
 		log.LogAttrs(ctx, slog.LevelWarn, "inventory applied", slog.Time("at", inv.At), slog.Time("reported_at", held.ReportedAt),
 			slog.String("reason", "the host's clock went back: two inventories in a row are not newer than the actual state held"))
@@ -266,6 +277,7 @@ func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev co
 		log.LogAttrs(ctx, slog.LevelError, "status event dropped", slog.String("reason", err.Error()))
 		return
 	}
+	r.reportHost(ctx, hostID, h.actual, &actual)
 	h.actual = &actual
 }
 
@@ -292,8 +304,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) {
 }
 
 // logWaiting logs each desired deployment whose host has published no Inventory since the LO
-// started: it gets no command until the host does (SPEC §7.3 interim rule). Status reporting
-// replaces this trace (SPEC §8.4, roadmap slice E). r.mu is held.
+// started: it gets no command until the host does (SPEC §7.3 interim rule). Its status says
+// nothing of this until host liveness is implemented (roadmap slice I). r.mu is held.
 func (r *Reconciler) logWaiting(ctx context.Context) {
 	for hostID, wants := range r.want {
 		if h := r.hosts[hostID]; h != nil && h.online {

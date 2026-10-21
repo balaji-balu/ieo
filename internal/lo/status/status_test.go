@@ -1,6 +1,7 @@
 package status_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -146,5 +147,26 @@ func TestFromHostCopiesErrors(t *testing.T) {
 	got.Components[0].Error.Code = "changed"
 	if actual.Components[0].Error.Code != "x" {
 		t.Errorf("the report's error became %q", actual.Components[0].Error.Code)
+	}
+}
+
+// Every status the LO builds passes the Margo DeploymentStatusManifest schema the CO checks
+// (SPEC §11.1).
+func TestStatusesPassTheMargoSchema(t *testing.T) {
+	failed := contract.ComponentStatus{Name: "web", State: contract.StateFailed, Error: &contract.StatusError{Code: contract.CodePullFailed, Message: "x"}}
+	for name, s := range map[string]contract.DeploymentStatus{
+		"from a host":                      status.FromHost(host, desired("db", "web"), reported(digest, failed)),
+		"nothing reported":                 status.FromHost(host, desired("web"), nil),
+		"gateway":                          status.Gateway(lo, host, desired("web"), contract.CodeUnknownDevice, "no such host"),
+		"gateway without components":       status.Gateway(lo, lo, desired(), contract.CodeInvalidDeployment, "not YAML"),
+		"gateway for an autonomous target": status.Gateway(lo, lo, desired("web"), contract.CodeAutonomousNotSupported, "not yet"),
+	} {
+		b, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, fields, err := contract.DecodeDeploymentStatus(b); err != nil || len(fields) > 0 {
+			t.Errorf("%s: %s does not pass the schema: %v %v", name, b, err, fields)
+		}
 	}
 }

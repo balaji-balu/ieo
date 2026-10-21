@@ -901,7 +901,8 @@ For each desired deployment:
 `[IEO, interim]` A desired deployment the LO cannot resolve to a host of its site gets no command on
 any host, neither Apply nor Remove, and is logged each time all hosts are reconciled (§7.5). That is
 a deployment whose YAML an EN would refuse (§8.9 step 2), whose `id` is not the `deploymentId` the
-manifest lists it under, or whose `deviceId` names another site. It is reported `failed` with
+manifest lists it under, or whose `deviceId` names another site or no host (`<site_id>`, the
+gateway itself). It is reported `failed` with
 error code `IEO-INVALID-DEPLOYMENT` (§8.7, §10). Until autonomous placement is implemented
 (roadmap slice H), an autonomous deployment also gets no command, and is reported `failed` with
 error code `103`, as when `lo.placement.enabled` is false.
@@ -1150,7 +1151,7 @@ This section collects the reporting rules in one place.
     autonomous deployment (§8.4, §8.6) `[IEO]`
   - `IEO-INVALID-DEPLOYMENT` a desired deployment the LO cannot resolve to a host: its YAML fails
     §8.9 step 2, its `id` is not the `deploymentId` the manifest lists, or its `deviceId` names
-    another site (§8.4); a gateway error, never sent to an EN `[IEO]`
+    another site or no host (§8.4); a gateway error, never sent to an EN `[IEO]`
   - `IEO-ARCHIVE-INVALID` archive failed §5.2, its limits included, or the EN could not extract it
     `[IEO]`
   - `IEO-DIGEST-MISMATCH` pulled layer digest did not match `[IEO]`

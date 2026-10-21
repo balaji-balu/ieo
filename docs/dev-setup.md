@@ -159,11 +159,16 @@ $project = ($out | Select-String '^COMPOSE_PROJECT=(.*)').Matches.Groups[1].Valu
 docker compose -f deploy/dev/compose.yaml exec -T host1 docker ps --filter "label=com.docker.compose.project=$project"
 docker compose -f deploy/dev/compose.yaml exec -T host2 docker ps -a --filter label=com.docker.compose.project
 docker compose -f deploy/dev/compose.yaml logs en1 | Select-String '"component installed"'
+$id = ($out | Select-String '^DEPLOYMENT_ID=(.*)').Matches.Groups[1].Value
+docker compose -f deploy/dev/compose.yaml exec -T postgres psql -U postgres -d orchestration -tAc "SELECT convert_from(status, 'UTF8') FROM co_statuses WHERE deployment_id = '$id' ORDER BY id DESC LIMIT 1"
 ```
 
 The tool prints `DEPLOYMENT_ID=<id>` and `COMPOSE_PROJECT=<project>`. Within seconds (the LO
 polls every 5 s in the harness) `host1` runs one container of the project and `host2` runs
-none, and `en1` logs `component installed` with the deployment ID. Running the tool again creates
+none, and `en1` logs `component installed` with the deployment ID. The last query prints the
+latest DeploymentStatus the LO sent the CO: `installed`, from `deviceId` `<site>/host-1`, with
+one entry for `web` (until roadmap slice E brings `edgectl deployment status`, the CO's Postgres
+is where to read it). Running the tool again creates
 no second deployment: it prints the first. To check that an EN restart leaves the container
 alone, note its ID, then:
 

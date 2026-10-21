@@ -130,3 +130,32 @@ func TestDecodeApplicationDeploymentRejects(t *testing.T) {
 		})
 	}
 }
+
+// ReadDeploymentOutline reads the target and the components of a deployment that does not
+// validate, and nothing of YAML IEO does not read (SPEC §5.3, §8.7).
+func TestReadDeploymentOutline(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want contract.DeploymentOutline
+	}{
+		{
+			name: "fails validation",
+			yaml: "id: not-a-uuid\nmetadata:\n  deviceId: site-1/host-1\nspec:\n  deploymentProfile:\n    components:\n      - name: web\n      - name: db\n      - properties: {}\n",
+			want: contract.DeploymentOutline{DeviceID: contract.DeviceID{Site: "site-1", Host: "host-1"}, Components: []string{"web", "db"}},
+		},
+		{
+			name: "no target and components of the wrong form",
+			yaml: "metadata:\n  deviceId: 7\nspec:\n  deploymentProfile:\n    components: web\n",
+		},
+		{name: "not YAML", yaml: "id: ["},
+		{name: "two documents", yaml: "a: 1\n---\nb: 2\n"},
+		{name: "an alias", yaml: "x: &a\n  - name: web\nspec:\n  deploymentProfile:\n    components: *a\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := contract.ReadDeploymentOutline([]byte(tc.yaml)); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}

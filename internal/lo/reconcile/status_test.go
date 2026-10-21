@@ -120,7 +120,7 @@ func TestStoredHostIsNotUnknown(t *testing.T) {
 }
 
 // SPEC §17.5: "A desired deployment the LO cannot resolve (§8.4) is reported once per LO run at
-// its digest and error code, …"
+// its digest and error code"
 func TestSpec_17_5_UnresolvableDeploymentReportedOncePerRun(t *testing.T) {
 	ids := map[string]uuid.UUID{}
 	for i, name := range []string{"autonomous", "other site", "the LO itself", "not a deployment", "another id"} {

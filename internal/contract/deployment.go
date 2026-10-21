@@ -178,6 +178,49 @@ func DecodeApplicationDeployment(id uuid.UUID, b []byte) (ApplicationDeployment,
 	return d, nil
 }
 
+// DeploymentOutline is what an LO reads of a desired deployment it cannot resolve, to report it
+// (SPEC §8.7): its target and the names of its components. Either is zero when it cannot be read.
+type DeploymentOutline struct {
+	DeviceID   DeviceID
+	Components []string
+}
+
+// ReadDeploymentOutline reads the outline of deployment YAML b without validating it, so that a
+// deployment DecodeApplicationDeployment refuses can still be reported with its components (SPEC
+// §8.7). b must be one YAML document without aliases, like every YAML IEO reads (SPEC §5.3);
+// otherwise, and for anything it cannot read, the outline is the zero value. A component without
+// a name is left out.
+func ReadDeploymentOutline(b []byte) DeploymentOutline {
+	if checkPlainYAML(b) != nil {
+		return DeploymentOutline{}
+	}
+	var raw struct {
+		Metadata struct {
+			DeviceID string `yaml:"deviceId"`
+		} `yaml:"metadata"`
+		Spec struct {
+			DeploymentProfile struct {
+				Components []struct {
+					Name string `yaml:"name"`
+				} `yaml:"components"`
+			} `yaml:"deploymentProfile"`
+		} `yaml:"spec"`
+	}
+	if yaml.Unmarshal(b, &raw) != nil {
+		return DeploymentOutline{}
+	}
+	var out DeploymentOutline
+	if d, err := ParseDeviceID(raw.Metadata.DeviceID); err == nil {
+		out.DeviceID = d
+	}
+	for _, c := range raw.Spec.DeploymentProfile.Components {
+		if c.Name != "" {
+			out.Components = append(out.Components, c.Name)
+		}
+	}
+	return out
+}
+
 func decodeDeploymentYAML(id uuid.UUID, b []byte) (ApplicationDeployment, error) {
 	if err := checkPlainYAML(b); err != nil {
 		return ApplicationDeployment{}, err
