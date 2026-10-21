@@ -114,6 +114,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5 # tools/harnessdeploy
+        with:
+          go-version-file: go.mod
+
       # The Compose bundle is not started here; that it still parses with its keys is checked.
       - name: The Compose bundle is valid
         run: |
@@ -170,12 +174,6 @@ jobs:
           done
           echo "no Accepted sync attempt"; $COMPOSE logs --no-color lo | tail -20; exit 1
 
-      - name: The token appears in no log (SPEC §15.4)
-        run: |
-          if $COMPOSE logs --no-color | grep -qF "$LO_SITE_TOKEN"; then
-            echo "a log contains the site token"; exit 1
-          fi
-
       # SPEC §11.2, §13.1: each EN connects as its own host, and says so in a JSON line with
       # site_id and host_id.
       - name: Each EN connects to the site NATS server as its host
@@ -189,12 +187,6 @@ jobs:
             done
             echo "en$n did not connect as host-$n"; $COMPOSE logs --no-color "en$n" | tail -20; exit 1
           done
-
-      - name: The NATS password appears in no log (SPEC §15.4)
-        run: |
-          if $COMPOSE logs --no-color | grep -qF "$SITE_NATS_PASSWORD"; then
-            echo "a log contains the NATS password"; exit 1
-          fi
 
       # SPEC §15.6: the server takes only the site's login. A CONNECT without it is refused.
       - name: The site NATS server refuses a client without the password
@@ -218,6 +210,68 @@ jobs:
             echo "en1 connected with another host ID"; exit 1
           fi
           test "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$($COMPOSE ps -q en1)")" = "true 0"
+
+      # Roadmap D5.7: a deployment to host-1 runs on host1's engine, and only there.
+      - name: Deploy the test application to host-1
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
+        run: |
+          go run ./tools/harnessdeploy > "$RUNNER_TEMP/deployment.env"
+          cat "$RUNNER_TEMP/deployment.env"
+          cat "$RUNNER_TEMP/deployment.env" >> "$GITHUB_ENV"
+
+      # SPEC §8.5, §8.9, §16.6: the LO sends the Apply to en1, which brings the project up on host1.
+      - name: The deployment's Compose project runs on host1
+        run: |
+          for i in $(seq 90); do
+            id=$($COMPOSE exec -T host1 docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT")
+            if [ -n "$id" ]; then break; fi
+            sleep 2
+          done
+          $COMPOSE exec -T host1 docker ps
+          test -n "$id" || { echo "no container of $COMPOSE_PROJECT on host1"; $COMPOSE logs --no-color lo en1 | tail -40; exit 1; }
+          test "$(echo "$id" | wc -l)" -eq 1
+          echo "CONTAINER_ID=$id" >> "$GITHUB_ENV"
+
+      # SPEC §13.1: the line carries the deployment and its host.
+      - name: en1 logs the component installed
+        run: |
+          $COMPOSE logs --no-color en1 | grep '"msg":"component installed"' | grep -F "\"deployment_id\":\"$DEPLOYMENT_ID\"" | grep -qF '"host_id":"host-1"'
+
+      - name: The token appears in no log (SPEC §15.4)
+        run: |
+          if $COMPOSE logs --no-color | grep -qF "$LO_SITE_TOKEN"; then
+            echo "a log contains the site token"; exit 1
+          fi
+
+      - name: The NATS password appears in no log (SPEC §15.4)
+        run: |
+          if $COMPOSE logs --no-color | grep -qF "$SITE_NATS_PASSWORD"; then
+            echo "a log contains the NATS password"; exit 1
+          fi
+
+      # SPEC §17.6 idempotency, end to end: after a restart en1 sends its Inventory on connect, the
+      # LO finds the deployment installed, and the container is left as it is.
+      - name: A restarted EN leaves the deployment's container running
+        run: |
+          $COMPOSE restart en1
+          for i in $(seq 30); do
+            n=$($COMPOSE logs --no-color en1 | grep -c '"msg":"connected to the site NATS server"' || true)
+            if [ "$n" -ge 3 ]; then break; fi
+            sleep 2
+          done
+          test "$n" -ge 3 || { echo "en1 did not connect again after its restart"; exit 1; }
+          sleep 15 # several LO polls and the reconcile of en1's Inventory
+          id=$($COMPOSE exec -T host1 docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT")
+          echo "container before: $CONTAINER_ID, after: $id"
+          test "$id" = "$CONTAINER_ID"
+          test "$($COMPOSE logs --no-color en1 | grep -c '"msg":"component installed"')" -eq 1
+
+      # Last, so an Apply wrongly sent to host2 has had every step above to arrive.
+      - name: host2 runs no project
+        run: |
+          got=$($COMPOSE exec -T host2 docker ps -aq --filter label=com.docker.compose.project)
+          test -z "$got" || { $COMPOSE exec -T host2 docker ps -a; exit 1; }
 
       - name: Logs
         if: failure()

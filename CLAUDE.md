@@ -66,7 +66,7 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 | `configs/` | Component configs and FSM definitions |
 | `deploy/` | Compose and Helm deployment; `deploy/dev/` is the laptop harness |
 | `tests/` | e2e tests, fixtures, seeds |
-| `tools/` | Go helper programs (ADR 0009): `conformance` (§17 gap list), `sessionstart` (cloud SessionStart hook) |
+| `tools/` | Go helper programs (ADR 0009): `conformance` (§17 gap list), `sessionstart` (cloud SessionStart hook), `harnessdeploy` (dev harness test deployment, until slice E) |
 
 ## Commands
 

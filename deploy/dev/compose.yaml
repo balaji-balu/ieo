@@ -19,8 +19,14 @@
 #
 # Each simulated host is two containers that act as one machine: hostN runs its own Docker engine
 # (docker:dind) and enN shares its network namespace, so enN reaches that engine, and only that
-# engine, at tcp://127.0.0.1:2375. When slice D has the EN write Compose files, it adds a volume
-# shared by both at the same path.
+# engine, at tcp://127.0.0.1:2375. The EN's data volume is mounted into both at the same path,
+# /var/lib/ieo/en: the EN writes each component's files there, and the Compose CLI sends their
+# paths to the engine, which then finds them.
+#
+# tools/harnessdeploy deploys a test application to host-1 (roadmap D5.7):
+#
+#   DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable go run ./tools/harnessdeploy
+#
 # See docs/dev-setup.md.
 
 name: ieo-dev
@@ -158,6 +164,7 @@ services:
       LO_CO_URL: http://co:9002
       LO_CO_INSECURE: "true" # plain HTTP on the compose network; the LO logs a warning (SPEC §15.6)
       LO_DATA_DIR: /var/lib/lo
+      LO_POLL_INTERVAL: 5s # a new deployment reaches the hosts within seconds, not a minute
       # From deploy/dev/.env or the shell. Empty until the site is added: the LO then exits with a
       # configuration error.
       LO_SITE_TOKEN: ${LO_SITE_TOKEN:-}
@@ -178,6 +185,7 @@ services:
     <<: *host
     volumes:
       - host1-engine:/var/lib/docker
+      - en1-data:/var/lib/ieo/en # the EN's files, at the path the EN gives the engine
   en1:
     <<: *en
     environment:
@@ -195,6 +203,7 @@ services:
     <<: *host
     volumes:
       - host2-engine:/var/lib/docker
+      - en2-data:/var/lib/ieo/en # the EN's files, at the path the EN gives the engine
   en2:
     <<: *en
     environment:

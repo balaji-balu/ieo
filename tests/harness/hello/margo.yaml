@@ -1,0 +1,19 @@
+# The dev harness's test application (roadmap D5.7, docs/dev-setup.md): one Compose component,
+# whose archive is built from web/ by tools/harnessdeploy. The repository is the name the hosts
+# pull from; the tool pushes to it through the registry's published port.
+apiVersion: margo.org/v1-alpha1
+id: org-ieo-harness-hello
+metadata:
+  name: Harness hello
+  version: 1.0.0
+  catalog:
+    organization:
+      - name: ieo
+deploymentProfiles:
+  - type: compose
+    id: hello-compose
+    components:
+      - name: web
+        properties:
+          repository: oci://registry:5000/ieo-harness/hello-web
+          revision: 1.0.0
