@@ -42,7 +42,9 @@ not reset it.
   §8.9 step 4.4), so no project of it is up. At startup the EN deletes such entries before its first
   inventory, so inventory never reports a deployment without a digest.
 - `applied` is written before each Compose project is brought up and again at the end of the Apply
-  (SPEC §8.9 steps 4.4 and 6), so no project runs without a record. Remove sets every component of
+  (SPEC §8.9 steps 4.4 and 6), so no project runs without a record. Before its first component,
+  an Apply sets every component of its profile to `pending` and deletes the deployment's other
+  component states, in one transaction (SPEC §8.9). Remove sets every component of
   the deployment to `removing` in one transaction before it publishes `removing`, and at the end
   deletes the deployment's `applied` and `component_states` in one transaction. A Remove that does
   not finish leaves the components `removing`. Each status the EN publishes is written to
