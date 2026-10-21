@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/balaji-balu/ieo/internal/bearer"
 	"github.com/balaji-balu/ieo/internal/contract"
-	"github.com/balaji-balu/ieo/internal/lo/coapi"
 	"github.com/balaji-balu/ieo/internal/platform"
 )
 
@@ -158,7 +158,7 @@ type result struct {
 	requestFailed bool
 }
 
-func unreachable(v contract.ManifestVersion, msg string, err *coapi.RequestError, attrs ...slog.Attr) result {
+func unreachable(v contract.ManifestVersion, msg string, err *bearer.RequestError, attrs ...slog.Attr) result {
 	return result{
 		outcome: Unreachable, level: slog.LevelWarn, msg: msg, version: v, attrs: append(attrs, err.Attrs()...),
 		requestFailed: true,

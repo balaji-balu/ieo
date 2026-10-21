@@ -1,4 +1,4 @@
-package coapi_test
+package bearer_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/balaji-balu/ieo/internal/lo/coapi"
+	"github.com/balaji-balu/ieo/internal/bearer"
 )
 
 // Get takes a nil header, and leaves the caller's header without the token (SPEC §15.4).
@@ -21,7 +21,7 @@ func TestGetHeader(t *testing.T) {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)            // never fails (crypto/rand)
 	token := hex.EncodeToString(b) // generated: no token in fixtures (SPEC §15.6)
-	c := coapi.New(srv.URL, token, nil)
+	c := bearer.New(srv.URL, token, nil)
 
 	if _, err := c.Get(context.Background(), "/x", nil); err != nil {
 		t.Fatalf("Get with a nil header: %v", err)

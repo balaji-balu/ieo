@@ -1,8 +1,14 @@
-// Package coapi makes the LO's requests to the CO's Margo API (SPEC §11.1). It holds the rules of
-// SPEC §15.6 for every one of them: the site token goes in the Authorization header and nowhere
-// else, no redirect is followed, and no error holds the token. What is asked for, and what an
-// answer means, is the caller's: the sync loop's (SPEC §8.2) and the status outbox's (SPEC §8.8).
-package coapi
+// Package bearer makes requests to the CO with a static bearer token: the LO's to the Margo API
+// (SPEC §11.1) with its site token, and edgectl's to the operator API (SPEC §11.3) with the
+// operator token. It holds the rules SPEC §15.6 gives both clients alike:
+//   - the token goes only to an https:// URL, or to an http:// one the caller allows (CheckURL);
+//   - it goes in the Authorization header and nowhere else, and no error holds it;
+//   - no redirect is followed and no proxy is used (New, Transport);
+//   - the server's certificate is verified against a CA file or the system roots (Transport).
+//
+// What is asked for, and what an answer means, is the caller's: the LO sync loop's (SPEC §8.2),
+// the LO status outbox's (SPEC §8.8) and edgectl's.
+package bearer
 
 import (
 	"bytes"

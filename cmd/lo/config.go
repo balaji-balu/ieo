@@ -5,11 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/balaji-balu/ieo/internal/bearer"
 	"github.com/balaji-balu/ieo/internal/contract"
 	"github.com/balaji-balu/ieo/internal/sitenats"
 )
@@ -167,7 +167,7 @@ func loadConfig(args []string, getenv func(string) string) (config, error) {
 	if cfg.COURL, err = required(keyCOURL); err != nil {
 		return config{}, err
 	}
-	if err := checkCOURL(cfg.COURL, cfg.COInsecure); err != nil {
+	if err := bearer.CheckURL(cfg.COURL, cfg.COInsecure, keyCOInsecure.String()); err != nil {
 		return config{}, configError(fmt.Sprintf("%s: %v", keyCOURL, err))
 	}
 	cfg.CAFile = value(keyCAFile)
@@ -234,25 +234,4 @@ func natsConfigError(err error) error {
 		reason += " (the setting is " + keyNATSInsecure.String() + ")"
 	}
 	return configError(fmt.Sprintf("%s: %s", k, reason))
-}
-
-// checkCOURL checks that u is a CO URL the LO may send its token to (SPEC §15.6).
-func checkCOURL(u string, insecure bool) error {
-	p, err := url.Parse(u)
-	if err != nil {
-		return errors.New("not a URL") // the parse error repeats u
-	}
-	switch {
-	case p.Scheme == "http" && !insecure:
-		return fmt.Errorf("an http:// URL sends the site token without TLS: use https://, or set %s to true", keyCOInsecure)
-	case p.Scheme != "https" && p.Scheme != "http":
-		return errors.New("the URL must start with https://")
-	case p.Host == "":
-		return errors.New("the URL has no host")
-	case p.User != nil: // SPEC §15.4: credentials don't belong in a URL
-		return errors.New("the URL must not hold a user name or password")
-	case p.RawQuery != "" || p.ForceQuery || p.Fragment != "" || strings.Contains(u, "#"):
-		return errors.New("the URL must not have a query or fragment: the LO appends the Margo API paths to it")
-	}
-	return nil
 }

@@ -19,12 +19,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/joho/godotenv"
 
-	"github.com/balaji-balu/ieo/internal/lo/coapi"
+	"github.com/balaji-balu/ieo/internal/bearer"
 	"github.com/balaji-balu/ieo/internal/lo/outbox"
 	"github.com/balaji-balu/ieo/internal/lo/reconcile"
 	"github.com/balaji-balu/ieo/internal/lo/sitelink"
@@ -51,7 +50,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	cfg, err := loadConfig(args, getenv)
 	var transport *http.Transport
 	if err == nil {
-		if transport, err = newTransport(cfg.CAFile); err != nil {
+		if transport, err = bearer.Transport(cfg.CAFile); err != nil {
 			err = configError(fmt.Sprintf("%s: %v", keyCAFile, err))
 		}
 	}
@@ -75,8 +74,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 // overwrites the file (SPEC §14.2). A NATS server that cannot be reached is not a failure: the
 // connection is made, and made again, in the background (SPEC §11.2, ADR 0020).
 func serve(ctx context.Context, cfg config, transport http.RoundTripper, base *slog.Logger) error {
-	log := base.With(slog.String("site_id", string(cfg.SiteID)))  // SPEC §13.1
-	if strings.HasPrefix(strings.ToLower(cfg.COURL), "http://") { // the scheme is case-insensitive
+	log := base.With(slog.String("site_id", string(cfg.SiteID))) // SPEC §13.1
+	if bearer.IsHTTP(cfg.COURL) {
 		// SPEC §15.6: the URL, never the token.
 		log.Warn("lo.co_insecure is set: the site token is sent to the CO without TLS", "co_url", cfg.COURL)
 	}
@@ -113,7 +112,7 @@ func serve(ctx context.Context, cfg config, transport http.RoundTripper, base *s
 	link := sitelink.New(conn, site, log)
 	// SPEC §8.7, §8.8: the statuses the reconciler builds go to the CO with the site token.
 	statuses := outbox.New(outbox.Config{
-		Client: coapi.New(cfg.COURL, cfg.SiteToken, transport), RetryInterval: cfg.PollInterval, Log: log,
+		Client: bearer.New(cfg.COURL, cfg.SiteToken, transport), RetryInterval: cfg.PollInterval, Log: log,
 	})
 	reconciler, err := reconcile.New(ctx, reconcile.Config{
 		SiteID: cfg.SiteID, AckTimeout: cfg.AckTimeout, Interval: cfg.ReconcileInterval, Log: base, // the Reconciler adds site_id
