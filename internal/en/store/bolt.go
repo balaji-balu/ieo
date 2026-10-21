@@ -344,6 +344,39 @@ func (b *Bolt) MarkRemoving(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// ResetComponents records every named component of the deployment as `pending` and deletes its
+// other component states, in one transaction (SPEC §8.9, ADR 0016). The EN calls it before the
+// first component of an Apply, without publishing it.
+func (b *Bolt) ResetComponents(_ context.Context, id uuid.UUID, names []string) error {
+	err := b.db.Update(func(tx *bolt.Tx) error {
+		components := tx.Bucket(bucketComponents)
+		k := []byte(id.String())
+		if components.Bucket(k) != nil {
+			if err := components.DeleteBucket(k); err != nil {
+				return err
+			}
+		}
+		states, err := components.CreateBucket(k)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			v, err := json.Marshal(contract.ComponentStatus{Name: name, State: contract.StatePending})
+			if err != nil {
+				return err
+			}
+			if err := states.Put([]byte(name), v); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("record %s components as pending: %w", id, err)
+	}
+	return nil
+}
+
 // DeleteDeployment deletes the deployment's Applied record and component states in one
 // transaction (SPEC §8.9 Remove step 2). Deleting a deployment that is not stored succeeds.
 func (b *Bolt) DeleteDeployment(_ context.Context, id uuid.UUID) error {

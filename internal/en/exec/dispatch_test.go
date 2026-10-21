@@ -196,8 +196,9 @@ func TestSpec_17_6_SupersededApply(t *testing.T) {
 			t.Errorf("events = %q, want %q", got, want)
 		}
 		f.assertCalls("services a", "up a", "services y", "up y")
-		// The superseded Apply recorded what it brought up (SPEC §8.9 step 6), and b stayed pending.
-		f.assertStored(digestC, []string{project("a"), project("y")}, "a installed", "b pending", "y installed")
+		// The superseded Apply recorded what it brought up (SPEC §8.9 step 6), so a's project stays
+		// recorded; the Apply at C keeps no state for a and b, which its profile does not have (§8.9).
+		f.assertStored(digestC, []string{project("a"), project("y")}, "y installed")
 	})
 	t.Run("a command during a Remove waits for the whole Remove", func(t *testing.T) {
 		f := newFixture(t)
