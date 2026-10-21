@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -32,9 +33,10 @@ const usage = `usage:
   co site rotate-token <site-id>   print a new token for a site, replacing its old one
   co sites raise-versions --by N   after a database restore, raise every site's manifestVersion by N
 environment:
-  DATABASE_URL    Postgres URL of the CO store (required)
-  CO_MARGO_ADDR   address of the Margo API (default ` + defaultMargoAddr + `)
-  CO_PORT         port of the old API, served only when set (until roadmap slice E)`
+  DATABASE_URL          Postgres URL of the CO store (required)
+  CO_MARGO_ADDR         address of the Margo API (default ` + defaultMargoAddr + `)
+  CO_PORT               port of the old API, served only when set (until roadmap slice E)
+  CO_REGISTRY_INSECURE  true: import from registries over plain HTTP (default false)`
 
 const defaultMargoAddr = ":9002"
 
@@ -43,6 +45,8 @@ type config struct {
 	DatabaseURL string // DATABASE_URL
 	MargoAddr   string // CO_MARGO_ADDR
 	LegacyPort  string // CO_PORT
+	// RegistryInsecure is co.registry.insecure (SPEC §6.3), CO_REGISTRY_INSECURE.
+	RegistryInsecure bool
 }
 
 func main() {
@@ -68,13 +72,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	cmd, err := parse(args, stdout, log)
 	if err == nil {
-		cfg := config{DatabaseURL: getenv("DATABASE_URL"), MargoAddr: getenv("CO_MARGO_ADDR"), LegacyPort: getenv("CO_PORT")}
-		if cfg.MargoAddr == "" {
-			cfg.MargoAddr = defaultMargoAddr
-		}
-		if cfg.DatabaseURL == "" {
-			err = usageError("DATABASE_URL is not set")
-		} else {
+		var cfg config
+		if cfg, err = readConfig(getenv); err == nil {
 			err = cmd(ctx, cfg)
 		}
 	}
@@ -89,6 +88,25 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		log.Error("co failed", "error", err.Error())
 		return 1
 	}
+}
+
+// readConfig reads the environment. A value co cannot run with is a usageError (SPEC §6.1).
+func readConfig(getenv func(string) string) (config, error) {
+	cfg := config{DatabaseURL: getenv("DATABASE_URL"), MargoAddr: getenv("CO_MARGO_ADDR"), LegacyPort: getenv("CO_PORT")}
+	if cfg.MargoAddr == "" {
+		cfg.MargoAddr = defaultMargoAddr
+	}
+	if cfg.DatabaseURL == "" {
+		return config{}, usageError("DATABASE_URL is not set")
+	}
+	if s := getenv("CO_REGISTRY_INSECURE"); s != "" {
+		insecure, err := strconv.ParseBool(s)
+		if err != nil {
+			return config{}, usageError("CO_REGISTRY_INSECURE is not true or false")
+		}
+		cfg.RegistryInsecure = insecure
+	}
+	return cfg, nil
 }
 
 type command func(ctx context.Context, cfg config) error

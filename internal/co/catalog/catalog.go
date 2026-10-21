@@ -14,6 +14,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content"
+	"oras.land/oras-go/v2/errdef"
 
 	"github.com/balaji-balu/ieo/internal/contract"
 )
@@ -26,6 +27,25 @@ var ErrInvalidPackage = errors.New("invalid application package")
 // already imported with a different Application Description (SPEC §5.3). The stored version is
 // kept.
 var ErrConflict = errors.New("application version already imported with different content")
+
+// ErrInvalidRepository is returned, wrapped with the reason, when the repository is not a
+// registry host and a path with no tag or digest. No registry is asked.
+var ErrInvalidRepository = errors.New("invalid repository")
+
+// ErrRegistry is returned, wrapped with what failed, when the registry cannot be reached or
+// answers with an error. errors.Is also finds the
+// OpenRepository's error in it: errdef.ErrNotFound when the registry has no such repository or
+// tag (SPEC §11.3 tells that `422` from any other registry failure).
+var ErrRegistry = errors.New("registry failure")
+
+// registryError is err, an error of the registry, as an ErrRegistry. Its text is err's: a
+// registry client's error already says where it came from.
+type registryError struct{ err error }
+
+func (e registryError) Error() string { return e.err.Error() }
+
+// Unwrap returns ErrRegistry and err.
+func (e registryError) Unwrap() []error { return []error{ErrRegistry, e.err} }
 
 // App is one imported application version. Description holds the exact bytes of the Application
 // Description and Digest their SHA-256; they never change once stored.
@@ -62,7 +82,8 @@ func New(open OpenRepository, store Store) *Catalog {
 // Import fetches the package tagged version from repository, validates it (SPEC §5.3) and stores
 // it. Re-importing an identical version returns the stored app and changes nothing. A rule
 // violation wraps ErrInvalidPackage, a different description for a stored version wraps
-// ErrConflict, and registry failures are returned wrapped.
+// ErrConflict, a repository that is not one wraps ErrInvalidRepository, and a registry failure
+// wraps ErrRegistry; any other error is the store's.
 func (c *Catalog) Import(ctx context.Context, repository, version string) (App, error) {
 	app, err := c.fetch(ctx, repository, version)
 	if err != nil {
@@ -87,15 +108,19 @@ const (
 )
 
 // fetch reads the package tagged version and checks it against SPEC §5.1 and §5.3. Rule
-// violations wrap ErrInvalidPackage; other errors come from the registry.
+// violations wrap ErrInvalidPackage; other errors come from the registry and wrap ErrRegistry.
 func (c *Catalog) fetch(ctx context.Context, repository, version string) (App, error) {
 	repo, err := c.open(ctx, repository)
 	if err != nil {
-		return App{}, fmt.Errorf("open repository: %w", err)
+		return App{}, fmt.Errorf("%w: %w", ErrInvalidRepository, err)
 	}
 	desc, manifestBytes, err := oras.FetchBytes(ctx, repo, version, oras.FetchBytesOptions{MaxBytes: maxManifestBytes})
-	if err != nil {
-		return App{}, fmt.Errorf("fetch manifest: %w", err)
+	switch {
+	case errors.Is(err, errdef.ErrSizeExceedsLimit):
+		// SPEC §5.3: a manifest this large is not a Margo application package (§5.1).
+		return App{}, fmt.Errorf("%w: manifest larger than %d bytes", ErrInvalidPackage, maxManifestBytes)
+	case err != nil:
+		return App{}, fmt.Errorf("fetch manifest: %w", registryError{err})
 	}
 	layer, err := descriptionLayer(desc, manifestBytes)
 	if err != nil {
@@ -103,7 +128,7 @@ func (c *Catalog) fetch(ctx context.Context, repository, version string) (App, e
 	}
 	b, err := content.FetchAll(ctx, repo, layer) // verifies size and digest
 	if err != nil {
-		return App{}, fmt.Errorf("fetch application description %s: %w", layer.Digest, err)
+		return App{}, fmt.Errorf("fetch application description %s: %w", layer.Digest, registryError{err})
 	}
 	parsed, err := contract.ParseApplicationDescription(b)
 	if err != nil {

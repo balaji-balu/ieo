@@ -121,7 +121,7 @@ func TestRotateTokenReplacesOldToken(t *testing.T) {
 
 // startServe runs serve on a free local port until the test ends, and returns its base URL, a
 // function that stops it and waits for serve to return, and the log.
-func startServe(t *testing.T, dsn string) (string, func() error, *syncBuffer) {
+func startServe(t *testing.T, cfg config) (string, func() error, *syncBuffer) {
 	t.Helper()
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -130,7 +130,7 @@ func startServe(t *testing.T, dsn string) (string, func() error, *syncBuffer) {
 	ctx, cancel := context.WithCancel(context.Background())
 	logs := &syncBuffer{}
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, config{DatabaseURL: dsn}, ln, slog.New(slog.NewJSONHandler(logs, nil))) }()
+	go func() { done <- serve(ctx, cfg, ln, slog.New(slog.NewJSONHandler(logs, nil))) }()
 	stopped := false
 	stop := func() error {
 		cancel()
@@ -178,7 +178,7 @@ func get(t *testing.T, url, token string) (int, []byte) {
 func TestServeAnswersManifestWithIssuedToken(t *testing.T) {
 	_, dsn := storetest.PostgresURL(t)
 	token := runCO(t, dsn, "site", "add", "site-1").token(t)
-	base, stop, _ := startServe(t, dsn)
+	base, stop, _ := startServe(t, config{DatabaseURL: dsn})
 
 	code, body := get(t, base+"/api/v1/deployments", token)
 	var m contract.StateManifest
@@ -198,6 +198,40 @@ func TestServeAnswersManifestWithIssuedToken(t *testing.T) {
 	if c, err := (&net.Dialer{Timeout: time.Second}).DialContext(context.Background(), "tcp", strings.TrimPrefix(base, "http://")); err == nil {
 		_ = c.Close()
 		t.Error("the listener still accepts connections after serve returned")
+	}
+}
+
+// SPEC §6.3: co.registry.insecure "logs a warning at startup"; CO_REGISTRY_INSECURE that is not
+// a boolean is a configuration error (§6.1). No database is needed: the warning comes first.
+func TestRegistryInsecureWarnsAtStartup(t *testing.T) {
+	const unreachable = "postgres://co@127.0.0.1:1/co?sslmode=disable&connect_timeout=5"
+	for _, insecure := range []bool{false, true} {
+		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var logs bytes.Buffer
+		cfg := config{DatabaseURL: unreachable, RegistryInsecure: insecure}
+		if err := serve(context.Background(), cfg, ln, slog.New(slog.NewJSONHandler(&logs, nil))); err == nil {
+			t.Fatal("serve with no database returned nil; want its error")
+		}
+		warned := strings.Contains(logs.String(), `"level":"WARN","msg":"co.registry.insecure is set`)
+		if warned != insecure {
+			t.Errorf("with co.registry.insecure %t: warned %t; logs:\n%s", insecure, warned, logs.String())
+		}
+	}
+
+	for value, want := range map[string]bool{"": false, "false": false, "true": true, "1": true} {
+		env := map[string]string{"DATABASE_URL": unreachable, "CO_REGISTRY_INSECURE": value}
+		if cfg, err := readConfig(func(k string) string { return env[k] }); err != nil || cfg.RegistryInsecure != want {
+			t.Errorf("CO_REGISTRY_INSECURE=%q: %+v, %v; want co.registry.insecure %t", value, cfg.RegistryInsecure, err, want)
+		}
+	}
+	var stderr bytes.Buffer
+	env := map[string]string{"DATABASE_URL": unreachable, "CO_REGISTRY_INSECURE": "maybe"}
+	if code := run(context.Background(), []string{"serve"}, func(k string) string { return env[k] }, io.Discard, &stderr); code != 2 ||
+		!strings.Contains(stderr.String(), "CO_REGISTRY_INSECURE") {
+		t.Errorf("CO_REGISTRY_INSECURE=maybe: exit %d, stderr %s; want exit 2 naming it", code, stderr.String())
 	}
 }
 
@@ -315,7 +349,7 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	raise := runCO(t, dsn, "sites", "raise-versions", "--by", "1")
 	jsonLogs := []string{add.stderr, rotate.stderr, raise.stderr}
 
-	base, stop, serveLogs := startServe(t, dsn)
+	base, stop, serveLogs := startServe(t, config{DatabaseURL: dsn})
 	get(t, base+"/api/v1/deployments", rotated)
 	get(t, base+"/api/v1/deployments", token) // the replaced token, refused
 	get(t, base+"/healthz", "")

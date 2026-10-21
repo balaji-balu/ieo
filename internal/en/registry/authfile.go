@@ -13,30 +13,18 @@ import (
 	"strings"
 
 	"oras.land/oras-go/v2/registry/remote/auth"
+
+	"github.com/balaji-balu/ieo/internal/ociremote"
 )
 
 // maxAuthFileBytes is the most of an auth file that is read. A config.json with a few entries is
 // a few KiB; a file far larger is not one.
 const maxAuthFileBytes = 1 << 20
 
-// The names of Docker Hub. They are one registry (ADR 0021): `docker login` writes its entry
-// under index.docker.io, a repository names docker.io, and requests go to registry-1.docker.io.
-const dockerHub = "docker.io"
-
-// registryOf returns the registry a host belongs to: the host itself, or dockerHub for each of
-// Docker Hub's names. Hosts are compared exactly, port included (ADR 0021).
-func registryOf(host string) string {
-	switch host {
-	case "docker.io", "index.docker.io", "registry-1.docker.io":
-		return dockerHub
-	}
-	return host
-}
-
 // authFile is what the EN reads of a Docker config.json (ADR 0021).
 type authFile struct {
-	// Credentials holds the credential of each registry that has a static entry, by registryOf
-	// its host.
+	// Credentials holds the credential of each registry that has a static entry, by
+	// ociremote.RegistryOf its host.
 	Credentials map[string]auth.Credential
 	// Helpers names the keys of the file that ask for a credential helper (`credsStore`,
 	// `credHelpers`), sorted. The EN runs none.
@@ -151,7 +139,7 @@ func hostOfKey(key string) string {
 		key = rest
 	}
 	host, _, _ := strings.Cut(key, "/")
-	return registryOf(host)
+	return ociremote.RegistryOf(host)
 }
 
 // isHost reports whether host is `host` or `host:port` and nothing more, such as a user name.

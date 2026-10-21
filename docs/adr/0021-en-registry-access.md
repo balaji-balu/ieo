@@ -16,6 +16,12 @@ Registry credentials are a §15 area (SPEC §15.4).
 ## Decision
 - **Package.** `internal/en/registry` returns the `pull.OpenRepository` the puller uses. It is the
   only EN package that knows about registry transport and credentials.
+  - *Also used by the CO (balaji-balu/ieo#94, #104).* The transport rules below (HTTPS unless
+    told otherwise, redirects, first-host-only challenges, proxy, error text) live in
+    `internal/ociremote`, which the EN's package and the CO's import (SPEC §5.3 `[IEO, interim]`)
+    share. The CO passes no credential, so every one of its requests is anonymous, and its
+    `insecure` is `co.registry.insecure` (SPEC §6.3). The auth file and `en.registry.*` stay the
+    EN's. No decision here changes.
 - **File format.** `en.registry.auth_file` is a file in the Docker `config.json` format. The EN
   reads only its `auths` object: for each registry host, `auth` (base64 of `username:password`), or
   `username` and `password`, or `identitytoken`.

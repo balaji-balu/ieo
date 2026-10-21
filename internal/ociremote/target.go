@@ -1,4 +1,4 @@
-package registry
+package ociremote
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/errcode"
 )
 
-// target is one repository as the puller reads it. It adds one thing to the registry client it
+// target is one repository as a caller reads it. It adds one thing to the registry client it
 // wraps: its errors are rebuilt, since the client's own quote request URLs and what a server sent
 // (ADR 0021).
 type target struct {
@@ -116,7 +116,7 @@ func (t *target) failure(ctx context.Context, op string, err error) error {
 	f.answered = truncate(f.answered, maxHostBytes)
 
 	// The end of the context, not a timeout of the network, which Go also calls a deadline: only
-	// the first is en.pull.timeout.
+	// the first is the caller's timeout (en.pull.timeout).
 	ended := ctx.Err()
 	switch {
 	case ended != nil && errors.Is(err, ended):
@@ -148,7 +148,7 @@ func networkReason(err error) string {
 	var op *net.OpError
 	var dns *net.DNSError
 	switch {
-	case errors.Is(err, errPlainHTTP), errors.Is(err, errProxy), errors.Is(err, errRedirects), errors.Is(err, errBodyRedirect):
+	case errors.As(err, new(*plainHTTPRefused)), errors.Is(err, errProxy), errors.Is(err, errRedirects), errors.Is(err, errBodyRedirect):
 		return err.Error()
 	case errors.As(err, &unknownAuthority):
 		return "the certificate is signed by an unknown authority"
