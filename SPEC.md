@@ -961,7 +961,9 @@ The LO writes the DeploymentStatus to the outbox, then tries to send it.
 On **Apply** (deployment ID, digest, deployment YAML):
 
 1. If `applied[deployment_id].digest == digest` and all components are `installed`, ack
-   `accepted: true` and do nothing else.
+   `accepted: true` and do nothing else. `[IEO]` All components means the recorded ones are
+   exactly the command's: a recorded state for a component the profile does not have is not
+   skipped, so the Apply deletes it (below).
 2. Validate the command's `deployment`. It is valid only if it validates against the Margo
    deployment schema of the pinned OpenAPI (header; `components.schemas.appDeploymentManifest`),
    with that file's known defects worked around (`api/margo/<commit>/README.md`: it requires a
@@ -1880,6 +1882,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - Updating to a new digest removes Compose projects of components that no longer exist.
 - An Apply after a Remove that did not finish, at a digest whose profile drops a component, leaves
   no state for that component, so the Inventory lists only the profile's components.
+- An Apply at the applied digest with every component of the profile `installed` and a recorded
+  state for another component is not skipped, and deletes that state.
 - A container that exits and does not recover moves its component to `failed`; recovery moves it
   back to `installed`.
 - After EN restart, inventory reflects the containers actually running.
