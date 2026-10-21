@@ -155,7 +155,7 @@ func (o *Outbox) send(ctx context.Context, e entry) {
 	resp, rerr := o.client.PostJSON(sendCtx, p, e.status)
 	cancel()
 	if rerr == nil && (resp.Status < 200 || resp.Status > 299) {
-		rerr = bearer.Failed(http.MethodPost, p, resp)
+		rerr = o.client.Failed(http.MethodPost, p, resp)
 	}
 	if rerr != nil {
 		if ctx.Err() != nil {

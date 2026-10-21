@@ -44,7 +44,7 @@ func (c *client) manifest(ctx context.Context, etag string) (manifestResponse, *
 	case http.StatusOK:
 		return manifestResponse{body: resp.Body, etag: resp.Header.Get("ETag")}, nil
 	default:
-		return manifestResponse{}, bearer.Failed(http.MethodGet, manifestPath, resp)
+		return manifestResponse{}, c.api.Failed(http.MethodGet, manifestPath, resp)
 	}
 }
 
@@ -56,7 +56,7 @@ func (c *client) content(ctx context.Context, p string) ([]byte, *bearer.Request
 		return nil, err
 	}
 	if resp.Status != http.StatusOK {
-		return nil, bearer.Failed(http.MethodGet, p, resp)
+		return nil, c.api.Failed(http.MethodGet, p, resp)
 	}
 	return resp.Body, nil
 }

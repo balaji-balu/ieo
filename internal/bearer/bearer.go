@@ -143,12 +143,18 @@ func unwrapURLError(err error) error {
 }
 
 // Failed returns the *RequestError for resp, an unexpected response to method p, with its problem
-// if the body is one.
-func Failed(method, p string, resp Response) *RequestError {
+// if the body is one. The problem's text is the server's: should it repeat the token, the token is
+// replaced, so that no error holds it (SPEC §15.4, §15.6).
+func (c *Client) Failed(method, p string, resp Response) *RequestError {
 	e := &RequestError{Method: method, Path: p, Status: resp.Status}
 	if mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil && mt == contract.ProblemMediaType {
 		// A problem that does not decode leaves only the status, which is enough to log.
 		_ = json.Unmarshal(resp.Body, &e.Problem)
+		if c.token != "" { // ReplaceAll of "" would insert the replacement between every rune
+			for _, s := range []*string{&e.Problem.Type, &e.Problem.Title, &e.Problem.Detail, &e.Problem.Instance} {
+				*s = strings.ReplaceAll(*s, c.token, "[token]")
+			}
+		}
 	}
 	return e
 }

@@ -7,7 +7,23 @@ download
 mv .env.example .env
 docker compose up -d
 docker ps
-edgectl status
+edgectl device list
+
+
+### edgectl configuration
+
+`edgectl` is the client of the CO's operator API (SPEC §11.3). It reads these keys from the
+environment, or from the flag in brackets, which wins (SPEC §6.3), and exits with code 2 if one is
+missing or invalid:
+
+| Variable | Flag | Key | |
+| --- | --- | --- | --- |
+| `EDGECTL_CO_URL` | `--co-url` | `edgectl.co_url` | REQUIRED; the operator API, `https://` |
+| `EDGECTL_TOKEN` | none | `edgectl.token` | REQUIRED; the CO's `CO_OPERATOR_TOKEN` (SPEC §15.6). Environment only |
+| `EDGECTL_CO_INSECURE` | `--co-insecure` | `edgectl.co_insecure` | `true` allows an `http://` URL; edgectl warns on stderr each time |
+| `EDGECTL_TLS_CA_FILE` | `--tls-ca-file` | `edgectl.tls.ca_file` | optional; verifies the CO, instead of the system roots |
+
+`edgectl --help` lists the commands. `--output json` prints the CO's response as it sent it.
 
 
 ### LO configuration

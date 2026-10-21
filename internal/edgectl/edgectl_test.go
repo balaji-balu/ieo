@@ -37,6 +37,10 @@ import (
 	"github.com/balaji-balu/ieo/internal/operatorapi"
 )
 
+// unreachable is a CO URL nothing listens on: port 1 (tcpmux) is not served on a test machine,
+// and, unlike a closed test server's port, is not handed out again.
+const unreachable = "https://127.0.0.1:1"
+
 const (
 	repo     = "registry.test/example/hello"
 	slowRepo = "registry.test/example/slow"
@@ -416,9 +420,7 @@ func TestSpec_17_7_EdgectlExitsNonZeroAndPrintsProblemTitleAndDetail(t *testing.
 	})
 
 	t.Run("unreachable CO", func(t *testing.T) {
-		gone := newTLSServer(http.NotFoundHandler())
-		gone.Close()
-		r := run(f.env("EDGECTL_CO_URL", gone.URL), "app", "list")
+		r := run(f.env("EDGECTL_CO_URL", unreachable), "app", "list")
 		if r.code != 1 || r.stderr == "" || r.stdout != "" {
 			t.Errorf("%v\nwant exit 1 with an error on stderr", r)
 		}
@@ -438,6 +440,7 @@ func TestSpec_17_7_EdgectlExitsNonZeroAndPrintsProblemTitleAndDetail(t *testing.
 			{"missing argument", f.env(), []string{"app", "get"}},
 			{"deploy without --target", f.env(), []string{"deploy", "--app", appID, "--version", version}},
 			{"deployment id that is not a UUID", f.env(), []string{"deployment", "get", "not-a-uuid"}},
+			{"app id ..", f.env(), []string{"app", "get", ".."}},
 			{"--output yaml", f.env(), []string{"app", "list", "--output", "yaml"}},
 			{"no EDGECTL_CO_URL", f.env("EDGECTL_CO_URL", ""), []string{"app", "list"}},
 			{"no EDGECTL_TOKEN", f.env("EDGECTL_TOKEN", ""), []string{"app", "list"}},
@@ -570,15 +573,13 @@ func TestSpec_17_7_NoCredentialOrTokenInEdgectlOutput(t *testing.T) {
 	})
 	failing := newRecorder(t, true, http.HandlerFunc(echo))
 	plain := newRecorder(t, false, answerJSON(http.StatusBadGateway, "{}"))
-	gone := newTLSServer(http.NotFoundHandler())
-	gone.Close()
 	envs := map[string]map[string]string{
 		"401":            {"EDGECTL_CO_URL": refusing.srv.URL, "EDGECTL_TLS_CA_FILE": caFile(t, refusing.srv)},
 		"redirect":       {"EDGECTL_CO_URL": redirecting.srv.URL, "EDGECTL_TLS_CA_FILE": caFile(t, redirecting.srv)},
 		"500":            {"EDGECTL_CO_URL": failing.srv.URL, "EDGECTL_TLS_CA_FILE": caFile(t, failing.srv)},
 		"http, insecure": {"EDGECTL_CO_URL": plain.srv.URL, "EDGECTL_CO_INSECURE": "true"},
 		"http":           {"EDGECTL_CO_URL": plain.srv.URL},
-		"unreachable":    {"EDGECTL_CO_URL": gone.URL, "EDGECTL_TLS_CA_FILE": f.ca},
+		"unreachable":    {"EDGECTL_CO_URL": unreachable, "EDGECTL_TLS_CA_FILE": f.ca},
 		"untrusted":      {"EDGECTL_CO_URL": failing.srv.URL},
 		"bad CA file":    {"EDGECTL_CO_URL": failing.srv.URL, "EDGECTL_TLS_CA_FILE": filepath.Join(t.TempDir(), "none")},
 	}
@@ -638,14 +639,18 @@ func TestDeployParams(t *testing.T) {
 	}
 
 	for name, params := range map[string][]string{
-		"repeated name": {"--param", "greeting=a", "--param", "greeting=b"},
-		"no =":          {"--param", "greeting"},
-		"no name":       {"--param", "=a"},
+		"repeated name":  {"--param", "greeting=a", "--param", "greeting=b"},
+		"no =":           {"--param", "greeting"},
+		"no name":        {"--param", "=a"},
+		"no = after one": {"--param", "greeting=a", "--param", "s3cret"},
 	} {
 		before := f.deployments()
 		r := run(f.env(), append([]string{"deploy", "--app", appID, "--version", version, "--target", "site-1/host-1"}, params...)...)
 		if r.code != 2 {
 			t.Errorf("%s: %v\nwant exit 2", name, r)
+		}
+		if strings.Contains(r.stderr, "s3cret") {
+			t.Errorf("%s: the error repeats the value:\n%v", name, r) // it may be a credential (SPEC §15.4)
 		}
 		if after := f.deployments(); after != before {
 			t.Errorf("%s: a deployment was created", name)
@@ -798,6 +803,62 @@ func TestDeploymentStatusWatch(t *testing.T) {
 	}
 	if i, j := strings.Index(out, "installing"), strings.Index(out, "installed"); i < 0 || j < i {
 		t.Errorf("stdout:\n%s\nwant installing before installed", out)
+	}
+	if strings.Count(out, "no status reported yet") != 1 {
+		t.Errorf("stdout:\n%s\nwant the missing status once", out)
+	}
+}
+
+// A failed first poll ends deployment status --watch with exit code 1; a later one is written to
+// stderr and the watch goes on (SPEC §11.3: "until interrupted").
+func TestDeploymentStatusWatchSurvivesAFailedPoll(t *testing.T) {
+	var mu sync.Mutex
+	answers := []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusOK}
+	co := newRecorder(t, true, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		code := http.StatusOK
+		if len(answers) > 0 {
+			code, answers = answers[0], answers[1:]
+		}
+		mu.Unlock()
+		if code != http.StatusOK {
+			http.Error(w, "restarting", code)
+			return
+		}
+		answerJSON(code, `{"current":null,"history":[]}`)(w, r)
+	})
+	env := map[string]string{"EDGECTL_CO_URL": co.srv.URL, "EDGECTL_TOKEN": rand.Text(), "EDGECTL_TLS_CA_FILE": caFile(t, co.srv)}
+	id := uuid.NewString()
+
+	ticks := make(chan time.Time)
+	ctx, cancel := context.WithCancel(context.Background())
+	stdout, stderr := &syncBuffer{}, &syncBuffer{}
+	done := make(chan int)
+	c := cli{getenv: func(k string) string { return env[k] }, stdout: stdout, stderr: stderr,
+		after: func(time.Duration) <-chan time.Time { return ticks }}
+	go func() { done <- c.run(ctx, []string{"deployment", "status", id, "--watch"}) }()
+	for range 3 { // after the first poll, the failed one, and the one that works again
+		select {
+		case ticks <- time.Now():
+		case code := <-done:
+			t.Fatalf("edgectl exited %d: %s", code, stderr.String())
+		}
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Errorf("exit %d, want 0: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "503") {
+		t.Errorf("stderr %q does not report the failed poll", stderr.String())
+	}
+	if n, _ := co.requests(); n < 3 {
+		t.Errorf("%d polls, want at least 3", n)
+	}
+
+	// The first poll fails: exit 1.
+	r := run(map[string]string{"EDGECTL_CO_URL": unreachable, "EDGECTL_TOKEN": rand.Text()}, "deployment", "status", id, "--watch")
+	if r.code != 1 {
+		t.Errorf("first poll unreachable: %v\nwant exit 1", r)
 	}
 }
 

@@ -54,6 +54,10 @@ func (c cli) appCommand(ctx context.Context) *cobra.Command {
 	get := &cobra.Command{
 		Use: "get <app-id>", Short: "List the imported versions of an application", Args: args("<app-id>"),
 		RunE: func(cmd *cobra.Command, a []string) error {
+			// PathEscape leaves . and .., which would name another path once the CO cleans it.
+			if a[0] == "." || a[0] == ".." {
+				return usageError(fmt.Sprintf("%q is not an application id", a[0]))
+			}
 			return c.get(ctx, cmd, operatorapi.AppPath(url.PathEscape(a[0])), printApps)
 		},
 	}
@@ -109,7 +113,8 @@ func parseParams(raw []string) (map[string]any, error) {
 		name, value, ok := strings.Cut(p, "=")
 		switch {
 		case !ok || name == "":
-			return nil, usageError(fmt.Sprintf("--param %q: want name=value", p))
+			// Its position, not its text: the value may be a credential (SPEC §15.4).
+			return nil, usageError(fmt.Sprintf("--param %d (of %d) is not name=value", len(params)+1, len(raw)))
 		case params[name] != nil:
 			return nil, usageError(fmt.Sprintf("--param %s is given more than once", name))
 		}
@@ -223,33 +228,24 @@ func (c cli) print(cmd *cobra.Command, body []byte, print printer) error {
 }
 
 // watch polls deployment id's status until ctx ends, printing the response each time its current
-// status changes (SPEC §11.3: the CO serves no /stream yet). It returns nil once ctx ends.
+// status changes (SPEC §11.3: the CO serves no /stream yet). It returns nil once ctx ends. A
+// failed first poll is the command's failure; a later one is written to stderr, and the next poll
+// tries again, so that a CO restart does not end the watch.
 func (c cli) watch(ctx context.Context, cmd *cobra.Command, id uuid.UUID) error {
 	cl, err := c.connect(cmd)
 	if err != nil {
 		return err
 	}
-	var last json.RawMessage // the last current status printed; nil before the first poll
+	var last json.RawMessage // the last current status printed; nil before the first one
 	for {
-		body, err := cl.get(ctx, operatorapi.StatusPath(id))
+		err := c.poll(ctx, cmd, cl, id, &last)
 		switch {
 		case interrupted(ctx, err):
 			return nil
-		case err != nil:
+		case err != nil && last == nil:
 			return err
-		}
-		var st struct{ Current json.RawMessage }
-		if err := json.Unmarshal(body, &st); err != nil {
-			return &failure{msg: fmt.Sprintf("GET %s: the response is not a status: %v", operatorapi.StatusPath(id), err)}
-		}
-		if last == nil || !bytes.Equal(st.Current, last) {
-			if last != nil && output(cmd) == outputText {
-				_, _ = fmt.Fprintln(c.stdout)
-			}
-			if err := c.print(cmd, body, printStatus); err != nil {
-				return err
-			}
-			last = st.Current
+		case err != nil:
+			_, _ = fmt.Fprintf(c.stderr, "edgectl: %v\n", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -257,6 +253,30 @@ func (c cli) watch(ctx context.Context, cmd *cobra.Command, id uuid.UUID) error 
 		case <-c.after(watchInterval):
 		}
 	}
+}
+
+// poll gets deployment id's status once and prints it if its current status differs from *last,
+// which it then updates.
+func (c cli) poll(ctx context.Context, cmd *cobra.Command, cl *client, id uuid.UUID, last *json.RawMessage) error {
+	body, err := cl.get(ctx, operatorapi.StatusPath(id))
+	if err != nil {
+		return err
+	}
+	var st struct{ Current json.RawMessage }
+	if err := json.Unmarshal(body, &st); err != nil || st.Current == nil {
+		return &failure{msg: fmt.Sprintf("GET %s: the response is not a status", operatorapi.StatusPath(id))}
+	}
+	if *last != nil && bytes.Equal(st.Current, *last) {
+		return nil
+	}
+	if *last != nil && output(cmd) == outputText {
+		_, _ = fmt.Fprintln(c.stdout) // a blank line between statuses
+	}
+	if err := c.print(cmd, body, printStatus); err != nil {
+		return err
+	}
+	*last = st.Current
+	return nil
 }
 
 // writeFailure returns a failure for a failed write to stdout, nil if err is nil.

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/balaji-balu/ieo/internal/bearer"
 )
@@ -15,8 +14,7 @@ import (
 // client sends edgectl's requests to the CO's operator API (SPEC §11.3). bearer holds the token,
 // TLS, proxy and redirect rules (SPEC §15.6).
 type client struct {
-	api   *bearer.Client
-	token string // only to keep it out of what the CO sends back
+	api *bearer.Client
 }
 
 // newClient returns the client of cfg. With an http:// CO URL it first writes the SPEC §15.6
@@ -30,7 +28,7 @@ func newClient(cfg config, stderr io.Writer) (*client, error) {
 		_, _ = fmt.Fprintf(stderr, "edgectl: warning: %s is set: the token is sent to %s without TLS\n",
 			keyCOInsecure.spec, cfg.COURL)
 	}
-	return &client{api: bearer.New(cfg.COURL, cfg.Token, transport), token: cfg.Token}, nil
+	return &client{api: bearer.New(cfg.COURL, cfg.Token, transport)}, nil
 }
 
 // get sends GET p and returns the body of a 200 response.
@@ -45,16 +43,13 @@ func (c *client) post(ctx context.Context, p string, v any, ok ...int) ([]byte, 
 	return c.body(http.MethodPost, p, resp, rerr, ok...)
 }
 
-// body returns resp's body if its status is one of ok, and a failure otherwise. A problem's text
-// is the CO's: should it hold the token, the token is replaced (SPEC §15.4, §15.6).
+// body returns resp's body if its status is one of ok, and a failure otherwise.
 func (c *client) body(method, p string, resp bearer.Response, rerr *bearer.RequestError, ok ...int) ([]byte, error) {
 	if rerr == nil {
 		if slices.Contains(ok, resp.Status) {
 			return resp.Body, nil
 		}
-		rerr = bearer.Failed(method, p, resp)
-		rerr.Problem.Title = strings.ReplaceAll(rerr.Problem.Title, c.token, "[token]")
-		rerr.Problem.Detail = strings.ReplaceAll(rerr.Problem.Detail, c.token, "[token]")
+		rerr = c.api.Failed(method, p, resp) // its problem holds no token (SPEC §15.6)
 	}
 	return nil, failureOf(rerr)
 }
