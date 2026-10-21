@@ -22,14 +22,18 @@ Each simulated host runs its own Docker engine and needs about 1–2 GB.
 
 ## Start, inspect, stop
 
-Every `docker compose` command on this file needs `SITE_NATS_PASSWORD`, the site's NATS password,
-which the NATS server, the LO and the ENs share (SPEC §15.6). The LO also needs its site's token,
-which only the CO issues. The first start therefore makes the password, starts the CO and adds the
-site, then starts the rest. In PowerShell:
+Every `docker compose` command on this file needs two secrets (SPEC §15.6): `SITE_NATS_PASSWORD`,
+the site's NATS password, which the NATS server, the LO and the ENs share, and `CO_OPERATOR_TOKEN`,
+the bearer token of the CO's operator API (at least 32 bytes). The LO also needs its site's token,
+which only the CO issues. The first start therefore makes the two secrets, starts the CO and adds
+the site, then starts the rest. In PowerShell:
 
 ```powershell
-$bytes = New-Object byte[] 24; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$bytes = New-Object byte[] 24; $rng.GetBytes($bytes)
 "SITE_NATS_PASSWORD=" + -join ($bytes | ForEach-Object { $_.ToString('x2') }) | Set-Content -Encoding ascii deploy/dev/.env
+$bytes = New-Object byte[] 32; $rng.GetBytes($bytes)
+"CO_OPERATOR_TOKEN=" + -join ($bytes | ForEach-Object { $_.ToString('x2') }) | Add-Content -Encoding ascii deploy/dev/.env
 docker compose -f deploy/dev/compose.yaml up -d --build --wait co
 $token = docker compose -f deploy/dev/compose.yaml exec -T co app site add 00000000-0000-4000-8000-000000000001
 "LO_SITE_TOKEN=$token" | Add-Content -Encoding ascii deploy/dev/.env
@@ -40,15 +44,17 @@ In bash:
 
 ```sh
 echo "SITE_NATS_PASSWORD=$(openssl rand -hex 24)" > deploy/dev/.env
+echo "CO_OPERATOR_TOKEN=$(openssl rand -hex 32)" >> deploy/dev/.env
 docker compose -f deploy/dev/compose.yaml up -d --build --wait co
 token=$(docker compose -f deploy/dev/compose.yaml exec -T co app site add 00000000-0000-4000-8000-000000000001)
 echo "LO_SITE_TOKEN=$token" >> deploy/dev/.env
 docker compose -f deploy/dev/compose.yaml up -d --build --wait
 ```
 
-Compose reads `deploy/dev/.env`, which git ignores. Both values stay there for later starts; the
-token works as long as the Postgres volume is kept. Without the password, compose stops with
-`required variable SITE_NATS_PASSWORD is missing a value`. The site ID is a UUID because the old CO
+Compose reads `deploy/dev/.env`, which git ignores. The values stay there for later starts; the
+site token works as long as the Postgres volume is kept. Without the password or the operator
+token, compose stops with `required variable SITE_NATS_PASSWORD is missing a value` (or
+`CO_OPERATOR_TOKEN`). The site ID is a UUID because the old CO
 API, which runs beside the new one until roadmap slice E, takes only UUIDs.
 
 ```sh
@@ -73,7 +79,7 @@ docker compose -f deploy/dev/compose.yaml logs lo | Select-String outcome   # Po
 
 | Service | Laptop port | Role |
 | --- | --- | --- |
-| `co` | 9002, 9001 | Central Orchestrator: Margo API for LOs on 9002 (health check at `/healthz`); the old API on 9001 until roadmap slice E |
+| `co` | 9002, 8443, 9001 | Central Orchestrator: Margo API for LOs on 9002 (health check at `/healthz`); operator API for `edgectl` on 8443; the old API on 9001 until roadmap slice E |
 | `lo` | — | Local Orchestrator for the one site |
 | `nats` | 4222, 8222 (monitoring) | LO ↔ EN messaging |
 | `postgres` | 5432 | CO database (`postgres` / `postgres`, database `orchestration`) |
@@ -127,6 +133,21 @@ docker compose -f deploy/dev/compose.yaml up -d --wait lo
 ```
 
 The second line keeps `SITE_NATS_PASSWORD` and replaces only the token.
+
+## The operator API
+
+The CO serves the operator API (SPEC §11.3) on 8443, over plain HTTP on the laptop, to any request
+that carries `CO_OPERATOR_TOKEN` from `deploy/dev/.env`; any other gets `401`. `edgectl` will call
+it (roadmap E5). Until then, read it with curl, for example the devices the LO reported
+(PowerShell):
+
+```powershell
+$op = (Select-String -Path deploy/dev/.env -Pattern '^CO_OPERATOR_TOKEN=(.*)').Matches[0].Groups[1].Value
+curl.exe -s -H "Authorization: Bearer $op" http://localhost:8443/api/v1/devices
+```
+
+A deployment's status is at `/api/v1/deployments/<id>/status`, and the imported apps at
+`/api/v1/apps`. To change the token, edit `deploy/dev/.env` and run `up -d --wait co`.
 
 ## Using the registry
 
@@ -197,7 +218,7 @@ Don't run the full stack at the same time: the `go run` services use the same po
 
 | Symptom | Fix |
 | --- | --- |
-| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 9001, 9002) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
+| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 8443, 9001, 9002) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
 | `up --wait` times out on `host1` or `host2` | Docker Desktop must allow privileged containers (the default). Check `docker compose -f deploy/dev/compose.yaml logs host1` |
 | Containers killed or very slow | Not enough memory for two engines; raise the WSL 2 memory limit (see Prerequisites) |
 | LO: `CO rejected: {"error":"db query failed"}` | The Postgres volume predates the current schema; reset it with `down -v` (deletes data) |
@@ -208,4 +229,6 @@ Don't run the full stack at the same time: the `go run` services use the same po
 | `en1` or `en2` keeps restarting | It exits 2 on an invalid configuration and 1 when it cannot start, for example when `docker compose version` does not run; its last log line says which. Check `logs en1` |
 | `lo` keeps restarting, its log says `LO_SITE_TOKEN (lo.site_token) is not set` | Add the site and write `deploy/dev/.env` (Start, inspect, stop) |
 | `required variable SITE_NATS_PASSWORD is missing a value` | `deploy/dev/.env` has no `SITE_NATS_PASSWORD`; add one (Start, inspect, stop). Changing it needs `up -d` of `nats`, `lo`, `en1` and `en2` together |
+| `required variable CO_OPERATOR_TOKEN is missing a value` | `deploy/dev/.env` predates the operator API: add the `CO_OPERATOR_TOKEN` line from Start, inspect, stop, then `up -d --wait co` |
+| `co` keeps restarting, its log says `CO_OPERATOR_TOKEN is shorter than 32 bytes` | Make a longer one, as in Start, inspect, stop |
 | LO: `"outcome":"Unreachable"` with `status 401` | The token in `deploy/dev/.env` is not the site's: rotate it (Adding a site) |

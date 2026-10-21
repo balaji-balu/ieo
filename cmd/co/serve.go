@@ -15,6 +15,7 @@ import (
 	"github.com/balaji-balu/ieo/internal/co/auth"
 	"github.com/balaji-balu/ieo/internal/co/catalog"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
+	"github.com/balaji-balu/ieo/internal/co/operator"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres"
 )
 
@@ -26,16 +27,29 @@ const (
 	healthTimeout     = 2 * time.Second
 )
 
-// serve serves the Margo API on ln until ctx ends, then shuts it down gracefully (SPEC §11.1).
-// When cfg.LegacyPort is set it also serves the old API there; when either server stops, both do.
-func serve(ctx context.Context, cfg config, ln net.Listener, log *slog.Logger) error {
-	// SPEC §5.3, §6.3: built first, so that co.registry.insecure is warned of at startup. The
-	// operator API's import reads through it (roadmap E4).
+// newServer returns an HTTP server of h with the CO's timeouts. Its WriteTimeout is left unset:
+// an import's response waits on a registry (SPEC §11.3).
+func newServer(h http.Handler, log *slog.Logger) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+	}
+}
+
+// serve serves the Margo API on margo and the operator API on operator until ctx ends, then shuts
+// them down gracefully (SPEC §11.1, §11.3). When cfg.LegacyPort is set it also serves the old API
+// there; when one server stops, all do. cfg.OperatorToken must be set.
+func serve(ctx context.Context, cfg config, margo, operatorLn net.Listener, log *slog.Logger) error {
+	// SPEC §5.3, §6.3: built first, so that co.registry.insecure is warned of at startup.
 	registry := catalog.NewRegistry(cfg.RegistryInsecure, log)
 	defer registry.Close()
 	s, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
-		_ = ln.Close() // the open error is the one to report
+		_ = margo.Close() // the open error is the one to report
+		_ = operatorLn.Close()
 		return err
 	}
 	defer func() {
@@ -43,24 +57,25 @@ func serve(ctx context.Context, cfg config, ln net.Listener, log *slog.Logger) e
 			log.Warn("close co store", "error", err.Error())
 		}
 	}()
-	srv := &http.Server{
-		Handler:           handler(s, api.New(auth.New(s), s, deploy.New(s), log), log),
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		IdleTimeout:       idleTimeout,
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
-	}
+	svc := deploy.New(s)
+	margoSrv := newServer(handler(s, api.New(auth.New(s), s, svc, log), log), log)
+	// No /healthz here: every operator API request needs the token (SPEC §11.3).
+	operatorSrv := newServer(operator.New(operator.Config{
+		Token: *cfg.OperatorToken, Catalog: catalog.New(registry.Open, s), Deploy: svc, Store: s, Log: log,
+	}), log)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errs := make(chan error, 2)
-	servers := 1
-	go func() { errs <- serveHTTP(ctx, srv, ln) }()
+	errs := make(chan error, 3)
+	servers := 2
+	go func() { errs <- serveHTTP(ctx, margoSrv, margo) }()
+	go func() { errs <- serveHTTP(ctx, operatorSrv, operatorLn) }()
 	if cfg.LegacyPort != "" {
 		servers++
 		go func() { errs <- legacy(ctx, cfg.LegacyPort, cfg.DatabaseURL) }()
 	}
-	log.Info("serving the Margo API", "addr", ln.Addr().String())
+	log.Info("serving the Margo API", "addr", margo.Addr().String())
+	log.Info("serving the operator API", "addr", operatorLn.Addr().String())
 	var first error
 	for range servers {
 		if err := <-errs; err != nil && first == nil {

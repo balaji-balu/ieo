@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -119,18 +121,41 @@ func TestRotateTokenReplacesOldToken(t *testing.T) {
 	}
 }
 
-// startServe runs serve on a free local port until the test ends, and returns its base URL, a
-// function that stops it and waits for serve to return, and the log.
-func startServe(t *testing.T, cfg config) (string, func() error, *syncBuffer) {
+// served is a running co serve.
+type served struct {
+	margo, operator string // base URLs of the two APIs
+	operatorToken   string
+	stop            func() error // stops serve and waits for it to return
+	logs            *syncBuffer
+}
+
+// listen returns a listener on a free local port.
+func listen(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	return ln
+}
+
+// withOperatorToken returns cfg with a made-up operator token, and the token.
+func withOperatorToken(cfg config) (config, string) {
+	token := rand.Text() // made up per run: no token in a fixture (SPEC §15.6)
+	h := auth.TokenHash(sha256.Sum256([]byte(token)))
+	cfg.OperatorToken = &h
+	return cfg, token
+}
+
+// startServe runs serve with a made-up operator token on free local ports until the test ends.
+func startServe(t *testing.T, cfg config) served {
+	t.Helper()
+	cfg, token := withOperatorToken(cfg)
+	margo, operator := listen(t), listen(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	logs := &syncBuffer{}
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, cfg, ln, slog.New(slog.NewJSONHandler(logs, nil))) }()
+	go func() { done <- serve(ctx, cfg, margo, operator, slog.New(slog.NewJSONHandler(logs, nil))) }()
 	stopped := false
 	stop := func() error {
 		cancel()
@@ -148,7 +173,7 @@ func startServe(t *testing.T, cfg config) (string, func() error, *syncBuffer) {
 			_ = stop() // the test already failed or stopped it
 		}
 	})
-	return "http://" + ln.Addr().String(), stop, logs
+	return served{"http://" + margo.Addr().String(), "http://" + operator.Addr().String(), token, stop, logs}
 }
 
 func get(t *testing.T, url, token string) (int, []byte) {
@@ -178,7 +203,8 @@ func get(t *testing.T, url, token string) (int, []byte) {
 func TestServeAnswersManifestWithIssuedToken(t *testing.T) {
 	_, dsn := storetest.PostgresURL(t)
 	token := runCO(t, dsn, "site", "add", "site-1").token(t)
-	base, stop, _ := startServe(t, config{DatabaseURL: dsn})
+	srv := startServe(t, config{DatabaseURL: dsn})
+	base, stop := srv.margo, srv.stop
 
 	code, body := get(t, base+"/api/v1/deployments", token)
 	var m contract.StateManifest
@@ -191,13 +217,30 @@ func TestServeAnswersManifestWithIssuedToken(t *testing.T) {
 	if code, body := get(t, base+"/healthz", ""); code != http.StatusOK {
 		t.Errorf("/healthz: %d %s; want 200", code, body)
 	}
+	// SPEC §11.3: the operator API, on its own listener, with the operator token only.
+	if code, body := get(t, srv.operator+"/api/v1/apps", srv.operatorToken); code != http.StatusOK || string(body) != "[]" {
+		t.Errorf("operator API with the operator token: %d %s; want 200 []", code, body)
+	}
+	for name, tok := range map[string]string{"no token": "", "the site's token": token} {
+		if code, body := get(t, srv.operator+"/api/v1/apps", tok); code != http.StatusUnauthorized {
+			t.Errorf("operator API with %s: %d %s; want 401", name, code, body)
+		}
+	}
+	if code, body := get(t, srv.operator+"/healthz", ""); code != http.StatusUnauthorized {
+		t.Errorf("operator API /healthz without a token: %d %s; want 401", code, body)
+	}
+	if code, body := get(t, base+"/api/v1/apps", srv.operatorToken); code == http.StatusOK {
+		t.Errorf("Margo API with the operator token: %d %s; want a refusal", code, body)
+	}
 
 	if err := stop(); err != nil {
 		t.Errorf("serve returned %v after its context ended, want nil", err)
 	}
-	if c, err := (&net.Dialer{Timeout: time.Second}).DialContext(context.Background(), "tcp", strings.TrimPrefix(base, "http://")); err == nil {
-		_ = c.Close()
-		t.Error("the listener still accepts connections after serve returned")
+	for _, u := range []string{base, srv.operator} {
+		if c, err := (&net.Dialer{Timeout: time.Second}).DialContext(context.Background(), "tcp", strings.TrimPrefix(u, "http://")); err == nil {
+			_ = c.Close()
+			t.Errorf("%s still accepts connections after serve returned", u)
+		}
 	}
 }
 
@@ -206,13 +249,9 @@ func TestServeAnswersManifestWithIssuedToken(t *testing.T) {
 func TestRegistryInsecureWarnsAtStartup(t *testing.T) {
 	const unreachable = "postgres://co@127.0.0.1:1/co?sslmode=disable&connect_timeout=5"
 	for _, insecure := range []bool{false, true} {
-		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
 		var logs bytes.Buffer
-		cfg := config{DatabaseURL: unreachable, RegistryInsecure: insecure}
-		if err := serve(context.Background(), cfg, ln, slog.New(slog.NewJSONHandler(&logs, nil))); err == nil {
+		cfg, _ := withOperatorToken(config{DatabaseURL: unreachable, RegistryInsecure: insecure})
+		if err := serve(context.Background(), cfg, listen(t), listen(t), slog.New(slog.NewJSONHandler(&logs, nil))); err == nil {
 			t.Fatal("serve with no database returned nil; want its error")
 		}
 		warned := strings.Contains(logs.String(), `"level":"WARN","msg":"co.registry.insecure is set`)
@@ -381,14 +420,17 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	raise := runCO(t, dsn, "sites", "raise-versions", "--by", "1")
 	jsonLogs := []string{add.stderr, rotate.stderr, raise.stderr}
 
-	base, stop, serveLogs := startServe(t, config{DatabaseURL: dsn})
-	get(t, base+"/api/v1/deployments", rotated)
-	get(t, base+"/api/v1/deployments", token) // the replaced token, refused
-	get(t, base+"/healthz", "")
-	if err := stop(); err != nil {
+	srv := startServe(t, config{DatabaseURL: dsn})
+	get(t, srv.margo+"/api/v1/deployments", rotated)
+	get(t, srv.margo+"/api/v1/deployments", token) // the replaced token, refused
+	get(t, srv.margo+"/healthz", "")
+	get(t, srv.operator+"/api/v1/deployments", srv.operatorToken)
+	get(t, srv.operator+"/api/v1/deployments", srv.operatorToken+"x") // refused
+	get(t, srv.operator+"/api/v1/apps/nope", srv.operatorToken)       // 404
+	if err := srv.stop(); err != nil {
 		t.Fatal(err)
 	}
-	jsonLogs = append(jsonLogs, serveLogs.String())
+	jsonLogs = append(jsonLogs, srv.logs.String())
 
 	const password = "pw-must-not-be-logged"
 	unreachable := "postgres://postgres:" + password + "@127.0.0.1:1/postgres?sslmode=disable&connect_timeout=2"
@@ -397,12 +439,9 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 		t.Errorf("site add with an unreachable database: exit %d, want 1", failed.code)
 	}
 	jsonLogs = append(jsonLogs, failed.stderr)
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var serveFailed bytes.Buffer
-	if err := serve(context.Background(), config{DatabaseURL: unreachable}, ln, slog.New(slog.NewJSONHandler(&serveFailed, nil))); err == nil {
+	failedCfg, failedToken := withOperatorToken(config{DatabaseURL: unreachable})
+	if err := serve(context.Background(), failedCfg, listen(t), listen(t), slog.New(slog.NewJSONHandler(&serveFailed, nil))); err == nil {
 		t.Error("serve with an unreachable database returned nil")
 	} else {
 		logs.WriteString(err.Error() + "\n") // run logs it
@@ -413,7 +452,7 @@ func TestSpec_17_7_NoCredentialOrTokenInCOLogs(t *testing.T) {
 	}
 
 	secrets := map[string]string{"token": token, "rotated token": rotated, "database URL": dsn, "unreachable database URL": unreachable,
-		"password": password}
+		"password": password, "operator token": srv.operatorToken, "other operator token": failedToken}
 	if u, err := url.Parse(dsn); err == nil {
 		if p, ok := u.User.Password(); ok && p != "" {
 			secrets["test database password"] = p

@@ -1338,7 +1338,8 @@ authenticates with a static bearer token (`co.operator_token`; transport and tok
 - Errors are RFC 9457 `application/problem+json` with type `about:blank`, `title` the HTTP status
   phrase and `detail` the reason, which names what was rejected and why (§15.4: no credential, no
   URL and no text a registry sent). `400`: a body that is not JSON, has an unknown field or misses
-  a required one, or an ID or target that does not parse (§4.2). `404`: no such resource. `405`: a
+  a required one, an ID or target that does not parse (§4.2), or a target that names a site rather
+  than `<site_id>/<host_id>` or `<site_id>/*`. `404`: no such resource. `405`: a
   method the path does not serve. `422`: a request the CO refuses for the reasons given per
   operation.
 - Lists are JSON arrays, `[]` when empty, in the order given per operation.

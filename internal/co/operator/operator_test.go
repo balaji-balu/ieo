@@ -36,6 +36,9 @@ const (
 	version   = "1.2.3"
 )
 
+// hello is the Application Description of appID at version.
+var hello = description(appID, version, "hello-compose")
+
 var (
 	site1 = contract.SiteID("site-1")
 	site2 = contract.SiteID("site-2")
@@ -219,250 +222,265 @@ func app(repository, id, version string, desc []byte) operatorapi.App {
 // The operations run in order on one store, as an operator would call them: import, then list,
 // then deploy and read back.
 func TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes(t *testing.T) {
+	steps := []struct {
+		name string
+		run  func(t *testing.T, f fixture, created *operatorapi.Deployment)
+	}{
+		{"lists are [] when empty", listsAreEmpty},
+		{"import", importApps},
+		{"list and get apps", listAndGetApps},
+		{"devices", listDevices},
+		{"create", createDeployments},
+		{"list and get deployments", listAndGetDeployments},
+		{"status", getStatus},
+		{"other methods and paths", otherMethodsAndPaths},
+	}
 	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
 		f := newFixture(t, newStore)
-		hello := description(appID, version, "hello-compose")
-
-		t.Run("lists are [] when empty", func(t *testing.T) {
-			f := f.with(t)
-			for _, path := range []string{"/api/v1/apps", "/api/v1/deployments", "/api/v1/deployments?site=site-1"} {
-				r := f.do(http.MethodGet, path, "")
-				f.want(path, r, http.StatusOK)
-				if string(bytes.TrimSpace(r.body)) != "[]" {
-					f.t.Errorf("GET %s: %s; want []", path, r.body)
-				}
-			}
-		})
-
-		t.Run("import", func(t *testing.T) {
-			f := f.with(t)
-			f.reg.PushApp(t, repo, version, hello)
-			f.reg.PushApp(t, otherRepo, version, description(appID, version, "other-compose"))
-			f.reg.PushApp(t, badRepo, version, description(appID, "9.9.9", "hello-compose"))
-			f.reg.PushApp(t, slowRepo, version, hello)
-			f.reg.Stall(slowRepo)
-
-			var got operatorapi.App
-			f.wantJSON("first import", f.do(http.MethodPost, "/api/v1/apps", importBody(repo, version)), http.StatusCreated, &got)
-			if want := app(repo, appID, version, hello); got != want {
-				t.Errorf("first import: %+v, want %+v", got, want)
-			}
-			got = operatorapi.App{}
-			f.wantJSON("identical re-import", f.do(http.MethodPost, "/api/v1/apps", importBody(repo, version)), http.StatusOK, &got)
-			if want := app(repo, appID, version, hello); got != want {
-				t.Errorf("identical re-import: %+v, want %+v", got, want)
-			}
-			f.wantProblem("same version, other content", f.do(http.MethodPost, "/api/v1/apps", importBody(otherRepo, version)),
-				http.StatusConflict, appID, version)
-			f.wantProblem("§5.3 rejection", f.do(http.MethodPost, "/api/v1/apps", importBody(badRepo, version)),
-				http.StatusUnprocessableEntity, "metadata.version")
-			f.wantProblem("tag the registry does not have", f.do(http.MethodPost, "/api/v1/apps", importBody(repo, "4.5.6")),
-				http.StatusUnprocessableEntity, "4.5.6")
-			f.wantProblem("registry does not answer", f.do(http.MethodPost, "/api/v1/apps", importBody(slowRepo, version)),
-				http.StatusBadGateway, "registry.test")
-			for name, body := range map[string]string{
-				"not JSON":         `{"repository":`,
-				"unknown field":    `{"repository":"` + repo + `","version":"` + version + `","tag":"x"}`,
-				"no version":       `{"repository":"` + repo + `"}`,
-				"no repository":    `{"version":"` + version + `"}`,
-				"two JSON values":  importBody(repo, version) + importBody(repo, version),
-				"version a number": `{"repository":"` + repo + `","version":1}`,
-			} {
-				f.wantProblem("import, "+name, f.do(http.MethodPost, "/api/v1/apps", body), http.StatusBadRequest)
-			}
-		})
-
-		t.Run("list and get apps", func(t *testing.T) {
-			f := f.with(t)
-			// Bytewise order: "1.10.0" before "1.9.0", "com-example-alpha" before "com-example-hello".
-			for _, v := range []string{"1.9.0", "1.10.0"} {
-				f.reg.PushApp(t, repo, v, description(appID, v, "hello-compose"))
-				f.want("import "+v, f.do(http.MethodPost, "/api/v1/apps", importBody(repo, v)), http.StatusCreated)
-			}
-			alpha := description("com-example-alpha", "1.0.0", "a")
-			f.reg.PushApp(t, "registry.test/example/alpha", "1.0.0", alpha)
-			f.want("import alpha", f.do(http.MethodPost, "/api/v1/apps", importBody("registry.test/example/alpha", "1.0.0")), http.StatusCreated)
-
-			helloVersions := []operatorapi.App{
-				app(repo, appID, "1.10.0", description(appID, "1.10.0", "hello-compose")),
-				app(repo, appID, version, hello),
-				app(repo, appID, "1.9.0", description(appID, "1.9.0", "hello-compose")),
-			}
-			var got []operatorapi.App
-			f.wantJSON("GET /apps", f.do(http.MethodGet, "/api/v1/apps", ""), http.StatusOK, &got)
-			if want := append([]operatorapi.App{app("registry.test/example/alpha", "com-example-alpha", "1.0.0", alpha)},
-				helloVersions...); !reflect.DeepEqual(got, want) {
-				t.Errorf("GET /apps:\n got %+v\nwant %+v", got, want)
-			}
-			got = nil
-			f.wantJSON("GET /apps/{appId}", f.do(http.MethodGet, "/api/v1/apps/"+appID, ""), http.StatusOK, &got)
-			if !reflect.DeepEqual(got, helloVersions) {
-				t.Errorf("GET /apps/%s:\n got %+v\nwant %+v", appID, got, helloVersions)
-			}
-			f.wantProblem("GET /apps/{appId}, none imported", f.do(http.MethodGet, "/api/v1/apps/com-example-none", ""),
-				http.StatusNotFound)
-		})
-
-		t.Run("devices", func(t *testing.T) {
-			f := f.with(t)
-			all := []operatorapi.Device{}
-			for _, id := range []contract.DeviceID{{Site: site1}, host1, {Site: site2}, host2} {
-				all = append(all, operatorapi.Device{DeviceID: id, Capabilities: capabilities(id)})
-			}
-			var got []operatorapi.Device
-			f.wantJSON("GET /devices", f.do(http.MethodGet, "/api/v1/devices", ""), http.StatusOK, &got)
-			if !reflect.DeepEqual(got, all) {
-				t.Errorf("GET /devices:\n got %+v\nwant %+v", got, all)
-			}
-			got = nil
-			f.wantJSON("GET /devices?site=site-2", f.do(http.MethodGet, "/api/v1/devices?site=site-2", ""), http.StatusOK, &got)
-			if !reflect.DeepEqual(got, all[2:]) {
-				t.Errorf("GET /devices?site=site-2:\n got %+v\nwant %+v", got, all[2:])
-			}
-			f.wantProblem("unknown site", f.do(http.MethodGet, "/api/v1/devices?site=site-9", ""), http.StatusNotFound, "site-9")
-			f.wantProblem("site ID that does not parse", f.do(http.MethodGet, "/api/v1/devices?site=a%2Fb", ""), http.StatusBadRequest)
-		})
-
-		var created operatorapi.Deployment
-		t.Run("create", func(t *testing.T) {
-			f := f.with(t)
-			f.reg.PushApp(t, twoRepo, version, description("com-example-two", version, "one", "two"))
-			f.want("import two", f.do(http.MethodPost, "/api/v1/apps", importBody(twoRepo, version)), http.StatusCreated)
-
-			body := `{"appId":"` + appID + `","version":"` + version + `","target":"site-1/host-1","parameters":{"greeting":"Hi"}}`
-			f.wantJSON("create", f.do(http.MethodPost, "/api/v1/deployments", body), http.StatusCreated, &created)
-			stored, ok, err := f.store.Deployment(context.Background(), created.ID)
-			if err != nil || !ok {
-				t.Fatalf("created deployment %s not stored: %v", created.ID, err)
-			}
-			want := operatorapi.Deployment{
-				ID: created.ID, AppID: appID, Version: version, Profile: "hello-compose", Target: host1,
-				Name: appID, Namespace: appID, Parameters: map[string]any{"greeting": "Hi"}, Digest: stored.Digest,
-			}
-			if !reflect.DeepEqual(created, want) || created.Digest == "" {
-				t.Errorf("create:\n got %+v\nwant %+v", created, want)
-			}
-
-			create := func(fields string) response {
-				return f.do(http.MethodPost, "/api/v1/deployments", "{"+fields+"}")
-			}
-			f.wantProblem("version not imported", create(`"appId":"`+appID+`","version":"7.7.7","target":"site-1/host-1"`),
-				http.StatusNotFound, "7.7.7")
-			f.wantProblem("no such profile", create(`"appId":"`+appID+`","version":"`+version+`","profile":"nope","target":"site-1/host-1"`),
-				http.StatusUnprocessableEntity, "nope")
-			f.wantProblem("several profiles, none named", create(`"appId":"com-example-two","version":"`+version+`","target":"site-1/host-1"`),
-				http.StatusUnprocessableEntity, "profile")
-			f.wantProblem("unknown host", create(`"appId":"`+appID+`","version":"`+version+`","target":"site-1/host-9"`),
-				http.StatusUnprocessableEntity, "host-9")
-			f.wantProblem("unknown site", create(`"appId":"`+appID+`","version":"`+version+`","target":"site-9/host-1"`),
-				http.StatusUnprocessableEntity, "site-9")
-			f.wantProblem("parameter not in the description", create(`"appId":"`+appID+`","version":"`+version+
-				`","target":"site-1/host-1","parameters":{"nope":"x"}`), http.StatusUnprocessableEntity, "nope")
-			for name, fields := range map[string]string{
-				"target names a site":     `"appId":"` + appID + `","version":"` + version + `","target":"site-1"`,
-				"target does not parse":   `"appId":"` + appID + `","version":"` + version + `","target":"site 1/host-1"`,
-				"no target":               `"appId":"` + appID + `","version":"` + version + `"`,
-				"no appId":                `"version":"` + version + `","target":"site-1/host-1"`,
-				"no version":              `"appId":"` + appID + `","target":"site-1/host-1"`,
-				"unknown field":           `"appId":"` + appID + `","version":"` + version + `","target":"site-1/host-1","replicas":2`,
-				"parameters not a object": `"appId":"` + appID + `","version":"` + version + `","target":"site-1/host-1","parameters":[]`,
-			} {
-				f.wantProblem("create, "+name, create(fields), http.StatusBadRequest)
-			}
-		})
-
-		t.Run("list and get deployments", func(t *testing.T) {
-			f := f.with(t)
-			var other operatorapi.Deployment
-			f.wantJSON("create at site-2", f.do(http.MethodPost, "/api/v1/deployments",
-				`{"appId":"`+appID+`","version":"`+version+`","target":"site-2/host-1","name":"hello-2","namespace":"ns"}`),
-				http.StatusCreated, &other)
-			if other.Name != "hello-2" || other.Namespace != "ns" || !reflect.DeepEqual(other.Parameters, map[string]any{}) {
-				t.Errorf("create with name and namespace: %+v; want them kept and parameters {}", other)
-			}
-			if err := f.deploy.Delete(context.Background(), other.ID); err != nil {
-				t.Fatal(err)
-			}
-			other.Deleted = true
-
-			byID := []operatorapi.Deployment{created, other}
-			if byID[1].ID.String() < byID[0].ID.String() {
-				byID[0], byID[1] = byID[1], byID[0]
-			}
-			var got []operatorapi.Deployment
-			f.wantJSON("GET /deployments", f.do(http.MethodGet, "/api/v1/deployments", ""), http.StatusOK, &got)
-			if !reflect.DeepEqual(got, byID) {
-				t.Errorf("GET /deployments:\n got %+v\nwant %+v", got, byID)
-			}
-			got = nil
-			f.wantJSON("GET /deployments?site=site-2", f.do(http.MethodGet, "/api/v1/deployments?site=site-2", ""), http.StatusOK, &got)
-			if want := []operatorapi.Deployment{other}; !reflect.DeepEqual(got, want) {
-				t.Errorf("GET /deployments?site=site-2:\n got %+v\nwant %+v", got, want)
-			}
-			f.wantProblem("unknown site", f.do(http.MethodGet, "/api/v1/deployments?site=site-9", ""), http.StatusNotFound, "site-9")
-
-			var one operatorapi.Deployment
-			f.wantJSON("GET /deployments/{id}", f.do(http.MethodGet, "/api/v1/deployments/"+created.ID.String(), ""), http.StatusOK, &one)
-			if !reflect.DeepEqual(one, created) {
-				t.Errorf("GET /deployments/{id}:\n got %+v\nwant %+v", one, created)
-			}
-			f.wantProblem("no such deployment", f.do(http.MethodGet, "/api/v1/deployments/"+uuid.NewString(), ""), http.StatusNotFound)
-			f.wantProblem("ID that does not parse", f.do(http.MethodGet, "/api/v1/deployments/nope", ""), http.StatusBadRequest)
-		})
-
-		t.Run("status", func(t *testing.T) {
-			f := f.with(t)
-			path := "/api/v1/deployments/" + created.ID.String() + "/status"
-			r := f.do(http.MethodGet, path, "")
-			f.want("status before a report", r, http.StatusOK)
-			if got := string(bytes.TrimSpace(r.body)); got != `{"current":null,"history":[]}` {
-				t.Errorf("status before a report: %s; want {\"current\":null,\"history\":[]}", got)
-			}
-
-			var reports []contract.DeploymentStatus
-			for _, state := range []contract.ComponentState{contract.StateInstalling, contract.StateInstalled} {
-				st := contract.DeploymentStatus{
-					DeploymentID: created.ID, DeviceID: host1, AdoptedManifestVersion: 2, Status: contract.DeploymentState{State: state},
-					Components: []contract.ComponentStatus{{Name: "web", State: state}},
-				}
-				if _, err := f.deploy.ReportStatus(context.Background(), site1, created.ID, st); err != nil {
-					t.Fatal(err)
-				}
-				reports = append(reports, st)
-			}
-			var got operatorapi.Status
-			f.wantJSON("status after two reports", f.do(http.MethodGet, path, ""), http.StatusOK, &got)
-			want := operatorapi.Status{Current: &reports[1], History: reports}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("status after two reports:\n got %+v\nwant %+v", got, want)
-			}
-			f.wantProblem("no such deployment", f.do(http.MethodGet, "/api/v1/deployments/"+uuid.NewString()+"/status", ""),
-				http.StatusNotFound)
-		})
-
-		t.Run("other methods and paths", func(t *testing.T) {
-			f := f.with(t)
-			id := created.ID.String()
-			for _, c := range []struct{ method, path, allow string }{
-				{http.MethodDelete, "/api/v1/apps", "GET, HEAD, POST"},
-				{http.MethodPost, "/api/v1/apps/" + appID, "GET, HEAD"},
-				{http.MethodPost, "/api/v1/devices", "GET, HEAD"},
-				{http.MethodPut, "/api/v1/deployments", "GET, HEAD, POST"},
-				{http.MethodPut, "/api/v1/deployments/" + id, "GET, HEAD"},
-				{http.MethodDelete, "/api/v1/deployments/" + id, "GET, HEAD"},
-				{http.MethodPost, "/api/v1/deployments/" + id + "/status", "GET, HEAD"},
-			} {
-				r := f.do(c.method, c.path, "")
-				f.wantProblem(c.method+" "+c.path, r, http.StatusMethodNotAllowed)
-				if got := r.header.Get("Allow"); got != c.allow {
-					t.Errorf("%s %s: Allow %q, want %q", c.method, c.path, got, c.allow)
-				}
-			}
-			for _, path := range []string{"/api/v1/sites", "/api/v1/devices/site-1", "/api/v1/deployments/" + id + "/stream", "/nope"} {
-				f.wantProblem("GET "+path, f.do(http.MethodGet, path, ""), http.StatusNotFound)
-			}
-		})
+		var created operatorapi.Deployment // by "create", for the steps after it
+		for _, step := range steps {
+			t.Run(step.name, func(t *testing.T) { step.run(t, f.with(t), &created) })
+		}
 	})
+}
+
+// listsAreEmpty is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func listsAreEmpty(t *testing.T, f fixture, _ *operatorapi.Deployment) {
+	for _, path := range []string{"/api/v1/apps", "/api/v1/deployments", "/api/v1/deployments?site=site-1"} {
+		r := f.do(http.MethodGet, path, "")
+		f.want(path, r, http.StatusOK)
+		if string(bytes.TrimSpace(r.body)) != "[]" {
+			f.t.Errorf("GET %s: %s; want []", path, r.body)
+		}
+	}
+}
+
+// importApps is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func importApps(t *testing.T, f fixture, _ *operatorapi.Deployment) {
+	f.reg.PushApp(t, repo, version, hello)
+	f.reg.PushApp(t, otherRepo, version, description(appID, version, "other-compose"))
+	f.reg.PushApp(t, badRepo, version, description(appID, "9.9.9", "hello-compose"))
+	f.reg.PushApp(t, slowRepo, version, hello)
+	f.reg.Stall(slowRepo)
+
+	var got operatorapi.App
+	f.wantJSON("first import", f.do(http.MethodPost, "/api/v1/apps", importBody(repo, version)), http.StatusCreated, &got)
+	if want := app(repo, appID, version, hello); got != want {
+		t.Errorf("first import: %+v, want %+v", got, want)
+	}
+	got = operatorapi.App{}
+	f.wantJSON("identical re-import", f.do(http.MethodPost, "/api/v1/apps", importBody(repo, version)), http.StatusOK, &got)
+	if want := app(repo, appID, version, hello); got != want {
+		t.Errorf("identical re-import: %+v, want %+v", got, want)
+	}
+	f.wantProblem("same version, other content", f.do(http.MethodPost, "/api/v1/apps", importBody(otherRepo, version)),
+		http.StatusConflict, appID, version)
+	f.wantProblem("§5.3 rejection", f.do(http.MethodPost, "/api/v1/apps", importBody(badRepo, version)),
+		http.StatusUnprocessableEntity, "metadata.version")
+	f.wantProblem("tag the registry does not have", f.do(http.MethodPost, "/api/v1/apps", importBody(repo, "4.5.6")),
+		http.StatusUnprocessableEntity, "4.5.6")
+	f.wantProblem("registry does not answer", f.do(http.MethodPost, "/api/v1/apps", importBody(slowRepo, version)),
+		http.StatusBadGateway, "registry.test")
+	for name, body := range map[string]string{
+		"not JSON":         `{"repository":`,
+		"unknown field":    `{"repository":"` + repo + `","version":"` + version + `","tag":"x"}`,
+		"no version":       `{"repository":"` + repo + `"}`,
+		"no repository":    `{"version":"` + version + `"}`,
+		"two JSON values":  importBody(repo, version) + importBody(repo, version),
+		"version a number": `{"repository":"` + repo + `","version":1}`,
+	} {
+		f.wantProblem("import, "+name, f.do(http.MethodPost, "/api/v1/apps", body), http.StatusBadRequest)
+	}
+}
+
+// listAndGetApps is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func listAndGetApps(t *testing.T, f fixture, _ *operatorapi.Deployment) {
+	// Bytewise order: "1.10.0" before "1.9.0", "com-example-alpha" before "com-example-hello".
+	for _, v := range []string{"1.9.0", "1.10.0"} {
+		f.reg.PushApp(t, repo, v, description(appID, v, "hello-compose"))
+		f.want("import "+v, f.do(http.MethodPost, "/api/v1/apps", importBody(repo, v)), http.StatusCreated)
+	}
+	alpha := description("com-example-alpha", "1.0.0", "a")
+	f.reg.PushApp(t, "registry.test/example/alpha", "1.0.0", alpha)
+	f.want("import alpha", f.do(http.MethodPost, "/api/v1/apps", importBody("registry.test/example/alpha", "1.0.0")), http.StatusCreated)
+
+	helloVersions := []operatorapi.App{
+		app(repo, appID, "1.10.0", description(appID, "1.10.0", "hello-compose")),
+		app(repo, appID, version, hello),
+		app(repo, appID, "1.9.0", description(appID, "1.9.0", "hello-compose")),
+	}
+	var got []operatorapi.App
+	f.wantJSON("GET /apps", f.do(http.MethodGet, "/api/v1/apps", ""), http.StatusOK, &got)
+	if want := append([]operatorapi.App{app("registry.test/example/alpha", "com-example-alpha", "1.0.0", alpha)},
+		helloVersions...); !reflect.DeepEqual(got, want) {
+		t.Errorf("GET /apps:\n got %+v\nwant %+v", got, want)
+	}
+	got = nil
+	f.wantJSON("GET /apps/{appId}", f.do(http.MethodGet, "/api/v1/apps/"+appID, ""), http.StatusOK, &got)
+	if !reflect.DeepEqual(got, helloVersions) {
+		t.Errorf("GET /apps/%s:\n got %+v\nwant %+v", appID, got, helloVersions)
+	}
+	f.wantProblem("GET /apps/{appId}, none imported", f.do(http.MethodGet, "/api/v1/apps/com-example-none", ""),
+		http.StatusNotFound)
+}
+
+// listDevices is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func listDevices(t *testing.T, f fixture, _ *operatorapi.Deployment) {
+	all := []operatorapi.Device{}
+	for _, id := range []contract.DeviceID{{Site: site1}, host1, {Site: site2}, host2} {
+		all = append(all, operatorapi.Device{DeviceID: id, Capabilities: capabilities(id)})
+	}
+	var got []operatorapi.Device
+	f.wantJSON("GET /devices", f.do(http.MethodGet, "/api/v1/devices", ""), http.StatusOK, &got)
+	if !reflect.DeepEqual(got, all) {
+		t.Errorf("GET /devices:\n got %+v\nwant %+v", got, all)
+	}
+	got = nil
+	f.wantJSON("GET /devices?site=site-2", f.do(http.MethodGet, "/api/v1/devices?site=site-2", ""), http.StatusOK, &got)
+	if !reflect.DeepEqual(got, all[2:]) {
+		t.Errorf("GET /devices?site=site-2:\n got %+v\nwant %+v", got, all[2:])
+	}
+	f.wantProblem("unknown site", f.do(http.MethodGet, "/api/v1/devices?site=site-9", ""), http.StatusNotFound, "site-9")
+	f.wantProblem("site ID that does not parse", f.do(http.MethodGet, "/api/v1/devices?site=a%2Fb", ""), http.StatusBadRequest)
+}
+
+// createDeployments is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func createDeployments(t *testing.T, f fixture, created *operatorapi.Deployment) {
+	f.reg.PushApp(t, twoRepo, version, description("com-example-two", version, "one", "two"))
+	f.want("import two", f.do(http.MethodPost, "/api/v1/apps", importBody(twoRepo, version)), http.StatusCreated)
+
+	body := `{"appId":"` + appID + `","version":"` + version + `","target":"site-1/host-1","parameters":{"greeting":"Hi"}}`
+	f.wantJSON("create", f.do(http.MethodPost, "/api/v1/deployments", body), http.StatusCreated, created)
+	stored, ok, err := f.store.Deployment(context.Background(), created.ID)
+	if err != nil || !ok {
+		t.Fatalf("created deployment %s not stored: %v", created.ID, err)
+	}
+	want := operatorapi.Deployment{
+		ID: created.ID, AppID: appID, Version: version, Profile: "hello-compose", Target: host1,
+		Name: appID, Namespace: appID, Parameters: map[string]any{"greeting": "Hi"}, Digest: stored.Digest,
+	}
+	if !reflect.DeepEqual(*created, want) || created.Digest == "" {
+		t.Errorf("create:\n got %+v\nwant %+v", *created, want)
+	}
+
+	create := func(fields string) response {
+		return f.do(http.MethodPost, "/api/v1/deployments", "{"+fields+"}")
+	}
+	f.wantProblem("version not imported", create(`"appId":"`+appID+`","version":"7.7.7","target":"site-1/host-1"`),
+		http.StatusNotFound, "7.7.7")
+	f.wantProblem("no such profile", create(`"appId":"`+appID+`","version":"`+version+`","profile":"nope","target":"site-1/host-1"`),
+		http.StatusUnprocessableEntity, "nope")
+	f.wantProblem("several profiles, none named", create(`"appId":"com-example-two","version":"`+version+`","target":"site-1/host-1"`),
+		http.StatusUnprocessableEntity, "profile")
+	f.wantProblem("unknown host", create(`"appId":"`+appID+`","version":"`+version+`","target":"site-1/host-9"`),
+		http.StatusUnprocessableEntity, "host-9")
+	f.wantProblem("unknown site", create(`"appId":"`+appID+`","version":"`+version+`","target":"site-9/host-1"`),
+		http.StatusUnprocessableEntity, "site-9")
+	f.wantProblem("parameter not in the description", create(`"appId":"`+appID+`","version":"`+version+
+		`","target":"site-1/host-1","parameters":{"nope":"x"}`), http.StatusUnprocessableEntity, "nope")
+	for name, fields := range map[string]string{
+		"target names a site":     `"appId":"` + appID + `","version":"` + version + `","target":"site-1"`,
+		"target does not parse":   `"appId":"` + appID + `","version":"` + version + `","target":"site 1/host-1"`,
+		"no target":               `"appId":"` + appID + `","version":"` + version + `"`,
+		"no appId":                `"version":"` + version + `","target":"site-1/host-1"`,
+		"no version":              `"appId":"` + appID + `","target":"site-1/host-1"`,
+		"unknown field":           `"appId":"` + appID + `","version":"` + version + `","target":"site-1/host-1","replicas":2`,
+		"parameters not a object": `"appId":"` + appID + `","version":"` + version + `","target":"site-1/host-1","parameters":[]`,
+	} {
+		f.wantProblem("create, "+name, create(fields), http.StatusBadRequest)
+	}
+}
+
+// listAndGetDeployments is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func listAndGetDeployments(t *testing.T, f fixture, created *operatorapi.Deployment) {
+	var other operatorapi.Deployment
+	f.wantJSON("create at site-2", f.do(http.MethodPost, "/api/v1/deployments",
+		`{"appId":"`+appID+`","version":"`+version+`","target":"site-2/host-1","name":"hello-2","namespace":"ns"}`),
+		http.StatusCreated, &other)
+	if other.Name != "hello-2" || other.Namespace != "ns" || !reflect.DeepEqual(other.Parameters, map[string]any{}) {
+		t.Errorf("create with name and namespace: %+v; want them kept and parameters {}", other)
+	}
+	if err := f.deploy.Delete(context.Background(), other.ID); err != nil {
+		t.Fatal(err)
+	}
+	other.Deleted = true
+
+	byID := []operatorapi.Deployment{*created, other}
+	if byID[1].ID.String() < byID[0].ID.String() {
+		byID[0], byID[1] = byID[1], byID[0]
+	}
+	var got []operatorapi.Deployment
+	f.wantJSON("GET /deployments", f.do(http.MethodGet, "/api/v1/deployments", ""), http.StatusOK, &got)
+	if !reflect.DeepEqual(got, byID) {
+		t.Errorf("GET /deployments:\n got %+v\nwant %+v", got, byID)
+	}
+	got = nil
+	f.wantJSON("GET /deployments?site=site-2", f.do(http.MethodGet, "/api/v1/deployments?site=site-2", ""), http.StatusOK, &got)
+	if want := []operatorapi.Deployment{other}; !reflect.DeepEqual(got, want) {
+		t.Errorf("GET /deployments?site=site-2:\n got %+v\nwant %+v", got, want)
+	}
+	f.wantProblem("unknown site", f.do(http.MethodGet, "/api/v1/deployments?site=site-9", ""), http.StatusNotFound, "site-9")
+
+	var one operatorapi.Deployment
+	f.wantJSON("GET /deployments/{id}", f.do(http.MethodGet, "/api/v1/deployments/"+created.ID.String(), ""), http.StatusOK, &one)
+	if !reflect.DeepEqual(one, *created) {
+		t.Errorf("GET /deployments/{id}:\n got %+v\nwant %+v", one, *created)
+	}
+	f.wantProblem("no such deployment", f.do(http.MethodGet, "/api/v1/deployments/"+uuid.NewString(), ""), http.StatusNotFound)
+	f.wantProblem("ID that does not parse", f.do(http.MethodGet, "/api/v1/deployments/nope", ""), http.StatusBadRequest)
+}
+
+// getStatus is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func getStatus(t *testing.T, f fixture, created *operatorapi.Deployment) {
+	path := "/api/v1/deployments/" + created.ID.String() + "/status"
+	r := f.do(http.MethodGet, path, "")
+	f.want("status before a report", r, http.StatusOK)
+	if got := string(bytes.TrimSpace(r.body)); got != `{"current":null,"history":[]}` {
+		t.Errorf("status before a report: %s; want {\"current\":null,\"history\":[]}", got)
+	}
+
+	var reports []contract.DeploymentStatus
+	for _, state := range []contract.ComponentState{contract.StateInstalling, contract.StateInstalled} {
+		st := contract.DeploymentStatus{
+			DeploymentID: created.ID, DeviceID: host1, AdoptedManifestVersion: 2, Status: contract.DeploymentState{State: state},
+			Components: []contract.ComponentStatus{{Name: "web", State: state}},
+		}
+		if _, err := f.deploy.ReportStatus(context.Background(), site1, created.ID, st); err != nil {
+			t.Fatal(err)
+		}
+		reports = append(reports, st)
+	}
+	var got operatorapi.Status
+	f.wantJSON("status after two reports", f.do(http.MethodGet, path, ""), http.StatusOK, &got)
+	want := operatorapi.Status{Current: &reports[1], History: reports}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("status after two reports:\n got %+v\nwant %+v", got, want)
+	}
+	f.wantProblem("no such deployment", f.do(http.MethodGet, "/api/v1/deployments/"+uuid.NewString()+"/status", ""),
+		http.StatusNotFound)
+}
+
+// otherMethodsAndPaths is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+func otherMethodsAndPaths(t *testing.T, f fixture, created *operatorapi.Deployment) {
+	id := created.ID.String()
+	for _, c := range []struct{ method, path, allow string }{
+		{http.MethodDelete, "/api/v1/apps", "GET, HEAD, POST"},
+		{http.MethodPost, "/api/v1/apps/" + appID, "GET, HEAD"},
+		{http.MethodPost, "/api/v1/devices", "GET, HEAD"},
+		{http.MethodPut, "/api/v1/deployments", "GET, HEAD, POST"},
+		{http.MethodPut, "/api/v1/deployments/" + id, "GET, HEAD"},
+		{http.MethodDelete, "/api/v1/deployments/" + id, "GET, HEAD"},
+		{http.MethodPost, "/api/v1/deployments/" + id + "/status", "GET, HEAD"},
+	} {
+		r := f.do(c.method, c.path, "")
+		f.wantProblem(c.method+" "+c.path, r, http.StatusMethodNotAllowed)
+		if got := r.header.Get("Allow"); got != c.allow {
+			t.Errorf("%s %s: Allow %q, want %q", c.method, c.path, got, c.allow)
+		}
+	}
+	for _, path := range []string{"/api/v1/sites", "/api/v1/devices/site-1", "/api/v1/deployments/" + id + "/stream", "/nope"} {
+		f.wantProblem("GET "+path, f.do(http.MethodGet, path, ""), http.StatusNotFound)
+	}
 }
 
 // SPEC §17.7: "The operator API answers a request without the operator token, or with another"
