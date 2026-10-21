@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/balaji-balu/ieo/internal/co/deploy"
+	"github.com/balaji-balu/ieo/internal/co/httpapi"
 	"github.com/balaji-balu/ieo/internal/contract"
 )
 
@@ -36,7 +37,7 @@ func (s *server) putCapabilities(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, deploy.ErrNotAuthorized):
 		notAuthorized(w, r)
 	case errors.Is(err, deploy.ErrGatewayNotFound):
-		problem(w, r, http.StatusNotFound, contract.ProblemGatewayNotFound, "Gateway Not Found",
+		httpapi.Problem(w, r, http.StatusNotFound, contract.ProblemGatewayNotFound, "Gateway Not Found",
 			"report the gateway "+string(site)+" before its hosts")
 	case errors.Is(err, deploy.ErrInvalidRequest):
 		invalidField(w, r, err)
@@ -64,7 +65,7 @@ func (s *server) deleteCapabilities(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, deploy.ErrInvalidRequest):
 		invalidField(w, r, err)
 	case errors.Is(err, deploy.ErrNotFound):
-		problem(w, r, http.StatusNotFound, contract.ProblemDeviceNotFound, "Device Not Found", "no such device")
+		httpapi.Problem(w, r, http.StatusNotFound, contract.ProblemDeviceNotFound, "Device Not Found", "no such device")
 	case err != nil:
 		s.internalError(w, r, site, err)
 	default:
@@ -134,10 +135,10 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	var tooLarge *http.MaxBytesError
 	switch {
 	case errors.As(err, &tooLarge):
-		problem(w, r, http.StatusRequestEntityTooLarge, contract.ProblemAboutBlank, "", "")
+		httpapi.Problem(w, r, http.StatusRequestEntityTooLarge, contract.ProblemAboutBlank, "", "")
 		return nil, false
 	case err != nil:
-		problem(w, r, http.StatusBadRequest, contract.ProblemInvalidRequest, "Invalid Request", "unreadable request body")
+		httpapi.Problem(w, r, http.StatusBadRequest, contract.ProblemInvalidRequest, "Invalid Request", "unreadable request body")
 		return nil, false
 	}
 	return b, true
@@ -147,14 +148,14 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 // §11.1).
 func badBody(w http.ResponseWriter, r *http.Request, fields []contract.FieldError, err error) {
 	if errors.Is(err, contract.ErrMalformed) {
-		problem(w, r, http.StatusBadRequest, contract.ProblemInvalidRequest, "Invalid Request", "Malformed request body.")
+		httpapi.Problem(w, r, http.StatusBadRequest, contract.ProblemInvalidRequest, "Invalid Request", "Malformed request body.")
 		return
 	}
 	semanticError(w, r, fields...)
 }
 
 func semanticError(w http.ResponseWriter, r *http.Request, fields ...contract.FieldError) {
-	writeProblem(w, contract.Problem{
+	httpapi.WriteProblem(w, contract.Problem{
 		Type: contract.ProblemSemanticError, Title: "Semantic Error", Status: http.StatusUnprocessableEntity,
 		Detail: "Request body includes a semantic error.", Instance: r.URL.Path, Errors: fields,
 	})
@@ -172,6 +173,6 @@ func invalidField(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func notAuthorized(w http.ResponseWriter, r *http.Request) {
-	problem(w, r, http.StatusForbidden, contract.ProblemNotAuthorized, "Not Authorized",
+	httpapi.Problem(w, r, http.StatusForbidden, contract.ProblemNotAuthorized, "Not Authorized",
 		"the device belongs to another site")
 }
