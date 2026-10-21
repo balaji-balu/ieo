@@ -438,6 +438,13 @@ It MUST reject the import, with the reason, and store nothing, when:
 Content is the exact bytes of the Application Description. Re-importing an identical version MUST
 succeed without changes.
 
+`[IEO, interim]` Registry access. Until registry credentials for the CO are specified, the CO
+reaches registries anonymously: it sends no credential to any registry. It uses HTTPS and verifies
+the registry's certificate against the system roots, unless `co.registry.insecure` is true (§6.3).
+It follows redirects and honours the environment's proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`,
+`NO_PROXY`), as the EN does (ADR 0021). An import error names the registry host and the HTTP
+status, and holds no URL and no text the server sent (§15.4).
+
 ### 5.4 Parameter Semantics for Compose `[IEO]`
 
 - Each parameter target `pointer` is the **name of an environment variable**.
@@ -539,8 +546,12 @@ CO:
 - `co.tls.cert_file`, `co.tls.key_file`, `co.tls.client_ca_file`: paths, REQUIRED from Appendix B
   step 4; not read before it (§15.6)
 - `co.ca.cert_file`, `co.ca.key_file`: paths, REQUIRED (issues LO certificates)
-- `co.operator_token`: string, REQUIRED in phase 1
-- `co.registry.insecure`: boolean, default `false`
+- `co.operator_token`: string, REQUIRED in phase 1: the operator API's bearer token (§11.3,
+  §15.6). At least 32 bytes; a shorter one is a configuration error (§6.1). Read only from the
+  environment, never from a flag (§15.4)
+- `co.registry.insecure`: boolean, default `false`. `[IEO]` When true the CO reaches registries
+  over plain HTTP during import, and logs a warning at startup; otherwise it uses HTTPS only, for
+  every request, redirects included (§5.3)
 - `co.metrics_listen_addr`: string, default `:9090`
 
 LO:
@@ -627,8 +638,13 @@ EN:
 
 edgectl:
 
-- `edgectl.co_url`: string, REQUIRED
-- `edgectl.token`: string, REQUIRED in phase 1
+- `edgectl.co_url`: string, REQUIRED: the operator API's base URL
+- `edgectl.token`: string, REQUIRED in phase 1: the operator token (§15.6). Read from the
+  configuration file or the environment, never from a flag (§15.4)
+- `edgectl.co_insecure`: boolean, default `false` `[IEO, interim]`: allows an `http://`
+  `edgectl.co_url` (§15.6)
+- `edgectl.tls.ca_file`: path, OPTIONAL: verifies the CO's certificate for an `https://`
+  `edgectl.co_url`; the system roots otherwise
 
 ## 7. State Machines
 
@@ -879,9 +895,10 @@ For each desired deployment:
 `[IEO, interim]` A desired deployment the LO cannot resolve to a host of its site gets no command on
 any host, neither Apply nor Remove, and is logged each time all hosts are reconciled (§7.5). That is
 a deployment whose YAML an EN would refuse (§8.9 step 2), whose `id` is not the `deploymentId` the
-manifest lists it under, or whose `deviceId` names another site. Roadmap slice E reports it
-`failed`. Until autonomous placement is implemented (roadmap slice H), the same holds for an
-autonomous deployment.
+manifest lists it under, or whose `deviceId` names another site. It is reported `failed` with
+error code `IEO-INVALID-DEPLOYMENT` (§8.7, §10). Until autonomous placement is implemented
+(roadmap slice H), an autonomous deployment also gets no command, and is reported `failed` with
+error code `103`, as when `lo.placement.enabled` is false.
 
 ### 8.5 LO: Host Reconciliation
 
@@ -944,7 +961,19 @@ builds a DeploymentStatus:
   yet is `pending`.
 - `status.state` by §7.2.
 - Error `source`: the component name for component errors; `metadata.name` for deployment-level
-  errors; the LO's device ID for gateway errors (`101`, `102`, `103`).
+  errors; the LO's device ID for gateway errors (`101`, `102`, `103`, and the `[IEO]` gateway
+  errors `IEO-NO-ELIGIBLE-HOST` and `IEO-INVALID-DEPLOYMENT`).
+
+`[IEO]` A gateway error (§8.4) is a deployment-level failure that no host reported. The LO builds
+its DeploymentStatus when the deployment first fails target resolution at its current digest, or
+fails with another error code, and not again while that stays the same:
+
+- `deviceId` = the directed target, when it is a host of the LO's site; otherwise the LO's device
+  ID (`<site_id>`).
+- `status.state` = `failed`, and `status.error` = `{code, source, message}` with `source` the LO's
+  device ID.
+- `components`: one entry per component that the deployment YAML names, each `failed` with the same
+  error, so §7.2 gives `failed`. A YAML the LO cannot read for component names gives no entries.
 
 The LO writes the DeploymentStatus to the outbox, then tries to send it.
 
@@ -1107,9 +1136,12 @@ This section collects the reporting rules in one place.
 - States and aggregation follow §7.1 and §7.2.
 - Error codes:
   - `101` unknown child device ID `[Margo]`
-  - `102` gateway-generated error defined by Margo; see the Margo specification `[Margo]`
+  - `102` child device unreachable `[Margo]`
   - `103` autonomous placement not supported `[Margo]`
   - `IEO-NO-ELIGIBLE-HOST` no host satisfies constraints `[IEO]`
+  - `IEO-INVALID-DEPLOYMENT` a desired deployment the LO cannot resolve to a host: its YAML fails
+    §8.9 step 2, its `id` is not the `deploymentId` the manifest lists, or its `deviceId` names
+    another site (§8.4); a gateway error, never sent to an EN `[IEO]`
   - `IEO-ARCHIVE-INVALID` archive failed §5.2, its limits included, or the EN could not extract it
     `[IEO]`
   - `IEO-DIGEST-MISMATCH` pulled layer digest did not match `[IEO]`
@@ -1274,7 +1306,9 @@ dropped; it MUST NOT change state.
 
 ### 11.3 edgectl ↔ CO: Operator API `[IEO]`
 
-JSON over HTTPS. Phase 1 authenticates with a static bearer token (`co.operator_token`).
+JSON over HTTPS, served on `co.operator_listen_addr`, apart from the Margo API. Phase 1
+authenticates with a static bearer token (`co.operator_token`; transport and token rules in
+§15.6).
 
 | Resource | Operations |
 | --- | --- |
@@ -1283,12 +1317,56 @@ JSON over HTTPS. Phase 1 authenticates with a static bearer token (`co.operator_
 | `/devices` | list, get (read-only) |
 | `/deployments` | create, update, delete, list, get |
 | `/deployments/{id}/status` | current status and history |
-| `/deployments/{id}/stream` | server-sent events of status changes |
+| `/deployments/{id}/stream` | server-sent events of status changes (RECOMMENDED, §18.2) |
+
+`[IEO]` Common rules, for every operation:
+
+- Paths are under `/api/v1/` (`/api/v1/apps`, …). Request and response bodies are
+  `application/json`; JSON names are camelCase.
+- A request without `Authorization: Bearer <co.operator_token>`, or with another token, gets `401`
+  with `WWW-Authenticate: Bearer`, before anything else is read.
+- Errors are RFC 9457 `application/problem+json` with type `about:blank`, `title` the HTTP status
+  phrase and `detail` the reason, which names what was rejected and why (§15.4: no credential, no
+  URL and no text a registry sent). `400`: a body that is not JSON, has an unknown field or misses
+  a required one, or an ID or target that does not parse (§4.2). `404`: no such resource. `405`: a
+  method the path does not serve. `422`: a request the CO refuses for the reasons given per
+  operation.
+- Lists are JSON arrays, `[]` when empty, in the order given per operation.
+
+`[IEO]` Operations specified so far. The CO answers the others in the table with `404` until a
+later revision specifies them (update and delete: roadmap slices F and G; sites: slice N):
+
+| Request | Success | Errors |
+| --- | --- | --- |
+| `POST /api/v1/apps` `{repository, version}` | `201` App, or `200` App for an identical re-import (§5.3) | `422` a §5.3 rejection, with its reason; `409` the version is imported with other content; `502` the registry could not be reached, or answered with an error |
+| `GET /api/v1/apps` | `200` [App], by `id` then `version` | |
+| `GET /api/v1/apps/{appId}` | `200` [App] of that application, by `version` | `404` none imported |
+| `GET /api/v1/devices[?site=<site_id>]` | `200` [Device], by `deviceId` | `404` unknown site |
+| `POST /api/v1/deployments` `{appId, version, profile?, target, name?, namespace?, parameters?}` | `201` Deployment | `404` the application version is not imported; `422` no such compose profile, several and none named, or a failed §8.1.1 check (unknown or retired site, unknown host, constraints, parameters), with its reason |
+| `GET /api/v1/deployments[?site=<site_id>]` | `200` [Deployment], by `id` | `404` unknown site |
+| `GET /api/v1/deployments/{id}` | `200` Deployment | `404` |
+| `GET /api/v1/deployments/{id}/status` | `200` `{current, history}` | `404` |
+
+Resources:
+
+- App: `{id, version, repository, digest}`. `repository` is the registry repository it was imported
+  from (`<registry>/<namespace>/<app>`); `digest` is the SHA-256 of the Application Description's
+  bytes.
+- Device: `{deviceId, capabilities}`, the device's last capability report as the LO sent it
+  (§4.1.3). The gateway is listed with `deviceId` `<site_id>`.
+- Deployment: `{id, appId, version, profile, target, name, namespace, parameters, digest,
+  deleted}`. `profile` is the selected profile's `id`; `target` is the Margo device ID it was
+  created for (§4.2); `parameters` holds the request's values by name; `digest` is the current
+  deployment YAML's (§4.1.5).
+- Status: `current` is the deployment's current DeploymentStatus (§8.1.2), `null` before its first
+  report; `history` is every DeploymentStatus received for it, oldest first, `[]` before the first.
+- In a create request, `parameters` maps parameter names to JSON values (§5.4) and defaults to
+  `{}`; `name` and `namespace` default as in §4.1.5; `profile` defaults to the only compose profile.
 
 Minimum CLI commands:
 
 ```text
-edgectl app import --repo <registry>/<namespace>/<app> [--version <v>]
+edgectl app import --repo <registry>/<namespace>/<app> --version <v>
 edgectl app list | get <app-id> | delete <app-id>
 edgectl site add <site-id>            # writes LO credentials to a local directory
 edgectl site list | get <site-id> | retire <site-id>
@@ -1301,6 +1379,19 @@ edgectl deployment status <id> [--watch]
 ```
 
 `edgectl` MUST exit non-zero on any failed request and print the problem `title` and `detail`.
+
+`[IEO]` CLI rules:
+
+- `--version` is REQUIRED on `app import`: the CO imports one tag (§5.3) and does not choose one.
+- `--param k=v` splits at the first `=` and sends `v` as a JSON string; the EN writes a string as
+  it is (§5.4). A repeated name is a usage error.
+- Every command takes `--output text|json`, default `text`. `json` prints the response body as the
+  CO sent it, on stdout; `text` is implementation-defined. `deploy` prints the new deployment's
+  `id` on the first line of its `text` output.
+- Errors go to stderr. Exit code `0` on success, `1` on a failed request or an unreachable CO, `2`
+  on a usage or configuration error.
+- `deployment status --watch` MAY poll `GET /api/v1/deployments/{id}/status` until interrupted,
+  printing each new current status, when the CO serves no `/stream`.
 
 ## 12. Persistence
 
@@ -1494,6 +1585,20 @@ and scoped NATS credentials) replaces them (ADR 0005):
     environment that holds no tier credential: none of the EN's `en.*` settings, only what the CLI
     needs to reach the engine.
 - `edgectl` → CO: requests MUST carry the static operator token from configuration.
+  - The CO compares the token in constant time, holding only its SHA-256 after startup, and
+    answers a missing or other token with `401` (§11.3). It does not start without a token of at
+    least 32 bytes (§6.3).
+  - The CO serves the operator API over plain HTTP, as it does the Margo API. It belongs on a
+    management network (§15.5); where the path leaves one, a TLS-terminating proxy in front of the
+    CO carries it over HTTPS.
+  - `edgectl` sends the token only to an `https://` `edgectl.co_url`, and verifies the server's
+    certificate against `edgectl.tls.ca_file` when it is set, or the system roots otherwise. It
+    sends it to an `http://` URL only when `edgectl.co_insecure` is true, and then writes a warning
+    to stderr that names the URL, never the token. An `http://` URL without it is a configuration
+    error (exit code 2).
+  - `edgectl` follows no redirects (a redirect is a failed request) and uses no HTTP proxy, as the
+    LO's Margo client does.
+  - Neither tier logs or prints the token, nor puts it in an error.
 - Tokens and passwords come from configuration or the environment and follow §15.4; they MUST NOT
   appear in code or test fixtures.
 
@@ -1504,7 +1609,7 @@ and scoped NATS credentials) replaces them (ADR 0005):
 ```text
 function upsert_deployment(req):
   app = catalog.get(req.app_id, req.version) or reject(404)
-  profile = select_profile(app, req.profile_id, type="compose") or reject(400)
+  profile = select_profile(app, req.profile_id, type="compose") or reject(422)
   site_id, host_id = split_device_id(req.target)
   checks = preliminary_checks(site_id, host_id, profile.deviceConstraints, req.parameters)
   if checks failed: reject(422, checks.errors)
@@ -1797,6 +1902,13 @@ endpoints (§11.3 holds IEO-specific operations).
 - A host capability report before the gateway report returns `404 gateway-not-found`.
 - Vendor extensions are copied byte-for-byte; `deviceConstraints` are copied unmodified.
 - A deleted deployment reported `removed` is marked removed; status history keeps every report.
+- Import sends no credential to a registry, and uses plain HTTP only when `co.registry.insecure` is
+  true; an import error holds no URL and no registry text (§5.3).
+- The operator API answers each §11.3 operation with the status codes and resources given there:
+  import `201` then `200` for the same version, `409` for other content, `422` for a §5.3 rejection;
+  create `201`, `404` for an application version not imported, `422` for a failed §8.1.1 check;
+  status `{current: null, history: []}` before the first report, and every report after, oldest
+  first.
 
 ### 17.3 LO: Sync
 
@@ -1852,6 +1964,10 @@ endpoints (§11.3 holds IEO-specific operations).
 - `status.state` follows the precedence in §7.2 for every combination of two component states.
 - `deviceId` is the placed host for autonomous deployments.
 - Error `source` follows §8.7.
+- A desired deployment the LO cannot resolve (§8.4) is reported once at its digest: `failed` with
+  `IEO-INVALID-DEPLOYMENT`, or `103` for an autonomous one before placement, with `status.error`
+  and every component carrying the error, source = LO device ID, and `deviceId` the directed host
+  of this site or else the LO's device ID.
 - While the CO is unreachable, the outbox keeps only the latest status per deployment.
 - The outbox survives LO restart.
 - On reconnect every outbox entry is sent and removed after `2xx`; an entry replaced during sending
@@ -1917,6 +2033,10 @@ endpoints (§11.3 holds IEO-specific operations).
 - The EN sends a registry credential only to the registry it is listed for and to the token service
   that registry names, never to the target of a redirect (ADR 0021).
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
+- The operator API answers a request without the operator token, or with another, with `401` and
+  `WWW-Authenticate: Bearer`; the CO does not start with a token shorter than 32 bytes.
+- `edgectl` sends its token to an `http://` CO URL only when `edgectl.co_insecure` is set, exits 2
+  on such a URL without it, follows no redirects and uses no HTTP proxy (§15.6).
 - `edgectl site add` produces a certificate whose SPIFFE ID matches §4.2.
 - Every tier writes each log line as one JSON object.
 - Every log line about a deployment carries `deployment_id`, and `digest` once the digest is known.
