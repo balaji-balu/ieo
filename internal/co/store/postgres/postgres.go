@@ -205,7 +205,8 @@ func (s *Store) SiteByToken(ctx context.Context, hash auth.TokenHash) (contract.
 // CurrentStatus returns the current status of a deployment, and whether it has one.
 func (s *Store) CurrentStatus(ctx context.Context, id uuid.UUID) (contract.DeploymentStatus, bool, error) {
 	row, err := s.client.Deployment.Query().Where(deployment.ID(id)).Select(deployment.FieldCurrentStatus).Only(ctx)
-	if ent.IsNotFound(err) || err == nil && row.CurrentStatus == nil {
+	// ent scans a NULL bytea as a pointer to a nil slice, not a nil pointer.
+	if ent.IsNotFound(err) || err == nil && (row.CurrentStatus == nil || len(*row.CurrentStatus) == 0) {
 		return contract.DeploymentStatus{}, false, nil
 	}
 	if err != nil {
