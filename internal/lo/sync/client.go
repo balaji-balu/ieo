@@ -18,9 +18,6 @@ func newClient(coURL, token string, transport http.RoundTripper) *client {
 	return &client{api: coapi.New(coURL, token, transport)}
 }
 
-// requestError is a request that did not get the response the sync tick needs.
-type requestError = coapi.RequestError
-
 const manifestPath = "/api/v1/deployments" // SPEC §11.1
 
 // manifestResponse is the answer to GET /api/v1/deployments.
@@ -31,8 +28,8 @@ type manifestResponse struct {
 }
 
 // manifest gets the site's State Manifest, conditionally on etag when it is not empty (SPEC §8.2
-// steps 1–2). Any status other than 200 and 304 is a *requestError.
-func (c *client) manifest(ctx context.Context, etag string) (manifestResponse, *requestError) {
+// steps 1–2). Any status other than 200 and 304 is a *coapi.RequestError.
+func (c *client) manifest(ctx context.Context, etag string) (manifestResponse, *coapi.RequestError) {
 	h := http.Header{"Accept": {contract.ManifestMediaType}}
 	if etag != "" {
 		h.Set("If-None-Match", etag)
@@ -52,8 +49,8 @@ func (c *client) manifest(ctx context.Context, etag string) (manifestResponse, *
 }
 
 // content gets a deployment YAML or a bundle by its path (SPEC §8.2 step 4). Any status other
-// than 200 is a *requestError; a 404 means only that the digest is unavailable.
-func (c *client) content(ctx context.Context, p string) ([]byte, *requestError) {
+// than 200 is a *coapi.RequestError; a 404 means only that the digest is unavailable.
+func (c *client) content(ctx context.Context, p string) ([]byte, *coapi.RequestError) {
 	resp, err := c.api.Get(ctx, p, http.Header{})
 	if err != nil {
 		return nil, err

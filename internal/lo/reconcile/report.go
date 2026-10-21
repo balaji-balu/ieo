@@ -69,14 +69,22 @@ func (r *Reconciler) reportGateway(ctx context.Context, byHost map[contract.Host
 
 // reportHost reports each deployment desired on host whose state there differs between before and
 // after, the actual state held for the host before and after a report; nil is no state (SPEC
-// §8.7). r.mu is held.
-func (r *Reconciler) reportHost(ctx context.Context, hostID contract.HostID, before, after *store.HostActual) {
+// §8.7). When only is set, the report could change only that deployment, and no other is looked
+// at. r.mu is held.
+func (r *Reconciler) reportHost(ctx context.Context, hostID contract.HostID, before, after *store.HostActual, only *uuid.UUID) {
 	if r.status == nil {
 		return
 	}
 	wants := r.want[hostID]
+	ids := sortedIDs(wants)
+	if only != nil {
+		ids = nil
+		if _, ok := wants[*only]; ok {
+			ids = []uuid.UUID{*only}
+		}
+	}
 	device := contract.DeviceID{Site: r.site, Host: hostID}
-	for _, id := range sortedIDs(wants) {
+	for _, id := range ids {
 		b, a := find(before, id), find(after, id)
 		if b == nil && a == nil || b != nil && a != nil && sameDeployment(*b, *a) {
 			continue

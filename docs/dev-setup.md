@@ -167,7 +167,7 @@ The tool prints `DEPLOYMENT_ID=<id>` and `COMPOSE_PROJECT=<project>`. Within sec
 polls every 5 s in the harness) `host1` runs one container of the project and `host2` runs
 none, and `en1` logs `component installed` with the deployment ID. The last query prints the
 latest DeploymentStatus the LO sent the CO: `installed`, from `deviceId` `<site>/host-1`, with
-one entry for `web` (until roadmap slice E brings `edgectl deployment status`, the CO's Postgres
+one entry for `web` (until roadmap step E6 brings `edgectl deployment status`, the CO's Postgres
 is where to read it). Running the tool again creates
 no second deployment: it prints the first. To check that an EN restart leaves the container
 alone, note its ID, then:

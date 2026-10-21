@@ -147,6 +147,9 @@ func (o *Outbox) send(ctx context.Context, e entry) {
 	id := e.status.DeploymentID
 	log := o.log.With(slog.String("deployment_id", id.String()), slog.String("digest", string(e.digest)),
 		slog.String("state", string(e.status.Status.State)))
+	if h := e.status.DeviceID.Host; h != "" {
+		log = log.With(slog.String("host_id", string(h))) // SPEC §13.1: a host's status
+	}
 	p := "/api/v1/deployments/" + id.String() + "/status" // SPEC §11.1
 	sendCtx, cancel := context.WithTimeout(ctx, o.retry)
 	resp, rerr := o.client.PostJSON(sendCtx, p, e.status)

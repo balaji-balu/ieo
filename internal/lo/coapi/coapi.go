@@ -82,7 +82,8 @@ func (e *RequestError) Attrs() []slog.Attr {
 	return attrs
 }
 
-// Get sends GET p with header and the token, and reads the whole body. Only a transport error is a
+// Get sends GET p with header, which may be nil and is not changed, and the token, and reads the
+// whole body. Only a transport error is a
 // *RequestError: every status is returned as a Response. The body is read without a limit: SPEC
 // §8.2 sets none (balaji-balu/ieo#52).
 func (c *Client) Get(ctx context.Context, p string, header http.Header) (Response, *RequestError) {
@@ -108,7 +109,9 @@ func (c *Client) do(ctx context.Context, method, p string, header http.Header, b
 	if err != nil {
 		return Response{}, &RequestError{Method: method, Path: p, Err: err}
 	}
-	req.Header = header
+	if header != nil {
+		req.Header = header.Clone() // the token goes into the request's headers, not the caller's
+	}
 	req.Header.Set("Authorization", "Bearer "+c.token) // SPEC §15.6; never logged (§15.4)
 	resp, err := c.http.Do(req)
 	if err != nil {

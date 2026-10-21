@@ -386,8 +386,15 @@ func TestLOSyncsAndPersistsToDataDir(t *testing.T) {
 	second := startLO(t, env)
 	second.waitOutcome("NotModified")
 	second.stop()
-	reqs := co.TakeRequests()
-	if len(reqs) == 0 || reqs[0].Header.Get("If-None-Match") != etag {
+	// The first manifest request; the status outbox sends its own requests too (SPEC §8.8).
+	var manifestReq *http.Request
+	for _, r := range co.TakeRequests() {
+		if r.Method == http.MethodGet && r.URL.Path == manifestPath {
+			manifestReq = r
+			break
+		}
+	}
+	if manifestReq == nil || manifestReq.Header.Get("If-None-Match") != etag {
 		t.Errorf("the restarted LO did not send If-None-Match %s", etag)
 	}
 }

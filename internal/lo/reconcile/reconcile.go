@@ -229,11 +229,14 @@ func (r *Reconciler) OnInventory(ctx context.Context, hostID contract.HostID, in
 		log.LogAttrs(ctx, slog.LevelError, "inventory dropped", slog.String("reason", err.Error()))
 		return
 	}
-	var before *store.HostActual // what the LO holds for the host, from before it started too
-	if h != nil {
+	// The first Inventory since the LO started reports every desired deployment the host lists:
+	// a status from before the restart may not have reached the CO (the outbox is in memory until
+	// roadmap slice J).
+	var before *store.HostActual
+	if h != nil && h.online {
 		before = h.actual
 	}
-	r.reportHost(ctx, hostID, before, &actual)
+	r.reportHost(ctx, hostID, before, &actual, nil)
 	if effect == clockBack {
 		log.LogAttrs(ctx, slog.LevelWarn, "inventory applied", slog.Time("at", inv.At), slog.Time("reported_at", held.ReportedAt),
 			slog.String("reason", "the host's clock went back: two inventories in a row are not newer than the actual state held"))
@@ -277,7 +280,7 @@ func (r *Reconciler) OnStatus(ctx context.Context, hostID contract.HostID, ev co
 		log.LogAttrs(ctx, slog.LevelError, "status event dropped", slog.String("reason", err.Error()))
 		return
 	}
-	r.reportHost(ctx, hostID, h.actual, &actual)
+	r.reportHost(ctx, hostID, h.actual, &actual, &ev.DeploymentID) // only the event's deployment changed
 	h.actual = &actual
 }
 

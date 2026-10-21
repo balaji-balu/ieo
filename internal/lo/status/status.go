@@ -91,24 +91,18 @@ var severity = map[contract.ComponentState]int{
 }
 
 // aggregate returns the most severe state of components (SPEC §7.2); `pending` when there are
-// none, as a deployment no host has reported is. A state §7.2 does not name counts as the most
-// severe: it is not one a host may report (SPEC §7.1).
+// none, as a deployment no host has reported is. A state §7.2 does not name is not one a host may
+// report (SPEC §7.1): it counts as `failed`, so the result is always a Margo state.
 func aggregate(components []contract.ComponentStatus) contract.ComponentState {
-	if len(components) == 0 {
-		return contract.StatePending
-	}
-	worst := components[0].State
-	for _, c := range components[1:] {
-		if rank(c.State) < rank(worst) {
-			worst = c.State
+	worst := contract.StatePending
+	for i, c := range components {
+		s := c.State
+		if _, ok := severity[s]; !ok {
+			s = contract.StateFailed
+		}
+		if i == 0 || severity[s] < severity[worst] {
+			worst = s
 		}
 	}
 	return worst
-}
-
-func rank(s contract.ComponentState) int {
-	if r, ok := severity[s]; ok {
-		return r
-	}
-	return -1
 }

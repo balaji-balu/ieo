@@ -241,3 +241,26 @@ func TestStatusOnlyWhenAReportChangesADesiredDeployment(t *testing.T) {
 		t.Errorf("statuses after A disappeared: %+v, want one, A pending", got)
 	}
 }
+
+// The first Inventory after the LO starts reports every desired deployment the host lists, even
+// one whose state the store already held: its last status may not have reached the CO before the
+// LO stopped (SPEC §8.7, §8.8).
+func TestFirstInventoryAfterRestartReportsAgain(t *testing.T) {
+	desired := map[uuid.UUID]losync.Desired{idA: want(t, idA, "site-1/host-1", "a")}
+	held := deployment(idA, desired[idA].Digest, component("web", contract.StateInstalled))
+	sink := &fakeSink{}
+	f := newFixture(t, desired, withSink(sink), func(f *fixture) {
+		if err := f.store.Memory.PutActual(f.ctx, host1, store.HostActual{ReportedAt: start, Deployments: []contract.InventoryDeployment{held}}); err != nil {
+			t.Fatalf("test setup: %v", err)
+		}
+	})
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(1), held))
+	got := sink.take()
+	if len(got) != 1 || got[0].DeploymentID != idA || got[0].Status.State != contract.StateInstalled {
+		t.Fatalf("statuses after the first Inventory since the start: %+v, want A installed", got)
+	}
+	f.r.OnInventory(f.ctx, host1, inventory(host1, start.Add(2), held))
+	if got := sink.take(); len(got) != 0 {
+		t.Errorf("statuses after the same Inventory again: %+v, want none", got)
+	}
+}
