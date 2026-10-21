@@ -85,15 +85,16 @@ docker compose -f deploy/dev/compose.yaml logs lo | Select-String outcome   # Po
 `enN` shares its network, so the EN reaches that engine at `tcp://127.0.0.1:2375` and cannot reach
 the other host's. Workloads the EN starts run inside `hostN`, isolated from the laptop's own
 containers and from the other host. Each EN keeps its host ID (`host-1`, `host-2`) and its store
-in a volume (`en1-data`, `en2-data`), so a restart keeps both; `down -v` deletes them. To look
-inside a host:
+in a volume (`en1-data`, `en2-data`), so a restart keeps both; `down -v` deletes them. The same
+volume is mounted into `hostN` at the same path, `/var/lib/ieo/en`, so the paths of the files the
+EN writes for a component mean the same to its engine. To look inside a host:
 
 ```sh
 docker compose -f deploy/dev/compose.yaml exec host1 docker ps
 ```
 
 **Current code.** CO, LO and EN are built from `cmd/co`, `cmd/lo` and `cmd/en`. The CO serves the
-Margo API, and the LO polls it every 60 s and keeps the site's desired state in
+Margo API, and the LO polls it every 5 s (`LO_POLL_INTERVAL`; 60 s by default) and keeps the site's desired state in
 `/var/lib/lo/lo.db`. Each EN takes the LO's commands and runs them with the Compose CLI on its
 host's engine. The old, Git-based code still runs beside the CO and LO until roadmap slices D5.6c–E
 replace it: they clone public GitHub repositories at startup (they log an error and keep running if
@@ -137,6 +138,42 @@ docker tag hello-world localhost:5000/hello-world:1.0
 docker push localhost:5000/hello-world:1.0
 docker compose -f deploy/dev/compose.yaml exec host1 docker pull registry:5000/hello-world:1.0
 ```
+
+## Deploying the test application
+
+`tools/harnessdeploy` deploys the test application in `tests/harness/hello` (one Compose component,
+`web`, running busybox) to `host-1`, as CI's "Dev harness" job does. It copies busybox, pinned by
+digest, from Docker Hub into the registry, so it needs internet access. It pushes the
+application's Compose archive and package to `localhost:5000`, imports the application into the
+CO's Postgres and creates a directed deployment to `00000000-0000-4000-8000-000000000001/host-1`.
+Until roadmap slice E brings `edgectl deploy`, this tool is the only way to create a deployment.
+Until slice H, it also records the capabilities of the site's gateway and of `host-1`, which an
+LO would report: the CO creates a deployment only to a host it knows.
+
+With the stack up (above), from the repository root in PowerShell:
+
+```powershell
+$env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable"
+go run ./tools/harnessdeploy | Tee-Object -Variable out
+$project = ($out | Select-String '^COMPOSE_PROJECT=(.*)').Matches.Groups[1].Value
+docker compose -f deploy/dev/compose.yaml exec -T host1 docker ps --filter "label=com.docker.compose.project=$project"
+docker compose -f deploy/dev/compose.yaml exec -T host2 docker ps -a --filter label=com.docker.compose.project
+docker compose -f deploy/dev/compose.yaml logs en1 | Select-String '"component installed"'
+```
+
+The tool prints `DEPLOYMENT_ID=<id>` and `COMPOSE_PROJECT=<project>`. Within seconds (the LO
+polls every 5 s in the harness) `host1` runs one container of the project and `host2` runs
+none, and `en1` logs `component installed` with the deployment ID. Running the tool again creates
+no second deployment: it prints the first. To check that an EN restart leaves the container
+alone, note its ID, then:
+
+```powershell
+docker compose -f deploy/dev/compose.yaml restart en1
+Start-Sleep 15
+docker compose -f deploy/dev/compose.yaml exec -T host1 docker ps -q --filter "label=com.docker.compose.project=$project"
+```
+
+The ID is the same. `down -v` deletes the deployment with everything else.
 
 ## Only NATS and Postgres
 

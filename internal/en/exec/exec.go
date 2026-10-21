@@ -185,6 +185,7 @@ func (r *applyRun) component(ctx context.Context, c contract.Component) (install
 		return false, err
 	}
 	if cause == nil {
+		r.log.Info("component installed", "component", c.Name) // SPEC §13.1: with deployment_id and digest
 		return true, r.report(ctx, c.Name, contract.StateInstalled, nil)
 	}
 	if err := ctx.Err(); err != nil {
