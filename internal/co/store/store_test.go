@@ -553,3 +553,26 @@ func TestSitesListsEverySiteRetiredIncluded(t *testing.T) {
 		}
 	})
 }
+
+// SPEC §8.1.2, §11.3: a deployment with no report yet has no current status and an empty history,
+// on every backend; an unknown deployment has neither.
+func TestNoStatusBeforeTheFirstReport(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		s := newSites(t, newStore)
+		ctx := context.Background()
+		d := deployment(site1)
+		if err := s.ChangeSite(ctx, site1, func(deploy.SiteState, bool) (deploy.SiteChange, error) {
+			return deploy.SiteChange{Deployment: &d}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for name, id := range map[string]uuid.UUID{"stored": d.ID, "unknown": uuid.New()} {
+			if st, ok, err := s.CurrentStatus(ctx, id); ok || err != nil {
+				t.Errorf("%s deployment: current status %+v, %t, %v; want none", name, st, ok, err)
+			}
+			if h, err := s.StatusHistory(ctx, id); len(h) != 0 || err != nil {
+				t.Errorf("%s deployment: history %+v, %v; want empty", name, h, err)
+			}
+		}
+	})
+}

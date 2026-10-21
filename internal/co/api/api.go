@@ -6,7 +6,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"mime"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/balaji-balu/ieo/internal/co/auth"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
+	"github.com/balaji-balu/ieo/internal/co/httpapi"
 	"github.com/balaji-balu/ieo/internal/contract"
 )
 
@@ -75,20 +75,20 @@ func New(auth Authenticator, store Store, reporter Reporter, log *slog.Logger) h
 	s.mux.HandleFunc("DELETE /api/v1/capabilities/{deviceId...}", s.deleteCapabilities)
 	s.mux.HandleFunc("POST /api/v1/deployments/{deploymentId}/status", s.status)
 	// GET would otherwise reach the deployment route with digest "status".
-	s.mux.HandleFunc("GET /api/v1/deployments/{deploymentId}/status", methodNotAllowed("POST"))
+	s.mux.HandleFunc("GET /api/v1/deployments/{deploymentId}/status", httpapi.MethodNotAllowed("POST"))
 	// Other methods on a known path.
-	s.mux.HandleFunc("/api/v1/deployments", methodNotAllowed("GET, HEAD"))
-	s.mux.HandleFunc("/api/v1/bundles/{digest}", methodNotAllowed("GET, HEAD"))
-	s.mux.HandleFunc("/api/v1/capabilities/{deviceId...}", methodNotAllowed("PUT, DELETE"))
+	s.mux.HandleFunc("/api/v1/deployments", httpapi.MethodNotAllowed("GET, HEAD"))
+	s.mux.HandleFunc("/api/v1/bundles/{digest}", httpapi.MethodNotAllowed("GET, HEAD"))
+	s.mux.HandleFunc("/api/v1/capabilities/{deviceId...}", httpapi.MethodNotAllowed("PUT, DELETE"))
 	s.mux.HandleFunc("/api/v1/deployments/{deploymentId}/{digest}", func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("digest") == "status" {
-			methodNotAllowed("POST")(w, r)
+			httpapi.MethodNotAllowed("POST")(w, r)
 			return
 		}
-		methodNotAllowed("GET, HEAD")(w, r)
+		httpapi.MethodNotAllowed("GET, HEAD")(w, r)
 	})
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		problem(w, r, http.StatusNotFound, contract.ProblemAboutBlank, "", "no such resource")
+		httpapi.Problem(w, r, http.StatusNotFound, contract.ProblemAboutBlank, "", "no such resource")
 	})
 	return s
 }
@@ -123,12 +123,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // unauthorized answers a missing or unknown token, or a site that no longer exists (SPEC §15.6).
 func unauthorized(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
-	problem(w, r, http.StatusUnauthorized, contract.ProblemAboutBlank, "", "missing or unknown bearer token")
+	httpapi.Problem(w, r, http.StatusUnauthorized, contract.ProblemAboutBlank, "", "missing or unknown bearer token")
 }
 
 // retired answers a retired site (SPEC §11.1).
 func retired(w http.ResponseWriter, r *http.Request) {
-	problem(w, r, http.StatusForbidden, contract.ProblemNotAuthorized, "Client Relationship Retired",
+	httpapi.Problem(w, r, http.StatusForbidden, contract.ProblemNotAuthorized, "Client Relationship Retired",
 		"The WFM Client relationship has been retired by local policy.")
 }
 
@@ -139,7 +139,7 @@ func siteOf(r *http.Request) contract.SiteID {
 // manifest serves the caller's State Manifest (SPEC §4.1.6, §8.1.3).
 func (s *server) manifest(w http.ResponseWriter, r *http.Request) {
 	if !accepts(r.Header.Get("Accept"), contract.ManifestMediaType) {
-		problem(w, r, http.StatusNotAcceptable, contract.ProblemCannotGenerate, "Server Cannot Generate Response",
+		httpapi.Problem(w, r, http.StatusNotAcceptable, contract.ProblemCannotGenerate, "Server Cannot Generate Response",
 			"the manifest is available only as "+contract.ManifestMediaType)
 		return
 	}
@@ -175,7 +175,7 @@ func (s *server) deployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		problem(w, r, http.StatusNotFound, contract.ProblemDeploymentNotFound, "Deployment Not Found",
+		httpapi.Problem(w, r, http.StatusNotFound, contract.ProblemDeploymentNotFound, "Deployment Not Found",
 			"no deployment with this ID and digest")
 		return
 	}
@@ -198,7 +198,7 @@ func (s *server) bundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		problem(w, r, http.StatusNotFound, contract.ProblemInvalidBundle, "Invalid Bundle",
+		httpapi.Problem(w, r, http.StatusNotFound, contract.ProblemInvalidBundle, "Invalid Bundle",
 			"no bundle with this digest")
 		return
 	}
@@ -275,36 +275,5 @@ func accepts(header, mediaType string) bool {
 // internalError logs err and answers 500 without detail, so internals don't reach the caller.
 // The log carries the path and site, never request headers (SPEC §15.4).
 func (s *server) internalError(w http.ResponseWriter, r *http.Request, site contract.SiteID, err error) {
-	s.log.ErrorContext(r.Context(), "margo api request failed",
-		"method", r.Method, "path", r.URL.Path, "site_id", site, "error", err)
-	problem(w, r, http.StatusInternalServerError, contract.ProblemAboutBlank, "", "")
-}
-
-func methodNotAllowed(allow string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Allow", allow)
-		problem(w, r, http.StatusMethodNotAllowed, contract.ProblemAboutBlank, "", "")
-	}
-}
-
-// problem writes an RFC 9457 problem (SPEC §11.1). An empty title is the status text, as
-// about:blank requires.
-func problem(w http.ResponseWriter, r *http.Request, status int, typ, title, detail string) {
-	if title == "" {
-		title = http.StatusText(status)
-	}
-	writeProblem(w, contract.Problem{Type: typ, Title: title, Status: status, Detail: detail, Instance: r.URL.Path})
-}
-
-// writeProblem writes p as an RFC 9457 problem (SPEC §11.1).
-func writeProblem(w http.ResponseWriter, p contract.Problem) {
-	status := p.Status
-	b, err := json.Marshal(p)
-	if err != nil { // cannot happen: every field is a string or int
-		b = []byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`)
-	}
-	w.Header().Set("Content-Type", contract.ProblemMediaType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-	w.WriteHeader(status)
-	_, _ = w.Write(b)
+	httpapi.InternalError(w, r, s.log, "margo api request failed", err, "site_id", site)
 }

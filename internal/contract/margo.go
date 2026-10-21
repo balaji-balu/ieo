@@ -155,13 +155,20 @@ type DeploymentStatus struct {
 	Components             []ComponentStatus `json:"components"`
 }
 
-// MarshalJSON encodes nil Components as an empty array, as the Margo schema requires.
+// MarshalJSON encodes nil Components as an empty array, as the Margo schema requires, and leaves
+// out a zero DeviceID: Margo makes deviceId optional, and an empty one would not decode (§4.2).
 func (s DeploymentStatus) MarshalJSON() ([]byte, error) {
 	type plain DeploymentStatus
 	if s.Components == nil {
 		s.Components = []ComponentStatus{}
 	}
-	return json.Marshal(plain(s))
+	if s.DeviceID != (DeviceID{}) {
+		return json.Marshal(plain(s))
+	}
+	return json.Marshal(struct {
+		plain
+		DeviceID *DeviceID `json:"deviceId,omitempty"` // shadows plain's
+	}{plain: plain(s)})
 }
 
 // DeploymentState is the aggregate state of a deployment (SPEC §7.2).

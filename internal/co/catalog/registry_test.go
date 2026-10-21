@@ -88,7 +88,7 @@ func challenge(w http.ResponseWriter, _ *http.Request) {
 // importFrom imports version from host's repository through a CO registry client.
 func importFrom(t *testing.T, reg *ociremote.Client, host, version string) error {
 	t.Helper()
-	_, err := catalog.New(reg.Open, store.NewMemory()).Import(context.Background(), host+appPath, version)
+	_, _, err := catalog.New(reg.Open, store.NewMemory()).Import(context.Background(), host+appPath, version)
 	return err
 }
 
@@ -198,7 +198,7 @@ func TestSpec_17_2_ImportSendsNoCredentialAndPlainHTTPOnlyWhenInsecure(t *testin
 		reg := catalog.NewRegistry(false, quiet)
 		t.Cleanup(reg.Close)
 		for _, repository := range []string{"https://reg.example/app", "reg.example/app:1.2.3", "app"} {
-			_, err := catalog.New(reg.Open, store.NewMemory()).Import(context.Background(), repository, version)
+			_, _, err := catalog.New(reg.Open, store.NewMemory()).Import(context.Background(), repository, version)
 			if !errors.Is(err, catalog.ErrInvalidRepository) || errors.Is(err, catalog.ErrRegistry) {
 				t.Errorf("import from %q: %v; want ErrInvalidRepository and not ErrRegistry", repository, err)
 			}

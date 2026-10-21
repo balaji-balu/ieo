@@ -72,16 +72,16 @@ func NewMemory() *Memory {
 }
 
 // PutApp stores app unless its (ID, Version) is already stored, and returns the app stored for
-// that (ID, Version).
-func (m *Memory) PutApp(_ context.Context, app catalog.App) (catalog.App, error) {
+// that (ID, Version) and whether it stored app.
+func (m *Memory) PutApp(_ context.Context, app catalog.App) (catalog.App, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := appKey{app.ID, app.Version}
 	if stored, ok := m.apps[k]; ok {
-		return cloneApp(stored), nil
+		return cloneApp(stored), false, nil
 	}
 	m.apps[k] = cloneApp(app)
-	return cloneApp(app), nil
+	return cloneApp(app), true, nil
 }
 
 // App returns the stored app with that ID and version, and whether there is one.
@@ -388,4 +388,54 @@ func (m *Memory) Sites(context.Context) ([]deploy.Site, error) {
 	sites := slices.Collect(maps.Values(m.sites))
 	slices.SortFunc(sites, func(a, b deploy.Site) int { return strings.Compare(string(a.ID), string(b.ID)) })
 	return sites, nil
+}
+
+// Apps returns every stored app, without its Description.
+func (m *Memory) Apps(context.Context) ([]catalog.App, error) {
+	return m.appsWhere(func(catalog.App) bool { return true }), nil
+}
+
+// AppVersions returns the stored versions of app id, without their Description.
+func (m *Memory) AppVersions(_ context.Context, id string) ([]catalog.App, error) {
+	return m.appsWhere(func(a catalog.App) bool { return a.ID == id }), nil
+}
+
+func (m *Memory) appsWhere(keep func(catalog.App) bool) []catalog.App {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []catalog.App
+	for _, a := range m.apps {
+		if keep(a) {
+			a.Description = nil // a list does not serve it
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// Devices returns the devices of site, or of every site when site is "".
+func (m *Memory) Devices(_ context.Context, site contract.SiteID) ([]deploy.Device, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []deploy.Device
+	for id, caps := range m.devices {
+		if site == "" || id.Site == site {
+			out = append(out, deploy.Device{ID: id, Capabilities: cloneCapabilities(caps)})
+		}
+	}
+	return out, nil
+}
+
+// Deployments returns the deployments of site, or of every site when site is "", deleted ones
+// included.
+func (m *Memory) Deployments(_ context.Context, site contract.SiteID) ([]deploy.Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []deploy.Deployment
+	for _, sd := range m.deployments {
+		if site == "" || sd.site == site {
+			out = append(out, cloneDeployment(sd.d))
+		}
+	}
+	return out, nil
 }

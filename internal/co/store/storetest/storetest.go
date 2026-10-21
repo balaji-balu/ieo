@@ -17,6 +17,7 @@ import (
 	"github.com/balaji-balu/ieo/internal/co/auth"
 	"github.com/balaji-balu/ieo/internal/co/catalog"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
+	"github.com/balaji-balu/ieo/internal/co/operator"
 	"github.com/balaji-balu/ieo/internal/co/store"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres"
 	"github.com/balaji-balu/ieo/internal/contract"
@@ -38,6 +39,7 @@ type Store interface {
 	deploy.Store
 	api.Store
 	auth.Store
+	operator.Reader
 	// Deployment returns a deployment, and whether it exists.
 	Deployment(ctx context.Context, id uuid.UUID) (deploy.Deployment, bool, error)
 	// Blob returns the content stored under digest, and whether there is any.

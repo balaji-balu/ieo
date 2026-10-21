@@ -168,7 +168,7 @@ func TestSpec_17_2_ImportRejectsInvalidApplicationDescription(t *testing.T) {
 				f := newFixture(t, newStore)
 				tt.push(t, f.reg)
 
-				_, err := f.catalog.Import(context.Background(), repoA, version)
+				_, _, err := f.catalog.Import(context.Background(), repoA, version)
 				if !errors.Is(err, catalog.ErrInvalidPackage) {
 					t.Fatalf("Import: got error %v, want ErrInvalidPackage", err)
 				}
@@ -185,13 +185,13 @@ func TestSpec_17_2_ImportRejectsInvalidApplicationDescription(t *testing.T) {
 			ctx := context.Background()
 			f := newFixture(t, newStore)
 			f.reg.PushApp(t, repoA, version, []byte(description))
-			first, err := f.catalog.Import(ctx, repoA, version)
+			first, _, err := f.catalog.Import(ctx, repoA, version)
 			if err != nil {
 				t.Fatalf("first Import: %v", err)
 			}
 			f.reg.PushApp(t, repoB, version, []byte(strings.Replace(description, "name: Hello", "name: Hello again", 1)))
 
-			_, err = f.catalog.Import(ctx, repoB, version)
+			_, _, err = f.catalog.Import(ctx, repoB, version)
 			if !errors.Is(err, catalog.ErrConflict) {
 				t.Fatalf("second Import: got error %v, want ErrConflict", err)
 			}
@@ -212,16 +212,16 @@ func TestSpec_17_2_ReimportIdenticalVersionChangesNothing(t *testing.T) {
 		ctx := context.Background()
 		f := newFixture(t, newStore)
 		f.reg.PushApp(t, repoA, version, []byte(description))
-		first, err := f.catalog.Import(ctx, repoA, version)
-		if err != nil {
-			t.Fatalf("first Import: %v", err)
+		first, created, err := f.catalog.Import(ctx, repoA, version)
+		if err != nil || !created {
+			t.Fatalf("first Import: created %t, %v; want created", created, err)
 		}
 		// The same bytes from another repository (a mirror) are the same version.
 		f.reg.PushApp(t, repoB, version, []byte(description))
 
-		again, err := f.catalog.Import(ctx, repoB, version)
-		if err != nil {
-			t.Fatalf("re-Import: %v", err)
+		again, created, err := f.catalog.Import(ctx, repoB, version)
+		if err != nil || created {
+			t.Fatalf("re-Import: created %t, %v; want not created", created, err)
 		}
 		stored, ok, _ := f.store.App(ctx, appID, version)
 		if !ok {
@@ -241,7 +241,7 @@ func TestImportStoresExactDescriptionBytes(t *testing.T) {
 		f := newFixture(t, newStore)
 		f.reg.PushApp(t, repoA, version, []byte(description))
 
-		app, err := f.catalog.Import(ctx, repoA, version)
+		app, _, err := f.catalog.Import(ctx, repoA, version)
 		if err != nil {
 			t.Fatalf("Import: %v", err)
 		}
@@ -267,7 +267,7 @@ func TestImportUnknownTagIsNotInvalidPackage(t *testing.T) {
 		f := newFixture(t, newStore)
 		f.reg.PushApp(t, repoA, version, []byte(description))
 
-		_, err := f.catalog.Import(context.Background(), repoA, "9.9.9")
+		_, _, err := f.catalog.Import(context.Background(), repoA, "9.9.9")
 		if err == nil || errors.Is(err, catalog.ErrInvalidPackage) {
 			t.Fatalf("Import of a missing tag: got %v, want a registry error", err)
 		}

@@ -66,9 +66,9 @@ func status(id uuid.UUID, device string, adopted contract.ManifestVersion, state
 		panic(err)
 	}
 	if device == "" {
-		return strings.Replace(string(b), `"deviceId":"",`, "", 1)
+		return string(b) // a zero DeviceID is left out
 	}
-	return strings.Replace(string(b), `"deviceId":""`, `"deviceId":"`+device+`"`, 1)
+	return strings.Replace(string(b), `"adoptedManifestVersion"`, `"deviceId":"`+device+`","adoptedManifestVersion"`, 1)
 }
 
 func (f fixture) reportStatus(site contract.SiteID, id uuid.UUID, body string, want int) {

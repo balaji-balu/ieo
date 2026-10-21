@@ -117,7 +117,7 @@ func (h harness) deploy(ctx context.Context, s coStore) (d deploy.Deployment, pr
 	readOnly := func(ctx context.Context, repository string) (oras.ReadOnlyTarget, error) {
 		return h.open(ctx, repository)
 	}
-	app, err := catalog.New(readOnly, s).Import(ctx, h.appRepository, desc.Metadata.Version)
+	app, _, err := catalog.New(readOnly, s).Import(ctx, h.appRepository, desc.Metadata.Version)
 	if err != nil {
 		return deploy.Deployment{}, nil, false, err
 	}

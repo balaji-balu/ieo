@@ -7,6 +7,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/balaji-balu/ieo/internal/co/store/postgres/ent/app"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres/ent/blob"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres/ent/deployment"
+	"github.com/balaji-balu/ieo/internal/co/store/postgres/ent/device"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres/ent/publication"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres/ent/site"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres/ent/status"
@@ -54,24 +56,25 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // PutApp stores app unless its (ID, Version) is already stored, and returns the app stored for
-// that (ID, Version).
-func (s *Store) PutApp(ctx context.Context, a catalog.App) (catalog.App, error) {
+// that (ID, Version) and whether it stored app.
+func (s *Store) PutApp(ctx context.Context, a catalog.App) (catalog.App, bool, error) {
 	err := s.client.App.Create().
 		SetAppID(a.ID).SetVersion(a.Version).SetRepository(a.Repository).
 		SetDescription(a.Description).SetDigest(string(a.Digest)).
 		OnConflictColumns(app.FieldAppID, app.FieldVersion).DoNothing().
 		Exec(ctx)
+	created := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) { // no row: the version was stored before
-		return catalog.App{}, fmt.Errorf("put app %s %s: %w", a.ID, a.Version, err)
+		return catalog.App{}, false, fmt.Errorf("put app %s %s: %w", a.ID, a.Version, err)
 	}
 	stored, ok, err := s.App(ctx, a.ID, a.Version)
 	switch {
 	case err != nil:
-		return catalog.App{}, err
+		return catalog.App{}, false, err
 	case !ok:
-		return catalog.App{}, fmt.Errorf("put app %s %s: not stored", a.ID, a.Version)
+		return catalog.App{}, false, fmt.Errorf("put app %s %s: not stored", a.ID, a.Version)
 	}
-	return stored, nil
+	return stored, created, nil
 }
 
 // App returns the stored app with that ID and version, and whether there is one.
@@ -202,7 +205,8 @@ func (s *Store) SiteByToken(ctx context.Context, hash auth.TokenHash) (contract.
 // CurrentStatus returns the current status of a deployment, and whether it has one.
 func (s *Store) CurrentStatus(ctx context.Context, id uuid.UUID) (contract.DeploymentStatus, bool, error) {
 	row, err := s.client.Deployment.Query().Where(deployment.ID(id)).Select(deployment.FieldCurrentStatus).Only(ctx)
-	if ent.IsNotFound(err) || err == nil && row.CurrentStatus == nil {
+	// ent scans a NULL bytea as a pointer to a nil slice, not a nil pointer.
+	if ent.IsNotFound(err) || err == nil && (row.CurrentStatus == nil || len(*row.CurrentStatus) == 0) {
 		return contract.DeploymentStatus{}, false, nil
 	}
 	if err != nil {
@@ -259,4 +263,66 @@ func (s *Store) Ping(ctx context.Context) error {
 		return fmt.Errorf("ping co store: %w", err)
 	}
 	return nil
+}
+
+// Apps returns every stored app, without its Description.
+func (s *Store) Apps(ctx context.Context) ([]catalog.App, error) {
+	return s.apps(ctx, s.client.App.Query())
+}
+
+// AppVersions returns the stored versions of app id, without their Description.
+func (s *Store) AppVersions(ctx context.Context, id string) ([]catalog.App, error) {
+	return s.apps(ctx, s.client.App.Query().Where(app.AppID(id)))
+}
+
+func (s *Store) apps(ctx context.Context, q *ent.AppQuery) ([]catalog.App, error) {
+	rows, err := q.Select(app.FieldAppID, app.FieldVersion, app.FieldRepository, app.FieldDigest).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list apps: %w", err)
+	}
+	out := make([]catalog.App, len(rows))
+	for i, a := range rows {
+		out[i] = catalog.App{ID: a.AppID, Version: a.Version, Repository: a.Repository, Digest: contract.Digest(a.Digest)}
+	}
+	return out, nil
+}
+
+// Devices returns the devices of site, or of every site when site is "".
+func (s *Store) Devices(ctx context.Context, siteID contract.SiteID) ([]deploy.Device, error) {
+	q := s.client.Device.Query()
+	if siteID != "" {
+		q = q.Where(device.SiteID(string(siteID)))
+	}
+	rows, err := q.All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	out := make([]deploy.Device, len(rows))
+	for i, r := range rows {
+		out[i].ID = contract.DeviceID{Site: contract.SiteID(r.SiteID), Host: contract.HostID(r.Host)}
+		if err := json.Unmarshal(r.Capabilities, &out[i].Capabilities); err != nil {
+			return nil, fmt.Errorf("decode capabilities of %s: %w", out[i].ID, err)
+		}
+	}
+	return out, nil
+}
+
+// Deployments returns the deployments of site, or of every site when site is "", deleted ones
+// included.
+func (s *Store) Deployments(ctx context.Context, siteID contract.SiteID) ([]deploy.Deployment, error) {
+	q := s.client.Deployment.Query()
+	if siteID != "" {
+		q = q.Where(deployment.SiteID(string(siteID)))
+	}
+	rows, err := q.All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list deployments: %w", err)
+	}
+	out := make([]deploy.Deployment, len(rows))
+	for i, r := range rows {
+		if out[i], err = deploymentOf(r); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }

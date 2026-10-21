@@ -125,12 +125,16 @@ jobs:
             PG_USER=u PG_PASSWORD=p PG_DB=d PG_HOST=postgres GITHUB_TOKEN= \
             docker compose -f deploy/compose/docker-compose.yaml config -q
 
-      # SPEC §15.6: the site's NATS password, new for each run. Compose needs it for every command.
-      - name: Make the site's NATS password
+      # SPEC §15.6: the site's NATS password and the CO's operator token, new for each run. Compose
+      # needs both for every command.
+      - name: Make the site's NATS password and the operator token
         run: |
           password=$(openssl rand -hex 24)
           echo "::add-mask::$password"
           echo "SITE_NATS_PASSWORD=$password" >> "$GITHUB_ENV"
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          echo "CO_OPERATOR_TOKEN=$token" >> "$GITHUB_ENV"
 
       # The LO needs its site's token, which only the CO issues (docs/dev-setup.md).
       - name: Start the CO
@@ -238,22 +242,26 @@ jobs:
         run: |
           $COMPOSE logs --no-color en1 | grep '"msg":"component installed"' | grep -F "\"deployment_id\":\"$DEPLOYMENT_ID\"" | grep -qF '"host_id":"host-1"'
 
-      # SPEC §8.7, §8.8: the LO maps host-1's reports to a DeploymentStatus and the CO takes it.
-      # Roadmap E6 reads it with `edgectl deployment status` instead.
-      - name: The CO holds the deployment's installed status
+      # SPEC §8.7, §8.8, §11.3: the LO maps host-1's reports to a DeploymentStatus, the CO takes it,
+      # and the operator API serves it, only with the operator token. Roadmap E6 reads it with
+      # `edgectl deployment status` instead.
+      - name: The operator API serves the deployment's installed status
         run: |
-          query="SELECT convert_from(status, 'UTF8') FROM co_statuses WHERE deployment_id = '$DEPLOYMENT_ID' ORDER BY id DESC LIMIT 1"
+          url="http://localhost:8443/api/v1/deployments/$DEPLOYMENT_ID/status"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+          test "$code" = 401 || { echo "without the operator token: $code, want 401"; exit 1; }
+          # A failed request or a body that is not JSON is retried, not the end of the step.
           for i in $(seq 30); do
-            latest=$($COMPOSE exec -T postgres psql -U postgres -d orchestration -tAc "$query")
-            case $latest in *'"status":{"state":"installed"'*) break ;; esac
+            status=$(curl -sS -H "Authorization: Bearer $CO_OPERATOR_TOKEN" "$url" || true)
+            current=$(echo "$status" | jq -c .current 2>/dev/null || echo null)
+            test "$(echo "$current" | jq -r '.status.state // empty')" = installed && break
             sleep 2
           done
-          echo "$latest"
-          case $latest in
-            *'"status":{"state":"installed"'*) ;;
-            *) echo "no installed status for $DEPLOYMENT_ID"; $COMPOSE logs --no-color lo | tail -40; exit 1 ;;
-          esac
-          echo "$latest" | grep -qF '"deviceId":"00000000-0000-4000-8000-000000000001/host-1"'
+          echo "$status"
+          test "$(echo "$current" | jq -r '.status.state // empty')" = installed ||
+            { echo "no installed status for $DEPLOYMENT_ID"; $COMPOSE logs --no-color lo | tail -40; exit 1; }
+          test "$(echo "$current" | jq -r .deviceId)" = 00000000-0000-4000-8000-000000000001/host-1
+          test "$(echo "$current" | jq '.components | length')" = 1
 
       - name: The token appears in no log (SPEC §15.4)
         run: |
@@ -265,6 +273,12 @@ jobs:
         run: |
           if $COMPOSE logs --no-color | grep -qF "$SITE_NATS_PASSWORD"; then
             echo "a log contains the NATS password"; exit 1
+          fi
+
+      - name: The operator token appears in no log (SPEC §15.4)
+        run: |
+          if $COMPOSE logs --no-color | grep -qF "$CO_OPERATOR_TOKEN"; then
+            echo "a log contains the operator token"; exit 1
           fi
 
       # SPEC §17.6 idempotency, end to end: after a restart en1 sends its Inventory on connect, the
