@@ -680,6 +680,8 @@ Rules:
 failed > removing > installing > pending > installed > removed
 ```
 
+`[IEO]` A gateway status with no component entries (§8.7) has the state §8.7 gives it.
+
 ### 7.3 Host Liveness (LO)
 
 1. `Unknown` — host known from durable store, no heartbeat since LO start.
@@ -885,8 +887,12 @@ For each desired deployment:
 
 - Directed (`<site_id>/<host_id>`):
   - Unknown host → status `failed`, error code `101` (unknown child device), source = LO device ID.
-  - Host fails `eligibilityRules` → status `failed`.
-  - The LO SHOULD check `capacityRequirements`; failure → status `failed`.
+    `[IEO]` A host is unknown when the LO's `hosts` (§4.1.11) has no record of it: no EN has
+    reported as that host to this LO. Once the host reports, its own statuses replace the `101`
+    (§8.7).
+  - Host fails `eligibilityRules` → status `failed`, error code `IEO-NO-ELIGIBLE-HOST` `[IEO]`.
+  - The LO SHOULD check `capacityRequirements`; failure → status `failed`, error code
+    `IEO-NO-ELIGIBLE-HOST` `[IEO]`.
 - Autonomous (`<site_id>/*`): use the stored Placement if it exists and its host is not
   decommissioned and still satisfies the constraints; otherwise place (§8.6).
 - If `lo.placement.enabled` is false, autonomous deployments get status `failed` with error code
@@ -953,7 +959,7 @@ become a better fit.
 When an EN component status event or inventory changes a deployment's state on a host, the LO
 builds a DeploymentStatus:
 
-- `deploymentId`
+- `deploymentId` = the ID the manifest lists the deployment under, whatever the YAML's `id` says.
 - `deviceId` = `<site_id>/<host_id>` of the host (for autonomous deployments, the placed host).
 - `adoptedManifestVersion` = the `adopted_manifest_version` recorded for this deployment's current
   digest (§8.2 step 6), not simply the latest manifest fetched.
@@ -966,14 +972,16 @@ builds a DeploymentStatus:
 
 `[IEO]` A gateway error (§8.4) is a deployment-level failure that no host reported. The LO builds
 its DeploymentStatus when the deployment first fails target resolution at its current digest, or
-fails with another error code, and not again while that stays the same:
+fails with another error code, and not again while that stays the same. This is held in memory: an
+LO restart may report it once more, which the CO records like any other report (§8.1.2).
 
 - `deviceId` = the directed target, when it is a host of the LO's site; otherwise the LO's device
   ID (`<site_id>`).
 - `status.state` = `failed`, and `status.error` = `{code, source, message}` with `source` the LO's
   device ID.
 - `components`: one entry per component that the deployment YAML names, each `failed` with the same
-  error, so §7.2 gives `failed`. A YAML the LO cannot read for component names gives no entries.
+  error, so §7.2 gives `failed`. A YAML the LO cannot read for component names gives no entries,
+  and the state is still `failed` (§7.2).
 
 The LO writes the DeploymentStatus to the outbox, then tries to send it.
 
@@ -1138,7 +1146,8 @@ This section collects the reporting rules in one place.
   - `101` unknown child device ID `[Margo]`
   - `102` child device unreachable `[Margo]`
   - `103` autonomous placement not supported `[Margo]`
-  - `IEO-NO-ELIGIBLE-HOST` no host satisfies constraints `[IEO]`
+  - `IEO-NO-ELIGIBLE-HOST` no host satisfies constraints: the directed host, or every host for an
+    autonomous deployment (§8.4, §8.6) `[IEO]`
   - `IEO-INVALID-DEPLOYMENT` a desired deployment the LO cannot resolve to a host: its YAML fails
     §8.9 step 2, its `id` is not the `deploymentId` the manifest lists, or its `deviceId` names
     another site (§8.4); a gateway error, never sent to an EN `[IEO]`
@@ -1333,14 +1342,15 @@ authenticates with a static bearer token (`co.operator_token`; transport and tok
   operation.
 - Lists are JSON arrays, `[]` when empty, in the order given per operation.
 
-`[IEO]` Operations specified so far. The CO answers the others in the table with `404` until a
-later revision specifies them (update and delete: roadmap slices F and G; sites: slice N):
+`[IEO]` Operations specified so far. The CO serves only these until a later revision specifies the
+others in the table (update and delete: roadmap slices F and G; sites: slice N). By the common
+rules, another method on a path below gets `405`, and any other path `404`:
 
 | Request | Success | Errors |
 | --- | --- | --- |
-| `POST /api/v1/apps` `{repository, version}` | `201` App, or `200` App for an identical re-import (§5.3) | `422` a §5.3 rejection, with its reason; `409` the version is imported with other content; `502` the registry could not be reached, or answered with an error |
-| `GET /api/v1/apps` | `200` [App], by `id` then `version` | |
-| `GET /api/v1/apps/{appId}` | `200` [App] of that application, by `version` | `404` none imported |
+| `POST /api/v1/apps` `{repository, version}` | `201` App, or `200` App for an identical re-import (§5.3) | `422` a §5.3 rejection, or a repository or tag the registry does not have (registry `404`), with its reason; `409` the version is imported with other content; `502` the registry could not be reached, or answered with any other error |
+| `GET /api/v1/apps` | `200` [App], by `id`, then by `version` as exact strings (bytewise) | |
+| `GET /api/v1/apps/{appId}` | `200` [App] of that application, by `version` as exact strings | `404` none imported |
 | `GET /api/v1/devices[?site=<site_id>]` | `200` [Device], by `deviceId` | `404` unknown site |
 | `POST /api/v1/deployments` `{appId, version, profile?, target, name?, namespace?, parameters?}` | `201` Deployment | `404` the application version is not imported; `422` no such compose profile, several and none named, or a failed §8.1.1 check (unknown or retired site, unknown host, constraints, parameters), with its reason |
 | `GET /api/v1/deployments[?site=<site_id>]` | `200` [Deployment], by `id` | `404` unknown site |
@@ -1355,8 +1365,8 @@ Resources:
 - Device: `{deviceId, capabilities}`, the device's last capability report as the LO sent it
   (§4.1.3). The gateway is listed with `deviceId` `<site_id>`.
 - Deployment: `{id, appId, version, profile, target, name, namespace, parameters, digest,
-  deleted}`. `profile` is the selected profile's `id`; `target` is the Margo device ID it was
-  created for (§4.2); `parameters` holds the request's values by name; `digest` is the current
+  deleted}`. `profile` is the selected profile's `id`; `target` is its current target, a Margo
+  device ID (§4.2); `parameters` holds the request's values by name; `digest` is the current
   deployment YAML's (§4.1.5).
 - Status: `current` is the deployment's current DeploymentStatus (§8.1.2), `null` before its first
   report; `history` is every DeploymentStatus received for it, oldest first, `[]` before the first.
@@ -1964,8 +1974,9 @@ endpoints (§11.3 holds IEO-specific operations).
 - `status.state` follows the precedence in §7.2 for every combination of two component states.
 - `deviceId` is the placed host for autonomous deployments.
 - Error `source` follows §8.7.
-- A desired deployment the LO cannot resolve (§8.4) is reported once at its digest: `failed` with
-  `IEO-INVALID-DEPLOYMENT`, or `103` for an autonomous one before placement, with `status.error`
+- A desired deployment the LO cannot resolve (§8.4) is reported once per LO run at its digest and
+  error code, under the manifest's `deploymentId`: `failed` with `IEO-INVALID-DEPLOYMENT`, or
+  `103` for an autonomous one before placement, with `status.error`
   and every component carrying the error, source = LO device ID, and `deviceId` the directed host
   of this site or else the LO's device ID.
 - While the CO is unreachable, the outbox keeps only the latest status per deployment.
