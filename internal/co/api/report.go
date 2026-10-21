@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -131,17 +130,16 @@ func (s *server) deviceID(w http.ResponseWriter, r *http.Request) (contract.Devi
 
 // readBody reads at most maxBody bytes of the request body, or answers 400 or 413.
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-	var tooLarge *http.MaxBytesError
-	switch {
-	case errors.As(err, &tooLarge):
-		httpapi.Problem(w, r, http.StatusRequestEntityTooLarge, contract.ProblemAboutBlank, "", "")
-		return nil, false
-	case err != nil:
-		httpapi.Problem(w, r, http.StatusBadRequest, contract.ProblemInvalidRequest, "Invalid Request", "unreadable request body")
-		return nil, false
+	b, code := httpapi.ReadBody(w, r, maxBody)
+	switch code {
+	case 0:
+		return b, true
+	case http.StatusRequestEntityTooLarge:
+		httpapi.Problem(w, r, code, contract.ProblemAboutBlank, "", "")
+	default:
+		httpapi.Problem(w, r, code, contract.ProblemInvalidRequest, "Invalid Request", "unreadable request body")
 	}
-	return b, true
+	return nil, false
 }
 
 // badBody answers a body that failed decoding: 400 for malformed JSON, 422 otherwise (SPEC

@@ -390,12 +390,12 @@ func (m *Memory) Sites(context.Context) ([]deploy.Site, error) {
 	return sites, nil
 }
 
-// Apps returns every stored app.
+// Apps returns every stored app, without its Description.
 func (m *Memory) Apps(context.Context) ([]catalog.App, error) {
 	return m.appsWhere(func(catalog.App) bool { return true }), nil
 }
 
-// AppVersions returns the stored versions of app id.
+// AppVersions returns the stored versions of app id, without their Description.
 func (m *Memory) AppVersions(_ context.Context, id string) ([]catalog.App, error) {
 	return m.appsWhere(func(a catalog.App) bool { return a.ID == id }), nil
 }
@@ -406,7 +406,8 @@ func (m *Memory) appsWhere(keep func(catalog.App) bool) []catalog.App {
 	var out []catalog.App
 	for _, a := range m.apps {
 		if keep(a) {
-			out = append(out, cloneApp(a))
+			a.Description = nil // a list does not serve it
+			out = append(out, a)
 		}
 	}
 	return out

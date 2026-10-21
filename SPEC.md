@@ -1350,7 +1350,7 @@ rules, another method on a path below gets `405`, and any other path `404`:
 
 | Request | Success | Errors |
 | --- | --- | --- |
-| `POST /api/v1/apps` `{repository, version}` | `201` App, or `200` App for an identical re-import (§5.3) | `422` a §5.3 rejection, or a repository or tag the registry does not have (registry `404`), with its reason; `409` the version is imported with other content; `502` the registry could not be reached, or answered with any other error |
+| `POST /api/v1/apps` `{repository, version}` | `201` App, or `200` App for an identical re-import (§5.3) | `422` a §5.3 rejection, or a repository or tag the registry does not have (registry `404`), with its reason; `409` the version is imported with other content; `502` the registry could not be reached, answered with any other error, or the import did not finish within 2 minutes |
 | `GET /api/v1/apps` | `200` [App], by `id`, then by `version` as exact strings (bytewise) | |
 | `GET /api/v1/apps/{appId}` | `200` [App] of that application, by `version` as exact strings | `404` none imported |
 | `GET /api/v1/devices[?site=<site_id>]` | `200` [Device], by `deviceId` | `404` unknown site |

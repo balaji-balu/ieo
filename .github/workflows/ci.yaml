@@ -250,9 +250,10 @@ jobs:
           url="http://localhost:8443/api/v1/deployments/$DEPLOYMENT_ID/status"
           code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
           test "$code" = 401 || { echo "without the operator token: $code, want 401"; exit 1; }
+          # A failed request or a body that is not JSON is retried, not the end of the step.
           for i in $(seq 30); do
-            status=$(curl -fsS -H "Authorization: Bearer $CO_OPERATOR_TOKEN" "$url")
-            current=$(echo "$status" | jq -c .current)
+            status=$(curl -sS -H "Authorization: Bearer $CO_OPERATOR_TOKEN" "$url" || true)
+            current=$(echo "$status" | jq -c .current 2>/dev/null || echo null)
             test "$(echo "$current" | jq -r '.status.state // empty')" = installed && break
             sleep 2
           done

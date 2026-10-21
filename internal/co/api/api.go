@@ -275,7 +275,5 @@ func accepts(header, mediaType string) bool {
 // internalError logs err and answers 500 without detail, so internals don't reach the caller.
 // The log carries the path and site, never request headers (SPEC §15.4).
 func (s *server) internalError(w http.ResponseWriter, r *http.Request, site contract.SiteID, err error) {
-	s.log.ErrorContext(r.Context(), "margo api request failed",
-		"method", r.Method, "path", r.URL.Path, "site_id", site, "error", err)
-	httpapi.Problem(w, r, http.StatusInternalServerError, contract.ProblemAboutBlank, "", "")
+	httpapi.InternalError(w, r, s.log, "margo api request failed", err, "site_id", site)
 }

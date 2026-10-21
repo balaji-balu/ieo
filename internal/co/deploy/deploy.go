@@ -27,6 +27,9 @@ var (
 	// ErrInvalidRequest: the request can't name a deployment (no such profile, a target that is
 	// not a host or `<site>/*`, an update moving a deployment to another site).
 	ErrInvalidRequest = errors.New("invalid deployment request")
+	// ErrInvalidTarget, which also wraps ErrInvalidRequest: the target names a site, not a host or
+	// `<site>/*` (SPEC §11.3: a 400, not a 422).
+	ErrInvalidTarget = fmt.Errorf("%w: invalid target", ErrInvalidRequest)
 	// ErrCheckFailed: a preliminary check of SPEC §8.1.1 failed.
 	ErrCheckFailed = errors.New("preliminary check failed")
 	// ErrNotAuthorized: a report names a device of another site (SPEC §11.1).
@@ -334,7 +337,7 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 // update the deployment must exist and stay at its site.
 func (s *Service) put(ctx context.Context, id uuid.UUID, req Request, update bool) (Deployment, error) {
 	if req.Target.Host == "" && !req.Target.Autonomous {
-		return Deployment{}, fmt.Errorf("%w: target %s is a site, not `<site>/<host>` or `<site>/*`", ErrInvalidRequest, req.Target)
+		return Deployment{}, fmt.Errorf("%w: %s names a site; want `<site>/<host>` or `<site>/*`", ErrInvalidTarget, req.Target)
 	}
 	if update {
 		site, ok, err := s.store.DeploymentSite(ctx, id)

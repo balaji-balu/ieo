@@ -196,3 +196,30 @@ func TestParseComponentTimeout(t *testing.T) {
 		}
 	}
 }
+
+// SPEC §4.1.9, §4.2: Margo makes deviceId optional. A status without one encodes without the key,
+// and decodes back; an empty deviceId would not decode.
+func TestDeploymentStatusWithoutDeviceIDRoundTrips(t *testing.T) {
+	s := contract.DeploymentStatus{
+		DeploymentID: uuid.MustParse("00000000-0000-4000-8000-000000000001"), AdoptedManifestVersion: 1,
+		Status: contract.DeploymentState{State: contract.StatePending},
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "deviceId") {
+		t.Errorf("encoded %s; want no deviceId", b)
+	}
+	var got contract.DeploymentStatus
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode %s: %v", b, err)
+	}
+	if got.DeviceID != (contract.DeviceID{}) || got.DeploymentID != s.DeploymentID {
+		t.Errorf("decoded %+v, want %+v", got, s)
+	}
+	s.DeviceID = contract.DeviceID{Site: "site-1", Host: "host-1"}
+	if b, err := json.Marshal(s); err != nil || !strings.Contains(string(b), `"deviceId":"site-1/host-1"`) {
+		t.Errorf("with a device ID: %s, %v", b, err)
+	}
+}

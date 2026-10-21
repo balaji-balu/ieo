@@ -62,7 +62,7 @@ type Reader interface {
 }
 
 // DefaultImportTimeout bounds an import, so that a registry that stalls does not hold the request
-// open: the import then fails as an unreachable registry does (SPEC §11.3, `502`).
+// open: the import then fails as an unreachable registry does (SPEC §11.3: `502` after 2 minutes).
 const DefaultImportTimeout = 2 * time.Minute
 
 // maxBody bounds a request body (SPEC §11.3): an import or create request is a few hundred bytes.
@@ -221,10 +221,6 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, http.StatusBadRequest, "target: "+err.Error())
 		return
 	}
-	if target.Host == "" && !target.Autonomous { // SPEC §11.3: a site is not a target
-		problem(w, r, http.StatusBadRequest, "target "+req.Target+" names a site; want <site>/<host> or <site>/*")
-		return
-	}
 	params := req.Parameters
 	if params == nil {
 		params = map[string]any{}
@@ -234,6 +230,8 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name, Namespace: req.Namespace, Parameters: params,
 	})
 	switch {
+	case errors.Is(err, deploy.ErrInvalidTarget): // SPEC §11.3: a site is not a target
+		problem(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, deploy.ErrNotFound):
 		problem(w, r, http.StatusNotFound, err.Error())
 	case errors.Is(err, deploy.ErrInvalidRequest), errors.Is(err, deploy.ErrCheckFailed):
@@ -373,14 +371,14 @@ func deploymentOf(d deploy.Deployment) operatorapi.Deployment {
 // decode reads the request body into v, or answers 400 or 413: a body that is not one JSON value
 // or has an unknown field is a 400 (SPEC §11.3).
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-	var tooLarge *http.MaxBytesError
-	switch {
-	case errors.As(err, &tooLarge):
-		problem(w, r, http.StatusRequestEntityTooLarge, fmt.Sprintf("the request body is larger than %d bytes", maxBody))
+	b, code := httpapi.ReadBody(w, r, maxBody)
+	switch code {
+	case 0:
+	case http.StatusRequestEntityTooLarge:
+		problem(w, r, code, fmt.Sprintf("the request body is larger than %d bytes", maxBody))
 		return false
-	case err != nil:
-		problem(w, r, http.StatusBadRequest, "unreadable request body")
+	default:
+		problem(w, r, code, "unreadable request body")
 		return false
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
@@ -438,6 +436,5 @@ func problem(w http.ResponseWriter, r *http.Request, code int, detail string) {
 // internalError logs err and answers 500 without detail, so internals don't reach the caller.
 // The log carries the method and path, never request headers (SPEC §15.4).
 func (s *server) internalError(w http.ResponseWriter, r *http.Request, err error) {
-	s.Log.ErrorContext(r.Context(), "operator api request failed", "method", r.Method, "path", r.URL.Path, "error", err)
-	problem(w, r, http.StatusInternalServerError, "")
+	httpapi.InternalError(w, r, s.Log, "operator api request failed", err)
 }
