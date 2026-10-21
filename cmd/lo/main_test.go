@@ -316,8 +316,11 @@ func TestSpec_17_7_NoCredentialOrTokenInLOLogs(t *testing.T) {
 	refused := startLO(t, loEnv(t, srv.URL, "not-"+token, "LO_TLS_CA_FILE", ca))
 	refused.waitOutcome("Unreachable")
 
+	// The published deployment is not one an EN would take, so the LO reports it failed (SPEC
+	// §8.4), and the fake CO does not take the status: a failed status send is logged too.
 	accepted := startLO(t, loEnv(t, srv.URL, token, "LO_TLS_CA_FILE", ca))
 	accepted.waitOutcome("Accepted")
+	accepted.waitMsg("status not sent")
 
 	co.Override(manifestPath, synctest.Respond(http.StatusTemporaryRedirect, nil, "Location", srv.URL+"/elsewhere?token="+token))
 	redirected := startLO(t, loEnv(t, srv.URL, token, "LO_TLS_CA_FILE", ca))
@@ -383,8 +386,15 @@ func TestLOSyncsAndPersistsToDataDir(t *testing.T) {
 	second := startLO(t, env)
 	second.waitOutcome("NotModified")
 	second.stop()
-	reqs := co.TakeRequests()
-	if len(reqs) == 0 || reqs[0].Header.Get("If-None-Match") != etag {
+	// The first manifest request; the status outbox sends its own requests too (SPEC §8.8).
+	var manifestReq *http.Request
+	for _, r := range co.TakeRequests() {
+		if r.Method == http.MethodGet && r.URL.Path == manifestPath {
+			manifestReq = r
+			break
+		}
+	}
+	if manifestReq == nil || manifestReq.Header.Get("If-None-Match") != etag {
 		t.Errorf("the restarted LO did not send If-None-Match %s", etag)
 	}
 }

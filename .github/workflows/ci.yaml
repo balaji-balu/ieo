@@ -238,6 +238,23 @@ jobs:
         run: |
           $COMPOSE logs --no-color en1 | grep '"msg":"component installed"' | grep -F "\"deployment_id\":\"$DEPLOYMENT_ID\"" | grep -qF '"host_id":"host-1"'
 
+      # SPEC §8.7, §8.8: the LO maps host-1's reports to a DeploymentStatus and the CO takes it.
+      # Roadmap E6 reads it with `edgectl deployment status` instead.
+      - name: The CO holds the deployment's installed status
+        run: |
+          query="SELECT convert_from(status, 'UTF8') FROM co_statuses WHERE deployment_id = '$DEPLOYMENT_ID' ORDER BY id DESC LIMIT 1"
+          for i in $(seq 30); do
+            latest=$($COMPOSE exec -T postgres psql -U postgres -d orchestration -tAc "$query")
+            case $latest in *'"status":{"state":"installed"'*) break ;; esac
+            sleep 2
+          done
+          echo "$latest"
+          case $latest in
+            *'"status":{"state":"installed"'*) ;;
+            *) echo "no installed status for $DEPLOYMENT_ID"; $COMPOSE logs --no-color lo | tail -40; exit 1 ;;
+          esac
+          echo "$latest" | grep -qF '"deviceId":"00000000-0000-4000-8000-000000000001/host-1"'
+
       - name: The token appears in no log (SPEC §15.4)
         run: |
           if $COMPOSE logs --no-color | grep -qF "$LO_SITE_TOKEN"; then
