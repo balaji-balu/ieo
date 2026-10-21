@@ -108,8 +108,9 @@ func (h *hookedRunner) Up(ctx context.Context, p compose.Project, o compose.UpOp
 // failingStore is the EN store with writes that can be made to fail, and a hook after a read.
 type failingStore struct {
 	*store.Bolt
-	putApplied   error
-	markRemoving error
+	putApplied      error
+	resetComponents error
+	markRemoving    error
 	// afterLoad, if set, runs when Load has read the store and before it returns.
 	afterLoad func()
 }
@@ -127,6 +128,13 @@ func (s *failingStore) PutApplied(ctx context.Context, id uuid.UUID, a store.App
 		return s.putApplied
 	}
 	return s.Bolt.PutApplied(ctx, id, a)
+}
+
+func (s *failingStore) ResetComponents(ctx context.Context, id uuid.UUID, names []string) error {
+	if s.resetComponents != nil {
+		return s.resetComponents
+	}
+	return s.Bolt.ResetComponents(ctx, id, names)
 }
 
 func (s *failingStore) MarkRemoving(ctx context.Context, id uuid.UUID) error {
@@ -808,6 +816,45 @@ func TestSpec_17_6_ApplyDropsStateOfRemovedComponent(t *testing.T) {
 	// The db project stays recorded until SPEC §8.9 step 5 or a Remove brings it down.
 	f.assertStored(digestB, []string{project("web"), project("db")}, "web installed")
 	f.assertInventoryStates(digestB, "web installed")
+}
+
+// SPEC §17.6: "An Apply at the applied digest with every component of the profile `installed` and
+// a recorded state for another component is not skipped, and deletes that state." An EN store
+// written before the Apply deleted such states can hold one (SPEC §8.9 step 1).
+func TestSpec_17_6_ApplyNotSkippedWithStaleComponent(t *testing.T) {
+	f := newFixture(t)
+	f.push("web")
+	f.apply(digestA, deployment("web"))
+	f.pub.take()
+	if err := f.store.PutComponentStatus(ctx, deploymentID, contract.ComponentStatus{Name: "db", State: contract.StateRemoving}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.apply(digestA, deployment("web"))
+
+	f.assertEvents("web installing", "web installed")
+	f.assertStored(digestA, []string{project("web")}, "web installed")
+	f.assertInventoryStates(digestA, "web installed")
+}
+
+// An Apply that can't record its components `pending` publishes nothing and brings nothing up, so
+// no event says more than the record (ADR 0016).
+func TestApplyStopsWhenResetFails(t *testing.T) {
+	f := newFixture(t)
+	f.push("web")
+	errDisk := errors.New("disk full")
+	f.store.resetComponents = errDisk
+
+	err := f.exec.Apply(ctx, applyCommand(digestA, deployment("web")), nil)
+
+	if !errors.Is(err, errDisk) {
+		t.Errorf("Apply error = %v, want the store's", err)
+	}
+	f.assertEvents()
+	f.assertCalls()
+	if _, ok := f.stored(); ok {
+		t.Error("the deployment is in the EN store after an Apply that recorded nothing")
+	}
 }
 
 // A Remove that can't record `removing` publishes nothing and brings nothing down, so no event
