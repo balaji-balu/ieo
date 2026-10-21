@@ -13,13 +13,14 @@
 //	DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable \
 //	  go run ./tools/harnessdeploy [-registry localhost:5000] [-target <site>/<host>]
 //
-// It prints DEPLOYMENT_ID=<id> and COMPOSE_PROJECT=<project of each component> on stdout, and logs
+// It prints DEPLOYMENT_ID=<id> and COMPOSE_PROJECT=<project of its one component> on stdout, and logs
 // JSON on stderr. It never logs the database URL (SPEC §15.4). It exits 0 on success, 1 on a
 // failure, and 2 on a usage error.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -95,11 +96,11 @@ func deployHarness(ctx context.Context, app, addr string, target contract.Device
 		return err
 	}
 	defer func() {
-		if cerr := s.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("close co store: %w", cerr)
+		if cerr := s.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close co store: %w", cerr))
 		}
 	}()
-	d, created, err := h.deploy(ctx, s)
+	d, projects, created, err := h.deploy(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -108,16 +109,9 @@ func deployHarness(ctx context.Context, app, addr string, target contract.Device
 		msg = "deployment exists; none created"
 	}
 	log.Info(msg, "deployment_id", d.ID.String(), "digest", d.Digest.String(), "target", d.Target.String())
-	out := "DEPLOYMENT_ID=" + d.ID.String() + "\n"
-	components, err := h.components(d.Profile)
-	if err != nil {
-		return err
+	if len(projects) != 1 {
+		return fmt.Errorf("the test application has %d components; COMPOSE_PROJECT names one", len(projects))
 	}
-	var projects []string
-	for _, c := range components {
-		projects = append(projects, contract.ComposeProjectName(d.ID, c))
-	}
-	out += "COMPOSE_PROJECT=" + strings.Join(projects, " ") + "\n"
-	_, err = io.WriteString(stdout, out)
+	_, err = fmt.Fprintf(stdout, "DEPLOYMENT_ID=%s\nCOMPOSE_PROJECT=%s\n", d.ID, projects[0])
 	return err
 }

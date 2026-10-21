@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -104,7 +105,11 @@ func TestArchiveIsValidAndStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("packArchive: %v", err)
 	}
-	time.Sleep(10 * time.Millisecond)
+	// Owners and times are left out: a file touched since packs the same.
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, archive.ComposeFile), later, later); err != nil {
+		t.Fatal(err)
+	}
 	b, err := packArchive(dir, "web")
 	if err != nil {
 		t.Fatalf("packArchive: %v", err)
@@ -149,9 +154,12 @@ func TestDeployHarness(t *testing.T) {
 	reg := &registry{}
 	h, s, img := newHarness(t, reg)
 
-	d, created, err := h.deploy(ctx, s)
+	d, projects, created, err := h.deploy(ctx, s)
 	if err != nil {
 		t.Fatalf("deploy: %v", err)
+	}
+	if want := []string{contract.ComposeProjectName(d.ID, "web")}; !slices.Equal(projects, want) {
+		t.Errorf("projects = %q, want %q", projects, want)
 	}
 	if !created || d.Target != target || d.AppID != "org-ieo-harness-hello" || d.AppVersion != "1.0.0" {
 		t.Errorf("deployment %+v (created %v): want a new one of org-ieo-harness-hello 1.0.0 to %s", d, created, target)
@@ -194,13 +202,13 @@ func TestDeployHarnessTwice(t *testing.T) {
 	ctx := context.Background()
 	reg := &registry{}
 	h, s, _ := newHarness(t, reg)
-	first, _, err := h.deploy(ctx, s)
+	first, _, _, err := h.deploy(ctx, s)
 	if err != nil {
 		t.Fatalf("first deploy: %v", err)
 	}
 	m1, _, _ := s.Manifest(ctx, target.Site)
 
-	again, created, err := h.deploy(ctx, s)
+	again, _, created, err := h.deploy(ctx, s)
 	if err != nil {
 		t.Fatalf("second deploy: %v", err)
 	}
@@ -212,13 +220,16 @@ func TestDeployHarnessTwice(t *testing.T) {
 	}
 }
 
-// Without the site, nothing is deployed: the site is added with `co site add` first.
+// Without the site, nothing is pushed or deployed: the site is added with `co site add` first.
 func TestDeployHarnessUnknownSite(t *testing.T) {
 	reg := &registry{}
 	h, _, _ := newHarness(t, reg)
-	_, _, err := h.deploy(context.Background(), store.NewMemory())
+	_, _, _, err := h.deploy(context.Background(), store.NewMemory())
 	if !errors.Is(err, deploy.ErrUnknownSite) {
 		t.Errorf("deploy to a missing site: %v, want ErrUnknownSite", err)
+	}
+	if len(reg.repos) != 0 {
+		t.Errorf("pushed to %d repositories for a missing site, want none", len(reg.repos))
 	}
 }
 

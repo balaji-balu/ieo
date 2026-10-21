@@ -233,11 +233,6 @@ jobs:
           test "$(echo "$id" | wc -l)" -eq 1
           echo "CONTAINER_ID=$id" >> "$GITHUB_ENV"
 
-      - name: host2 runs no project
-        run: |
-          got=$($COMPOSE exec -T host2 docker ps -aq --filter label=com.docker.compose.project)
-          test -z "$got" || { $COMPOSE exec -T host2 docker ps -a; exit 1; }
-
       # SPEC §13.1: the line carries the deployment and its host.
       - name: en1 logs the component installed
         run: |
@@ -271,6 +266,12 @@ jobs:
           echo "container before: $CONTAINER_ID, after: $id"
           test "$id" = "$CONTAINER_ID"
           test "$($COMPOSE logs --no-color en1 | grep -c '"msg":"component installed"')" -eq 1
+
+      # Last, so an Apply wrongly sent to host2 has had every step above to arrive.
+      - name: host2 runs no project
+        run: |
+          got=$($COMPOSE exec -T host2 docker ps -aq --filter label=com.docker.compose.project)
+          test -z "$got" || { $COMPOSE exec -T host2 docker ps -a; exit 1; }
 
       - name: Logs
         if: failure()

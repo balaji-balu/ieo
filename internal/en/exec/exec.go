@@ -185,8 +185,11 @@ func (r *applyRun) component(ctx context.Context, c contract.Component) (install
 		return false, err
 	}
 	if cause == nil {
+		if err := r.report(ctx, c.Name, contract.StateInstalled, nil); err != nil {
+			return false, err
+		}
 		r.log.Info("component installed", "component", c.Name) // SPEC §13.1: with deployment_id and digest
-		return true, r.report(ctx, c.Name, contract.StateInstalled, nil)
+		return true, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return false, err // the EN is stopping: the step was cut short, not failed (SPEC §8.9)

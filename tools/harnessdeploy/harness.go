@@ -78,35 +78,28 @@ func (h harness) description() ([]byte, contract.ApplicationDescription, error) 
 	return b, desc, err
 }
 
-// components returns the names of the components of deployment profile id, in order.
-func (h harness) components(id string) ([]string, error) {
-	_, desc, err := h.description()
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range desc.DeploymentProfiles {
-		if p.ID == id {
-			var names []string
-			for _, c := range p.Components {
-				names = append(names, c.Name)
-			}
-			return names, nil
-		}
-	}
-	return nil, fmt.Errorf("no deployment profile %q in %s", id, descriptionFile)
-}
-
 // deploy pushes the image, the application's Compose archives and its package, imports it (SPEC
 // §5.3), stands in for the LO's capability reports (SPEC §8.3, until roadmap slice H) and creates
 // a directed deployment of it to h.target (SPEC §8.1). When the site already has a deployment of
 // this application version to h.target, it returns that one and creates none: created is false.
-func (h harness) deploy(ctx context.Context, s coStore) (d deploy.Deployment, created bool, err error) {
+// projects are the Compose projects of the deployment's components, in order (SPEC §4.2). A site
+// that does not exist wraps deploy.ErrUnknownSite, and nothing is pushed.
+func (h harness) deploy(ctx context.Context, s coStore) (d deploy.Deployment, projects []string, created bool, err error) {
 	descBytes, desc, err := h.description()
 	if err != nil {
-		return deploy.Deployment{}, false, err
+		return deploy.Deployment{}, nil, false, err
+	}
+	err = s.ChangeSite(ctx, h.target.Site, func(_ deploy.SiteState, exists bool) (deploy.SiteChange, error) {
+		if !exists {
+			return deploy.SiteChange{}, fmt.Errorf("%w: %s; add it with `co site add` first", deploy.ErrUnknownSite, h.target.Site)
+		}
+		return deploy.SiteChange{}, nil // a read: nothing is written
+	})
+	if err != nil {
+		return deploy.Deployment{}, nil, false, err
 	}
 	if err := h.copyImage(ctx); err != nil {
-		return deploy.Deployment{}, false, err
+		return deploy.Deployment{}, nil, false, err
 	}
 	for _, p := range desc.DeploymentProfiles {
 		if p.Type != contract.ProfileTypeCompose {
@@ -114,25 +107,36 @@ func (h harness) deploy(ctx context.Context, s coStore) (d deploy.Deployment, cr
 		}
 		for _, c := range p.Components {
 			if err := h.pushComponent(ctx, c); err != nil {
-				return deploy.Deployment{}, false, err
+				return deploy.Deployment{}, nil, false, err
 			}
 		}
 	}
 	if err := h.pushPackage(ctx, desc.Metadata.Version, descBytes); err != nil {
-		return deploy.Deployment{}, false, err
+		return deploy.Deployment{}, nil, false, err
 	}
 	readOnly := func(ctx context.Context, repository string) (oras.ReadOnlyTarget, error) {
 		return h.open(ctx, repository)
 	}
 	app, err := catalog.New(readOnly, s).Import(ctx, h.appRepository, desc.Metadata.Version)
 	if err != nil {
-		return deploy.Deployment{}, false, err
+		return deploy.Deployment{}, nil, false, err
 	}
 	svc := deploy.New(s)
 	if err := reportDevices(ctx, svc, h.target); err != nil {
-		return deploy.Deployment{}, false, err
+		return deploy.Deployment{}, nil, false, err
 	}
-	return deployOnce(ctx, s, svc, deploy.Request{AppID: app.ID, Version: app.Version, Target: h.target})
+	d, created, err = deployOnce(ctx, s, svc, deploy.Request{AppID: app.ID, Version: app.Version, Target: h.target})
+	if err != nil {
+		return deploy.Deployment{}, nil, false, err
+	}
+	for _, p := range desc.DeploymentProfiles {
+		if p.ID == d.Profile {
+			for _, c := range p.Components {
+				projects = append(projects, contract.ComposeProjectName(d.ID, c.Name))
+			}
+		}
+	}
+	return d, projects, created, nil
 }
 
 // copyImage copies h.image, every platform of it, into the harness registry. It is pushed by
