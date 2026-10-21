@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -112,6 +113,17 @@ func TestSpec_17_2_ImportRejectsInvalidApplicationDescription(t *testing.T) {
 				name:   "fails schema validation: id with uppercase letters",
 				push:   pushApp(replace("id: com-example-hello", "id: Com_Example_Hello")),
 				reason: "/id",
+			},
+			{
+				name: "manifest is far larger than a Margo package's",
+				push: func(t *testing.T, reg *ocitest.Registry) {
+					layers := []ocitest.Layer{descLayer(description)}
+					for i := range 2000 { // about 200 bytes of manifest each
+						layers = append(layers, ocitest.Layer{MediaType: "application/vnd.example.filler", Data: []byte(strconv.Itoa(i))})
+					}
+					reg.Push(t, repoA, version, ocitest.Artifact{ArtifactType: contract.AppPackageArtifactType, Layers: layers})
+				},
+				reason: "manifest larger",
 			},
 			{
 				name:   "fails schema validation: not YAML",

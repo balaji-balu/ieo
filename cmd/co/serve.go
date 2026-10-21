@@ -13,6 +13,7 @@ import (
 
 	"github.com/balaji-balu/ieo/internal/co/api"
 	"github.com/balaji-balu/ieo/internal/co/auth"
+	"github.com/balaji-balu/ieo/internal/co/catalog"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
 	"github.com/balaji-balu/ieo/internal/co/store/postgres"
 )
@@ -28,6 +29,10 @@ const (
 // serve serves the Margo API on ln until ctx ends, then shuts it down gracefully (SPEC §11.1).
 // When cfg.LegacyPort is set it also serves the old API there; when either server stops, both do.
 func serve(ctx context.Context, cfg config, ln net.Listener, log *slog.Logger) error {
+	// SPEC §5.3, §6.3: built first, so that co.registry.insecure is warned of at startup. The
+	// operator API's import reads through it (roadmap E4).
+	registry := catalog.NewRegistry(cfg.RegistryInsecure, log)
+	defer registry.Close()
 	s, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		_ = ln.Close() // the open error is the one to report
