@@ -444,17 +444,17 @@ func TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes(t *testing.
 			f := f.with(t)
 			id := created.ID.String()
 			for _, c := range []struct{ method, path, allow string }{
-				{http.MethodDelete, "/api/v1/apps", "GET, POST"},
-				{http.MethodPost, "/api/v1/apps/" + appID, "GET"},
-				{http.MethodPost, "/api/v1/devices", "GET"},
-				{http.MethodPut, "/api/v1/deployments", "GET, POST"},
-				{http.MethodPut, "/api/v1/deployments/" + id, "GET"},
-				{http.MethodDelete, "/api/v1/deployments/" + id, "GET"},
-				{http.MethodPost, "/api/v1/deployments/" + id + "/status", "GET"},
+				{http.MethodDelete, "/api/v1/apps", "GET, HEAD, POST"},
+				{http.MethodPost, "/api/v1/apps/" + appID, "GET, HEAD"},
+				{http.MethodPost, "/api/v1/devices", "GET, HEAD"},
+				{http.MethodPut, "/api/v1/deployments", "GET, HEAD, POST"},
+				{http.MethodPut, "/api/v1/deployments/" + id, "GET, HEAD"},
+				{http.MethodDelete, "/api/v1/deployments/" + id, "GET, HEAD"},
+				{http.MethodPost, "/api/v1/deployments/" + id + "/status", "GET, HEAD"},
 			} {
 				r := f.do(c.method, c.path, "")
 				f.wantProblem(c.method+" "+c.path, r, http.StatusMethodNotAllowed)
-				if got := r.header.Get("Allow"); !strings.HasPrefix(got, c.allow) {
+				if got := r.header.Get("Allow"); got != c.allow {
 					t.Errorf("%s %s: Allow %q, want %q", c.method, c.path, got, c.allow)
 				}
 			}

@@ -64,8 +64,8 @@ type OpenRepository func(ctx context.Context, repository string) (oras.ReadOnlyT
 // Store keeps imported applications.
 type Store interface {
 	// PutApp stores app unless its (ID, Version) is already stored, and returns the app stored
-	// for that (ID, Version): app itself, or the one stored before.
-	PutApp(ctx context.Context, app App) (App, error)
+	// for that (ID, Version), app itself or the one stored before, and whether it stored app.
+	PutApp(ctx context.Context, app App) (App, bool, error)
 }
 
 // Catalog imports application versions.
@@ -80,24 +80,24 @@ func New(open OpenRepository, store Store) *Catalog {
 }
 
 // Import fetches the package tagged version from repository, validates it (SPEC §5.3) and stores
-// it. Re-importing an identical version returns the stored app and changes nothing. A rule
-// violation wraps ErrInvalidPackage, a different description for a stored version wraps
-// ErrConflict, a repository that is not one wraps ErrInvalidRepository, and a registry failure
-// wraps ErrRegistry; any other error is the store's.
-func (c *Catalog) Import(ctx context.Context, repository, version string) (App, error) {
+// it, and reports whether it stored a new version. Re-importing an identical version returns the
+// stored app and changes nothing. A rule violation wraps ErrInvalidPackage, a different
+// description for a stored version wraps ErrConflict, a repository that is not one wraps
+// ErrInvalidRepository, and a registry failure wraps ErrRegistry; any other error is the store's.
+func (c *Catalog) Import(ctx context.Context, repository, version string) (App, bool, error) {
 	app, err := c.fetch(ctx, repository, version)
 	if err != nil {
-		return App{}, fmt.Errorf("import %s:%s: %w", repository, version, err)
+		return App{}, false, fmt.Errorf("import %s:%s: %w", repository, version, err)
 	}
-	stored, err := c.store.PutApp(ctx, app)
+	stored, created, err := c.store.PutApp(ctx, app)
 	if err != nil {
-		return App{}, fmt.Errorf("import %s:%s: store: %w", repository, version, err)
+		return App{}, false, fmt.Errorf("import %s:%s: store: %w", repository, version, err)
 	}
 	if stored.Digest != app.Digest {
-		return App{}, fmt.Errorf("import %s:%s: %w: %s %s was imported from %s with description %s, this one is %s",
+		return App{}, false, fmt.Errorf("import %s:%s: %w: %s %s was imported from %s with description %s, this one is %s",
 			repository, version, ErrConflict, app.ID, app.Version, stored.Repository, stored.Digest, app.Digest)
 	}
-	return stored, nil
+	return stored, created, nil
 }
 
 // Size limits for what a registry returns. A Margo manifest lists a handful of files and an

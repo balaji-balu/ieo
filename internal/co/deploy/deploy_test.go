@@ -84,7 +84,7 @@ func newFixture(t *testing.T, newStore storetest.New) fixture {
 	reg := ocitest.NewRegistry()
 	reg.PushApp(t, repo, version, []byte(description))
 	s := newStore(t)
-	if _, err := catalog.New(reg.Open, s).Import(ctx, repo, version); err != nil {
+	if _, _, err := catalog.New(reg.Open, s).Import(ctx, repo, version); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	f := fixture{t: t, ctx: ctx, store: s, deploy: deploy.New(s)}

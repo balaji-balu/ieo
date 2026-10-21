@@ -5,7 +5,6 @@ package store
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -73,16 +72,16 @@ func NewMemory() *Memory {
 }
 
 // PutApp stores app unless its (ID, Version) is already stored, and returns the app stored for
-// that (ID, Version).
-func (m *Memory) PutApp(_ context.Context, app catalog.App) (catalog.App, error) {
+// that (ID, Version) and whether it stored app.
+func (m *Memory) PutApp(_ context.Context, app catalog.App) (catalog.App, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := appKey{app.ID, app.Version}
 	if stored, ok := m.apps[k]; ok {
-		return cloneApp(stored), nil
+		return cloneApp(stored), false, nil
 	}
 	m.apps[k] = cloneApp(app)
-	return cloneApp(app), nil
+	return cloneApp(app), true, nil
 }
 
 // App returns the stored app with that ID and version, and whether there is one.
@@ -393,20 +392,49 @@ func (m *Memory) Sites(context.Context) ([]deploy.Site, error) {
 
 // Apps returns every stored app.
 func (m *Memory) Apps(context.Context) ([]catalog.App, error) {
-	return nil, errors.New("not implemented") // roadmap E4
+	return m.appsWhere(func(catalog.App) bool { return true }), nil
 }
 
 // AppVersions returns the stored versions of app id.
-func (m *Memory) AppVersions(context.Context, string) ([]catalog.App, error) {
-	return nil, errors.New("not implemented") // roadmap E4
+func (m *Memory) AppVersions(_ context.Context, id string) ([]catalog.App, error) {
+	return m.appsWhere(func(a catalog.App) bool { return a.ID == id }), nil
+}
+
+func (m *Memory) appsWhere(keep func(catalog.App) bool) []catalog.App {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []catalog.App
+	for _, a := range m.apps {
+		if keep(a) {
+			out = append(out, cloneApp(a))
+		}
+	}
+	return out
 }
 
 // Devices returns the devices of site, or of every site when site is "".
-func (m *Memory) Devices(context.Context, contract.SiteID) ([]deploy.Device, error) {
-	return nil, errors.New("not implemented") // roadmap E4
+func (m *Memory) Devices(_ context.Context, site contract.SiteID) ([]deploy.Device, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []deploy.Device
+	for id, caps := range m.devices {
+		if site == "" || id.Site == site {
+			out = append(out, deploy.Device{ID: id, Capabilities: cloneCapabilities(caps)})
+		}
+	}
+	return out, nil
 }
 
-// Deployments returns the deployments of site, or of every site when site is "".
-func (m *Memory) Deployments(context.Context, contract.SiteID) ([]deploy.Deployment, error) {
-	return nil, errors.New("not implemented") // roadmap E4
+// Deployments returns the deployments of site, or of every site when site is "", deleted ones
+// included.
+func (m *Memory) Deployments(_ context.Context, site contract.SiteID) ([]deploy.Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []deploy.Deployment
+	for _, sd := range m.deployments {
+		if site == "" || sd.site == site {
+			out = append(out, cloneDeployment(sd.d))
+		}
+	}
+	return out, nil
 }
