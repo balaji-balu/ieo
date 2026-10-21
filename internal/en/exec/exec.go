@@ -154,7 +154,13 @@ func (e *Executor) apply(ctx context.Context, cmd contract.Command, superseded f
 	return runErr
 }
 
+// allInstalled reports whether the recorded components are exactly components, each `installed`
+// (SPEC §8.9 step 1). A recorded state for a component the profile does not have is not skipped,
+// so the Apply deletes it.
 func allInstalled(d store.Deployment, components []contract.Component) bool {
+	if len(d.Components) != len(components) {
+		return false
+	}
 	for _, c := range components {
 		if d.Components[c.Name].State != contract.StateInstalled {
 			return false
