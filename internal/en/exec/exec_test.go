@@ -1,9 +1,11 @@
 package exec_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -152,7 +154,41 @@ type fixture struct {
 	store   *failingStore
 	pub     *recorder
 	clock   *platformtest.FakeClock
+	logs    *logBuffer
 	exec    *exec.Executor
+}
+
+// logBuffer keeps the executor's JSON log lines.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// lines returns the log lines whose msg is msg, decoded.
+func (b *logBuffer) lines(t *testing.T, msg string) []map[string]any {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []map[string]any
+	for _, l := range bytes.Split(b.buf.Bytes(), []byte("\n")) {
+		if len(l) == 0 {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(l, &m); err != nil {
+			t.Fatalf("log line %q is not JSON: %v", l, err)
+		}
+		if m["msg"] == msg {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -171,6 +207,7 @@ func newFixture(t *testing.T) *fixture {
 		store:   &failingStore{Bolt: bolt},
 		pub:     &recorder{t: t},
 		clock:   platformtest.NewFakeClock(start),
+		logs:    &logBuffer{},
 	}
 	cfg := exec.Config{
 		DataDir:      dataDir,
@@ -179,7 +216,7 @@ func newFixture(t *testing.T) *fixture {
 		OTel:         override.OTel{HTTPEndpoint: "http://otel.internal:4318"},
 	}
 	puller := pull.New(f.reg.Open, filepath.Join(dataDir, "pull"), pull.Limits{MaxBytes: 1 << 20, Timeout: time.Minute})
-	f.exec = exec.New(cfg, puller, f.runner, f.store, f.pub, f.clock, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.exec = exec.New(cfg, puller, f.runner, f.store, f.pub, f.clock, slog.New(slog.NewJSONHandler(f.logs, nil)))
 	return f
 }
 
@@ -335,6 +372,27 @@ func TestApplyInstallsComponents(t *testing.T) {
 	}
 	if left, _ := os.ReadDir(filepath.Join(f.dataDir, "pull")); len(left) != 0 {
 		t.Errorf("%d layers left in the spool directory", len(left))
+	}
+}
+
+// Each installed component is logged with its deployment and digest (SPEC §13.1), so an operator
+// (and the dev harness, roadmap D5.7) sees it in the EN's log; a failed one already is.
+func TestApplyLogsInstalledComponents(t *testing.T) {
+	f := newFixture(t)
+	f.push("web", "db")
+
+	f.apply(digestA, deployment("web", "db"))
+
+	lines := f.logs.lines(t, "component installed")
+	var got []string
+	for _, l := range lines {
+		if l["deployment_id"] != deploymentID.String() || l["digest"] != digestA.String() || l["level"] != "INFO" {
+			t.Errorf("log line %v: want level INFO, deployment_id %s and digest %s", l, deploymentID, digestA)
+		}
+		got = append(got, fmt.Sprint(l["component"]))
+	}
+	if want := []string{"web", "db"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("components logged installed = %q, want %q", got, want)
 	}
 }
 

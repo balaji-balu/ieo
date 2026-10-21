@@ -1,0 +1,6 @@
+# The web component of the harness's test application (tests/harness/hello/margo.yaml). The image
+# is busybox, copied into the harness registry by tools/harnessdeploy and pinned by digest there.
+services:
+  web:
+    image: registry:5000/ieo-harness/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["httpd", "-f", "-p", "8080"]
