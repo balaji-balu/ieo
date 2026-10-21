@@ -200,7 +200,7 @@ The LO holds, per host, the **desired** set of deployments (from the manifest pl
    - Autonomous (`<site-id>/*`): the LO chooses a host (§5.6) and records the choice durably. A placement is kept for the life of the deployment unless its host is decommissioned or stops satisfying the constraints.
 2. **Evaluate constraints.** Before applying, the LO MUST evaluate `eligibilityRules` against the host's capabilities and SHOULD check `capacityRequirements`. A directed deployment whose host fails them gets status `failed`.
 3. **Diff per host.** For each host that is alive (**[IEO, interim]** until host liveness lands, a host that has published inventory since the LO started; SPEC §7.3):
-   - deployment desired but not present, present with a different digest, or present with a failed component → send **Apply**;
+   - deployment desired but not present, present with a different digest, or present with a component `failed` or left `removing` by a Remove that did not finish → send **Apply**;
    - deployment present but not desired → send **Remove**;
    - otherwise nothing.
 4. **Skip offline hosts.** Hosts without a recent heartbeat receive nothing; their deployments are reported `pending` and the host is reconciled when it returns.
@@ -227,7 +227,7 @@ On **Apply** for a Compose deployment, the EN:
 5. Runs the components in the order listed, as one Compose project per component named `<deployment-id>-<component-name>`. When `wait` is true (the default, which Margo requires clients to support), it waits until all containers are running before starting the next component, failing the component if `timeout` elapses. **[IEO]** A component without a `timeout` gets the EN's `en.start_timeout` (default 5 minutes), so a wait always ends (SPEC §8.9).
 6. Reports component states as they change: `installing` → `installed` or `failed` (with error code, source = component name, message).
 
-On **Remove**, the EN brings down the deployment's Compose projects, reporting `removing` → `removed`.
+On **Remove**, the EN records every component `removing`, brings down the deployment's Compose projects, and reports `removing` → `removed`.
 
 **Monitoring.** The EN watches container events for every deployment it runs. A container that exits unexpectedly and does not recover under its Compose restart policy moves its component to `failed`, reported with the container's exit information. The EN also runs the device's OpenTelemetry collector (host metrics and container metrics receivers, OTLP receiver) with **no exporters pre-configured**; the end user decides where observability data is exported.
 
