@@ -141,8 +141,8 @@ Per the Margo Identity and Authorization Framework:
 ### 5.1 Publish and import an application
 
 1. The App Developer pushes an application package (Application Description plus resources) to the Application Registry as an OCI artifact, one tag per `metadata.version`.
-2. The operator runs `edgectl app import --repo <registry>/<namespace>/<app>`.
-3. The CO lists tags, pulls the manifest and blobs for each selected version, validates the Application Description and stores it in the catalog.
+2. The operator runs `edgectl app import --repo <registry>/<namespace>/<app> --version <v>`.
+3. The CO pulls the manifest and blobs of that tag, validates the Application Description and stores it in the catalog (SPEC §5.3). **[IEO, interim]** It reaches the registry anonymously until registry credentials for the CO are specified.
 
 Each Compose component in an Application Description points to an OCI artifact (`repository: oci://…`, `revision: <semver>`) holding the Compose package.
 
@@ -196,7 +196,7 @@ A deployment that is **absent** from the manifest is to be removed. A `404` on a
 The LO holds, per host, the **desired** set of deployments (from the manifest plus placement decisions) and the **actual** set (from EN inventory reports). A reconcile pass runs when the desired state changes, when an EN reports a change, when a host comes back online, and periodically as a safety net. **[IEO, interim]** Until command retries land (roadmap K), a status event updates the actual set but does not start a pass, so a failing deployment is not applied again in a tight loop; the host's next inventory does (SPEC §7.5).
 
 1. **Resolve targets.**
-   - Directed (`<site-id>/<host-id>`): the host is the target. An unknown host produces status `failed` with error code `101` (unknown child device ID).
+   - Directed (`<site-id>/<host-id>`): the host is the target. An unknown host (one that has never reported to this LO) produces status `failed` with error code `101` (unknown child device ID); the host's own reports replace it once it reports. **[IEO, interim]** A deployment the LO cannot resolve to a host of its site (YAML an EN would refuse, an `id` other than the manifest's, a target at another site) gets no command and is reported `failed` with `IEO-INVALID-DEPLOYMENT`; until autonomous placement lands (roadmap H), an autonomous deployment is reported `failed` with `103`. These gateway errors carry the LO's device ID as source (SPEC §8.4, §8.7).
    - Autonomous (`<site-id>/*`): the LO chooses a host (§5.6) and records the choice durably. A placement is kept for the life of the deployment unless its host is decommissioned or stops satisfying the constraints.
 2. **Evaluate constraints.** Before applying, the LO MUST evaluate `eligibilityRules` against the host's capabilities and SHOULD check `capacityRequirements`. A directed deployment whose host fails them gets status `failed`.
 3. **Diff per host.** For each host that is alive (**[IEO, interim]** until host liveness lands, a host that has published inventory since the LO started; SPEC §7.3):
@@ -253,7 +253,7 @@ On **Remove**, the EN records every component `removing`, brings down the deploy
 
 ### 6.1 edgectl ↔ CO (REST, [IEO])
 
-Not covered by Margo. JSON over HTTPS, authenticated operator sessions (OAuth2 via Keycloak is planned; phase 1 uses a static API token). Resources:
+Not covered by Margo. JSON over HTTPS, authenticated operator sessions (OAuth2 via Keycloak is planned; phase 1 uses a static bearer token, `co.operator_token`). Served on its own listener, apart from the Margo API, under `/api/v1/`; errors are RFC 9457 problems. **[IEO, interim]** Like the Margo API, the CO serves it over plain HTTP behind a TLS-terminating proxy, and `edgectl` sends its token to an `http://` URL only with `edgectl.co_insecure`. SPEC §11.3 fixes the bodies and status codes. Resources:
 
 | Resource | Operations |
 | --- | --- |
@@ -416,7 +416,7 @@ The current code was built around Git-based delivery. Moving to this design chan
 ## 14. Open questions
 
 1. **Placement policy.** "Most free memory" (§5.6) is a starting point; smarter placement (labels, spreading, GPUs) is a future feature spec.
-2. **Operator authentication** for `edgectl` in phase 1 (static token vs. Keycloak from the start).
+2. **Operator authentication** after phase 1: phase 1 uses a static bearer token (SPEC §11.3, §15.6); OAuth2 (Keycloak) replaces it later.
 3. **Secrets for Compose workloads.** Margo keeps secrets out of archives and leaves provisioning to the device or WFM; IEO needs a design before workloads that require secrets are supported.
 4. **Data volumes.** The 24 h / 10 GiB site buffer and 1 MiB message limit are placeholders; size them against real per-site message rates and payload sizes.
 5. **Model-aware placement.** Co-locating models that call each other (`docs/proposals/data-plane.md` §1.7) is manual today (directed deployments, labels). Automatic affinity ("place near service X") would extend §5.6.
