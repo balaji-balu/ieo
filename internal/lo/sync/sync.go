@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/balaji-balu/ieo/internal/contract"
+	"github.com/balaji-balu/ieo/internal/lo/coapi"
 	"github.com/balaji-balu/ieo/internal/platform"
 )
 
@@ -75,7 +76,7 @@ type Config struct {
 // Syncer runs the LO sync loop for one site. Its methods must not be called concurrently.
 type Syncer struct {
 	store     Store
-	client    *client
+	client    *coapi.Client
 	interval  time.Duration
 	clock     platform.Clock
 	log       *slog.Logger
@@ -86,7 +87,7 @@ type Syncer struct {
 func New(cfg Config, store Store) *Syncer {
 	s := &Syncer{
 		store:     store,
-		client:    newClient(cfg.COURL, cfg.Token, cfg.Transport),
+		client:    coapi.NewClient(cfg.COURL, cfg.Token, cfg.Transport),
 		interval:  cfg.PollInterval,
 		clock:     cfg.Clock,
 		log:       cfg.Log,
@@ -157,9 +158,9 @@ type result struct {
 	requestFailed bool
 }
 
-func unreachable(v contract.ManifestVersion, msg string, err *requestError, attrs ...slog.Attr) result {
+func unreachable(v contract.ManifestVersion, msg string, err *coapi.RequestError, attrs ...slog.Attr) result {
 	return result{
-		outcome: Unreachable, level: slog.LevelWarn, msg: msg, version: v, attrs: append(attrs, err.attrs()...),
+		outcome: Unreachable, level: slog.LevelWarn, msg: msg, version: v, attrs: append(attrs, err.Attrs()...),
 		requestFailed: true,
 	}
 }
@@ -175,15 +176,15 @@ func (s *Syncer) attempt(ctx context.Context) (result, error) {
 	if err != nil {
 		return result{}, fmt.Errorf("load state: %w", err)
 	}
-	resp, rerr := s.client.manifest(ctx, st.ETag)
+	resp, rerr := s.client.Manifest(ctx, st.ETag)
 	if rerr != nil {
 		return unreachable(st.Version, "manifest request failed", rerr), nil
 	}
-	if resp.notModified {
+	if resp.NotModified {
 		return result{outcome: NotModified, level: slog.LevelInfo, msg: "manifest not modified", version: st.Version}, nil
 	}
 	// SPEC §8.2 step 3: validate, then refuse a rollback.
-	m, err := contract.DecodeStateManifest(resp.body)
+	m, err := contract.DecodeStateManifest(resp.Body)
 	if err != nil {
 		return result{
 			outcome: Unreachable, level: slog.LevelError, msg: "invalid manifest", version: st.Version,
@@ -214,7 +215,7 @@ func (s *Syncer) attempt(ctx context.Context) (result, error) {
 		return result{}, fmt.Errorf("replace desired state: %w", err)
 	}
 	s.reconcile(ctx)
-	if err := s.store.CommitVersion(ctx, m.ManifestVersion, resp.etag); err != nil {
+	if err := s.store.CommitVersion(ctx, m.ManifestVersion, resp.ETag); err != nil {
 		return result{}, fmt.Errorf("commit manifest version %d: %w", m.ManifestVersion, err)
 	}
 	return result{
@@ -254,7 +255,7 @@ func (s *Syncer) fetch(ctx context.Context, st State, m contract.StateManifest) 
 		}
 		how = "deployments"
 		about := []slog.Attr{slog.String("deployment_id", d.DeploymentID.String()), slog.String("digest", string(d.Digest))}
-		b, err := s.client.content(ctx, contract.DeploymentURL(d.DeploymentID, d.Digest))
+		b, err := s.client.Content(ctx, contract.DeploymentURL(d.DeploymentID, d.Digest))
 		if err != nil {
 			r := unreachable(m.ManifestVersion, "deployment fetch failed", err, about...)
 			return nil, how, &r
@@ -276,7 +277,7 @@ func (s *Syncer) fetchBundle(ctx context.Context, m contract.StateManifest) (map
 	// Not nil: some deployment is not held, and a valid manifest with deployments has a bundle.
 	b := m.Bundle
 	about := slog.String("bundle_digest", string(b.Digest))
-	body, err := s.client.content(ctx, contract.BundleURL(b.Digest))
+	body, err := s.client.Content(ctx, contract.BundleURL(b.Digest))
 	if err != nil {
 		return fail(unreachable(m.ManifestVersion, "bundle fetch failed", err, about))
 	}
