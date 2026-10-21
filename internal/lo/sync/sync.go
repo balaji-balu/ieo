@@ -159,7 +159,7 @@ type result struct {
 
 func unreachable(v contract.ManifestVersion, msg string, err *requestError, attrs ...slog.Attr) result {
 	return result{
-		outcome: Unreachable, level: slog.LevelWarn, msg: msg, version: v, attrs: append(attrs, err.attrs()...),
+		outcome: Unreachable, level: slog.LevelWarn, msg: msg, version: v, attrs: append(attrs, err.Attrs()...),
 		requestFailed: true,
 	}
 }
