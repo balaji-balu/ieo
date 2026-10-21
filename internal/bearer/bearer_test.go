@@ -1,4 +1,4 @@
-package coapi_test
+package bearer_test
 
 import (
 	"context"
@@ -6,9 +6,10 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/balaji-balu/ieo/internal/lo/coapi"
+	"github.com/balaji-balu/ieo/internal/bearer"
 )
 
 // Get takes a nil header, and leaves the caller's header without the token (SPEC §15.4).
@@ -21,7 +22,7 @@ func TestGetHeader(t *testing.T) {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)            // never fails (crypto/rand)
 	token := hex.EncodeToString(b) // generated: no token in fixtures (SPEC §15.6)
-	c := coapi.New(srv.URL, token, nil)
+	c := bearer.New(srv.URL, token, nil)
 
 	if _, err := c.Get(context.Background(), "/x", nil); err != nil {
 		t.Fatalf("Get with a nil header: %v", err)
@@ -37,5 +38,24 @@ func TestGetHeader(t *testing.T) {
 		if a != "Bearer "+token {
 			t.Error("a request did not carry the token")
 		}
+	}
+}
+
+// SPEC §15.6: no error holds the token, even when the server repeats it in a problem.
+func TestFailedLeavesOutTheToken(t *testing.T) {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	token := hex.EncodeToString(b)
+	c := bearer.New("https://co.invalid", token, nil)
+	body := `{"type":"about:blank#` + token + `","title":"Bad ` + token + `","status":400,"detail":"got Bearer ` + token + `","instance":"/` + token + `"}`
+	e := c.Failed(http.MethodGet, "/x", bearer.Response{
+		Status: http.StatusBadRequest, Header: http.Header{"Content-Type": {"application/problem+json"}}, Body: []byte(body),
+	})
+	p := e.Problem
+	if s := e.Error() + p.Type + p.Title + p.Detail + p.Instance; strings.Contains(s, token) {
+		t.Errorf("the error holds the token: %q", s)
+	}
+	if p.Detail != "got Bearer [token]" {
+		t.Errorf("detail %q, want the rest of the server's text", p.Detail)
 	}
 }

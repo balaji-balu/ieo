@@ -16,8 +16,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/balaji-balu/ieo/internal/bearer"
 	"github.com/balaji-balu/ieo/internal/contract"
-	"github.com/balaji-balu/ieo/internal/lo/coapi"
 	"github.com/balaji-balu/ieo/internal/lo/outbox"
 	"github.com/balaji-balu/ieo/internal/platform/platformtest"
 )
@@ -110,7 +110,7 @@ func newFixture(t *testing.T) *fixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.ctx = ctx
 	f.o = outbox.New(outbox.Config{
-		Client: coapi.New(coURL, f.token, f.co), RetryInterval: interval, Clock: f.clock,
+		Client: bearer.New(coURL, f.token, f.co), RetryInterval: interval, Clock: f.clock,
 		Log: slog.New(slog.NewJSONHandler(f.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 	done := make(chan error, 1)

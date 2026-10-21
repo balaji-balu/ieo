@@ -587,33 +587,3 @@ func TestConfigErrorExits2(t *testing.T) {
 		}
 	}
 }
-
-// SPEC §15.6: the LO sends Margo requests directly to lo.co_url, through no proxy, and verifies the
-// CO against lo.tls.ca_file when it is set.
-func TestTransportUsesNoProxy(t *testing.T) {
-	t.Setenv("HTTPS_PROXY", "http://proxy.example:3128")
-	t.Setenv("HTTP_PROXY", "http://proxy.example:3128")
-
-	tr, err := newTransport("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tr.Proxy != nil {
-		t.Error("Proxy is set without lo.tls.ca_file")
-	}
-	if tr.TLSClientConfig != nil && tr.TLSClientConfig.RootCAs != nil {
-		t.Error("RootCAs is set without lo.tls.ca_file; want the system roots")
-	}
-
-	_, ca := tlsCO(t, synctest.NewCO(t))
-	tr, err = newTransport(ca)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tr.Proxy != nil {
-		t.Error("Proxy is set with lo.tls.ca_file")
-	}
-	if tr.TLSClientConfig == nil || tr.TLSClientConfig.RootCAs == nil {
-		t.Error("lo.tls.ca_file does not set RootCAs")
-	}
-}

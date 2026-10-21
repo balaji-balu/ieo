@@ -54,8 +54,8 @@ docker compose -f deploy/dev/compose.yaml up -d --build --wait
 Compose reads `deploy/dev/.env`, which git ignores. The values stay there for later starts; the
 site token works as long as the Postgres volume is kept. Without the password or the operator
 token, compose stops with `required variable SITE_NATS_PASSWORD is missing a value` (or
-`CO_OPERATOR_TOKEN`). The site ID is a UUID because the old CO
-API, which runs beside the new one until roadmap slice E, takes only UUIDs.
+`CO_OPERATOR_TOKEN`). The site ID is a UUID because the old CO API, removed in roadmap step E5,
+took only UUIDs.
 
 ```sh
 docker compose -f deploy/dev/compose.yaml up -d --build --wait   # later starts: build CO, LO, EN from this checkout and start
@@ -79,7 +79,7 @@ docker compose -f deploy/dev/compose.yaml logs lo | Select-String outcome   # Po
 
 | Service | Laptop port | Role |
 | --- | --- | --- |
-| `co` | 9002, 8443, 9001 | Central Orchestrator: Margo API for LOs on 9002 (health check at `/healthz`); operator API for `edgectl` on 8443; the old API on 9001 until roadmap slice E |
+| `co` | 9002, 8443 | Central Orchestrator: Margo API for LOs on 9002 (health check at `/healthz`); operator API for `edgectl` on 8443 |
 | `lo` | — | Local Orchestrator for the one site |
 | `nats` | 4222, 8222 (monitoring) | LO ↔ EN messaging |
 | `postgres` | 5432 | CO database (`postgres` / `postgres`, database `orchestration`) |
@@ -137,17 +137,21 @@ The second line keeps `SITE_NATS_PASSWORD` and replaces only the token.
 ## The operator API
 
 The CO serves the operator API (SPEC §11.3) on 8443, over plain HTTP on the laptop, to any request
-that carries `CO_OPERATOR_TOKEN` from `deploy/dev/.env`; any other gets `401`. `edgectl` will call
-it (roadmap E5). Until then, read it with curl, for example the devices the LO reported
-(PowerShell):
+that carries `CO_OPERATOR_TOKEN` from `deploy/dev/.env`; any other gets `401`. `edgectl` calls it.
+It takes the token from `EDGECTL_TOKEN` only, and sends it over plain HTTP only with
+`EDGECTL_CO_INSECURE`, warning on stderr each time (SPEC §15.6). For example, the devices the LO
+reported (PowerShell):
 
 ```powershell
-$op = (Select-String -Path deploy/dev/.env -Pattern '^CO_OPERATOR_TOKEN=(.*)').Matches[0].Groups[1].Value
-curl.exe -s -H "Authorization: Bearer $op" http://localhost:8443/api/v1/devices
+$env:EDGECTL_CO_URL = "http://localhost:8443"
+$env:EDGECTL_CO_INSECURE = "true"
+$env:EDGECTL_TOKEN = (Select-String -Path deploy/dev/.env -Pattern '^CO_OPERATOR_TOKEN=(.*)').Matches[0].Groups[1].Value
+go run ./cmd/edgectl device list
 ```
 
-A deployment's status is at `/api/v1/deployments/<id>/status`, and the imported apps at
-`/api/v1/apps`. To change the token, edit `deploy/dev/.env` and run `up -d --wait co`.
+`edgectl app list`, `edgectl deployment list` and `edgectl deployment status <id> [--watch]` read
+the rest, and `--output json` prints the CO's response as it sent it; `go run ./cmd/edgectl --help`
+lists the commands. To change the token, edit `deploy/dev/.env` and run `up -d --wait co`.
 
 ## Using the registry
 
@@ -167,7 +171,7 @@ docker compose -f deploy/dev/compose.yaml exec host1 docker pull registry:5000/h
 digest, from Docker Hub into the registry, so it needs internet access. It pushes the
 application's Compose archive and package to `localhost:5000`, imports the application into the
 CO's Postgres and creates a directed deployment to `00000000-0000-4000-8000-000000000001/host-1`.
-Until roadmap slice E brings `edgectl deploy`, this tool is the only way to create a deployment.
+Roadmap step E6 replaces it with `edgectl app import` and `edgectl deploy`.
 Until slice H, it also records the capabilities of the site's gateway and of `host-1`, which an
 LO would report: the CO creates a deployment only to a host it knows.
 
@@ -188,8 +192,7 @@ The tool prints `DEPLOYMENT_ID=<id>` and `COMPOSE_PROJECT=<project>`. Within sec
 polls every 5 s in the harness) `host1` runs one container of the project and `host2` runs
 none, and `en1` logs `component installed` with the deployment ID. The last query prints the
 latest DeploymentStatus the LO sent the CO: `installed`, from `deviceId` `<site>/host-1`, with
-one entry for `web` (until roadmap step E6 brings `edgectl deployment status`, the CO's Postgres
-is where to read it). Running the tool again creates
+one entry for `web`; `edgectl deployment status $id` (see "The operator API") shows the same. Running the tool again creates
 no second deployment: it prints the first. To check that an EN restart leaves the container
 alone, note its ID, then:
 
@@ -218,7 +221,7 @@ Don't run the full stack at the same time: the `go run` services use the same po
 
 | Symptom | Fix |
 | --- | --- |
-| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 8443, 9001, 9002) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
+| `Bind for 0.0.0.0:5432 failed: port is already allocated` (or 4222, 5000, 8443, 9002) | Another container or local service uses the port. Stop it, or stop an old stack: `docker ps`, then `docker stop <name>` |
 | `up --wait` times out on `host1` or `host2` | Docker Desktop must allow privileged containers (the default). Check `docker compose -f deploy/dev/compose.yaml logs host1` |
 | Containers killed or very slow | Not enough memory for two engines; raise the WSL 2 memory limit (see Prerequisites) |
 | LO: `CO rejected: {"error":"db query failed"}` | The Postgres volume predates the current schema; reset it with `down -v` (deletes data) |

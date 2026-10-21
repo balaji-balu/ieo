@@ -40,8 +40,8 @@ func newServer(h http.Handler, log *slog.Logger) *http.Server {
 }
 
 // serve serves the Margo API on margo and the operator API on operator until ctx ends, then shuts
-// them down gracefully (SPEC §11.1, §11.3). When cfg.LegacyPort is set it also serves the old API
-// there; when one server stops, all do. cfg.OperatorToken must be set.
+// them down gracefully (SPEC §11.1, §11.3); when one server stops, both do. cfg.OperatorToken must
+// be set.
 func serve(ctx context.Context, cfg config, margo, operatorLn net.Listener, log *slog.Logger) error {
 	// SPEC §5.3, §6.3: built first, so that co.registry.insecure is warned of at startup.
 	registry := catalog.NewRegistry(cfg.RegistryInsecure, log)
@@ -66,14 +66,10 @@ func serve(ctx context.Context, cfg config, margo, operatorLn net.Listener, log 
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errs := make(chan error, 3)
-	servers := 2
+	const servers = 2
+	errs := make(chan error, servers)
 	go func() { errs <- serveHTTP(ctx, margoSrv, margo) }()
 	go func() { errs <- serveHTTP(ctx, operatorSrv, operatorLn) }()
-	if cfg.LegacyPort != "" {
-		servers++
-		go func() { errs <- legacy(ctx, cfg.LegacyPort, cfg.DatabaseURL) }()
-	}
 	log.Info("serving the Margo API", "addr", margo.Addr().String())
 	log.Info("serving the operator API", "addr", operatorLn.Addr().String())
 	var first error

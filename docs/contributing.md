@@ -57,12 +57,13 @@ variables already set in the shell win). One `.env` in the repository root serve
 ```dotenv
 # --- CO ---
 CO_MARGO_ADDR=:9002                # Margo API for LOs and /healthz (default :9002)
-CO_PORT=9001                       # the old API, served only when set (until roadmap slice E)
+CO_OPERATOR_ADDR=:8443             # operator API for edgectl (default :8443)
+CO_OPERATOR_TOKEN=                 # at least 32 bytes, made up per machine (docs/dev-setup.md, Start)
 CO_METRICS_PORT=9201
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
 
 # --- LO --- (keys: deploy/README.md, "LO configuration")
-LO_SITE_ID=00000000-0000-4000-8000-000000000001   # a UUID while the old CO API runs (until roadmap slice E)
+LO_SITE_ID=00000000-0000-4000-8000-000000000001   # the harness site ID
 LO_CO_URL=http://localhost:9002     # the Margo API; no /api/v1 suffix, the LO adds it
 LO_CO_INSECURE=true                 # allows http:// on this machine; the LO logs a warning
 LO_DATA_DIR=data/lo                 # the LO store is data/lo/lo.db
@@ -103,7 +104,7 @@ go run ./cmd/co site add 00000000-0000-4000-8000-000000000001
 Then:
 
 ```sh
-go run ./cmd/co      # wait for: CO API running on : {"": "9001"} (old API) and "serving the Margo API"
+go run ./cmd/co      # wait for: "serving the Margo API" and "serving the operator API"
 go run ./cmd/lo      # wait for: "outcome":"Accepted" (the Margo sync)
 go run ./cmd/en      # wait for: "taking commands"; it needs `docker compose` on PATH
 go run ./cmd/edgectl --help

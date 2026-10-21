@@ -13,15 +13,15 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/balaji-balu/ieo/internal/bearer"
 	"github.com/balaji-balu/ieo/internal/contract"
-	"github.com/balaji-balu/ieo/internal/lo/coapi"
 	"github.com/balaji-balu/ieo/internal/platform"
 )
 
 // Config configures an Outbox.
 type Config struct {
 	// Client sends the statuses to the CO with the site token (SPEC §15.6).
-	Client *coapi.Client
+	Client *bearer.Client
 	// RetryInterval is how long a status that was not sent waits before it is sent again, and how
 	// long one send may take (`lo.poll.interval`, as the sync loop's next attempt waits).
 	RetryInterval time.Duration
@@ -35,7 +35,7 @@ type Config struct {
 // Outbox holds at most one DeploymentStatus per deployment, the latest one it was given, and
 // sends each to the CO (SPEC §8.8). It is safe for concurrent use.
 type Outbox struct {
-	client *coapi.Client
+	client *bearer.Client
 	retry  time.Duration
 	clock  platform.Clock
 	log    *slog.Logger
@@ -155,7 +155,7 @@ func (o *Outbox) send(ctx context.Context, e entry) {
 	resp, rerr := o.client.PostJSON(sendCtx, p, e.status)
 	cancel()
 	if rerr == nil && (resp.Status < 200 || resp.Status > 299) {
-		rerr = coapi.Failed(http.MethodPost, p, resp)
+		rerr = o.client.Failed(http.MethodPost, p, resp)
 	}
 	if rerr != nil {
 		if ctx.Err() != nil {
