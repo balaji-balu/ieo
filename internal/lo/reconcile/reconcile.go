@@ -56,6 +56,16 @@ type Config struct {
 	Clock platform.Clock
 	// Log receives the Reconciler's lines; nil means slog.Default.
 	Log *slog.Logger
+	// Status takes the DeploymentStatuses the Reconciler builds (SPEC §8.7); nil means none is
+	// built.
+	Status StatusSink
+}
+
+// StatusSink takes each DeploymentStatus the Reconciler builds, with the digest of the deployment
+// it is about, for the CO (SPEC §8.7, §8.8). Put is called with the Reconciler's lock held, so
+// statuses arrive in the order the states changed: it must not block.
+type StatusSink interface {
+	Put(ctx context.Context, s contract.DeploymentStatus, digest contract.Digest)
 }
 
 // Reconciler is the LO's single authority for one site. It is safe for concurrent use.
