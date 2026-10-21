@@ -263,6 +263,16 @@ const (
 	CodeStartTimeout   = "IEO-START-TIMEOUT"
 )
 
+// Gateway error codes: the LO reports them for a deployment no host reported, with the LO's device
+// ID as source (SPEC §8.4, §8.7, §10).
+const (
+	CodeUnknownChildDevice              = "101" // [Margo]
+	CodeChildDeviceUnreachable          = "102" // [Margo]
+	CodeAutonomousPlacementNotSupported = "103" // [Margo]
+	CodeNoEligibleHost                  = "IEO-NO-ELIGIBLE-HOST"
+	CodeInvalidDeployment               = "IEO-INVALID-DEPLOYMENT"
+)
+
 // ParameterValue is a parameter's value and the places in component packages it is written to.
 type ParameterValue struct {
 	Value   any               `json:"value"`

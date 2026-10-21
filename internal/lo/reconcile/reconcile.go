@@ -42,6 +42,13 @@ type Store interface {
 	PutActual(ctx context.Context, host contract.HostID, a store.HostActual) error
 }
 
+// StatusSink takes the deployment statuses the Reconciler builds (SPEC §8.7); the LO's outbox is
+// one. Put is called with the Reconciler's lock held, in the order the states changed, and must not
+// block. digest is the deployment's desired digest, for logs.
+type StatusSink interface {
+	Put(ctx context.Context, s contract.DeploymentStatus, digest contract.Digest)
+}
+
 // Config configures a Reconciler.
 type Config struct {
 	// SiteID is the LO's site. It is logged on every line (SPEC §13.1), and a desired deployment
@@ -56,6 +63,8 @@ type Config struct {
 	Clock platform.Clock
 	// Log receives the Reconciler's lines; nil means slog.Default.
 	Log *slog.Logger
+	// Status takes the deployment statuses; nil means none is built.
+	Status StatusSink
 }
 
 // Reconciler is the LO's single authority for one site. It is safe for concurrent use.

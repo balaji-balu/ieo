@@ -291,7 +291,7 @@ func TestSpec_17_7_LOSendsTokenOnlyOverHTTPSUnlessInsecure(t *testing.T) {
 
 // SPEC §17.7: "No credential, key or token appears in logs or status messages." and "Every tier
 // writes each log line as one JSON object.", for the LO: a configuration error, an unreachable CO,
-// a refused token, a redirect and an accepted manifest; and for the site NATS password (SPEC
+// a refused token, a redirect, an accepted manifest and a refused status; and for the site NATS password (SPEC
 // §15.6): a NATS URL that holds it, a server that refuses the login, and a connection that is
 // made.
 func TestSpec_17_7_NoCredentialOrTokenInLOLogs(t *testing.T) {
@@ -318,6 +318,8 @@ func TestSpec_17_7_NoCredentialOrTokenInLOLogs(t *testing.T) {
 
 	accepted := startLO(t, loEnv(t, srv.URL, token, "LO_TLS_CA_FILE", ca))
 	accepted.waitOutcome("Accepted")
+	// The fake CO answers no status POST: the deployment's status is sent and refused (SPEC §8.8).
+	accepted.waitMsg("status not accepted by the CO")
 
 	co.Override(manifestPath, synctest.Respond(http.StatusTemporaryRedirect, nil, "Location", srv.URL+"/elsewhere?token="+token))
 	redirected := startLO(t, loEnv(t, srv.URL, token, "LO_TLS_CA_FILE", ca))
@@ -348,6 +350,44 @@ func TestSpec_17_7_NoCredentialOrTokenInLOLogs(t *testing.T) {
 			}
 		}
 		l.lines(t) // fails on a line that is not one JSON object
+	}
+}
+
+// SPEC §8.7, §8.8: the LO sends the status of each desired deployment to the CO, here the gateway
+// status of a deployment it cannot resolve (SPEC §8.4).
+func TestLOSendsDeploymentStatusToTheCO(t *testing.T) {
+	co := publishedCO(t)
+	srv, ca := tlsCO(t, co)
+	got := make(chan *http.Request, 1)
+	bodies := make(chan []byte, 1)
+	co.Override("/api/v1/deployments/"+idA.String()+"/status", func(w http.ResponseWriter, r *http.Request) {
+		var b bytes.Buffer
+		_, _ = b.ReadFrom(r.Body)
+		select {
+		case got <- r:
+			bodies <- b.Bytes()
+		default:
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+	l := startLO(t, loEnv(t, srv.URL, co.Token(), "LO_TLS_CA_FILE", ca))
+	defer l.stop()
+	var r *http.Request
+	select {
+	case r = <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no status was sent:\n%s", l.stderr)
+	}
+	if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+co.Token() {
+		t.Fatalf("status request %s with the token %v, want POST with the site token", r.Method, r.Header.Get("Authorization") != "")
+	}
+	var s contract.DeploymentStatus
+	if err := json.Unmarshal(<-bodies, &s); err != nil {
+		t.Fatalf("status body: %v", err)
+	}
+	if s.DeploymentID != idA || s.Status.State != contract.StateFailed || s.Status.Error == nil ||
+		s.Status.Error.Code != contract.CodeInvalidDeployment || s.DeviceID.String() != "site-1" || s.AdoptedManifestVersion != 1 {
+		t.Fatalf("status = %+v, want %s failed with %s on site-1 at adopted version 1", s, idA, contract.CodeInvalidDeployment)
 	}
 }
 
