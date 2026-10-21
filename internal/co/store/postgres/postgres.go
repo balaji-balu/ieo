@@ -260,3 +260,23 @@ func (s *Store) Ping(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Apps returns every stored app.
+func (s *Store) Apps(context.Context) ([]catalog.App, error) {
+	return nil, errors.New("not implemented") // roadmap E4
+}
+
+// AppVersions returns the stored versions of app id.
+func (s *Store) AppVersions(context.Context, string) ([]catalog.App, error) {
+	return nil, errors.New("not implemented") // roadmap E4
+}
+
+// Devices returns the devices of site, or of every site when site is "".
+func (s *Store) Devices(context.Context, contract.SiteID) ([]deploy.Device, error) {
+	return nil, errors.New("not implemented") // roadmap E4
+}
+
+// Deployments returns the deployments of site, or of every site when site is "".
+func (s *Store) Deployments(context.Context, contract.SiteID) ([]deploy.Deployment, error) {
+	return nil, errors.New("not implemented") // roadmap E4
+}

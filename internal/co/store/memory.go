@@ -5,6 +5,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -388,4 +389,24 @@ func (m *Memory) Sites(context.Context) ([]deploy.Site, error) {
 	sites := slices.Collect(maps.Values(m.sites))
 	slices.SortFunc(sites, func(a, b deploy.Site) int { return strings.Compare(string(a.ID), string(b.ID)) })
 	return sites, nil
+}
+
+// Apps returns every stored app.
+func (m *Memory) Apps(context.Context) ([]catalog.App, error) {
+	return nil, errors.New("not implemented") // roadmap E4
+}
+
+// AppVersions returns the stored versions of app id.
+func (m *Memory) AppVersions(context.Context, string) ([]catalog.App, error) {
+	return nil, errors.New("not implemented") // roadmap E4
+}
+
+// Devices returns the devices of site, or of every site when site is "".
+func (m *Memory) Devices(context.Context, contract.SiteID) ([]deploy.Device, error) {
+	return nil, errors.New("not implemented") // roadmap E4
+}
+
+// Deployments returns the deployments of site, or of every site when site is "".
+func (m *Memory) Deployments(context.Context, contract.SiteID) ([]deploy.Deployment, error) {
+	return nil, errors.New("not implemented") // roadmap E4
 }

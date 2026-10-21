@@ -58,6 +58,13 @@ type Site struct {
 	Retired bool
 }
 
+// Device is a site's gateway or one of its hosts, with its latest reported capabilities (SPEC
+// §8.3).
+type Device struct {
+	ID           contract.DeviceID
+	Capabilities contract.DeviceCapabilitiesManifest
+}
+
 // Deployment is one deployment as the CO keeps it (SPEC §4.1.5, §12). Digest names its current
 // YAML. A deleted deployment is kept, out of every manifest, for status history.
 type Deployment struct {

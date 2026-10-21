@@ -235,6 +235,38 @@ func TestRegistryInsecureWarnsAtStartup(t *testing.T) {
 	}
 }
 
+// SPEC §17.7: "The operator API answers a request without the operator token, or with another"
+// ... "the CO does not start with a token shorter than 32 bytes."
+//
+// co serve without CO_OPERATOR_TOKEN, or with one shorter than 32 bytes, is a configuration error
+// (exit 2) that never echoes the value. The other commands don't need the token.
+func TestSpec_17_7_COWontStartWithoutAnOperatorTokenOf32Bytes(t *testing.T) {
+	const unreachable = "postgres://co@127.0.0.1:1/co?sslmode=disable&connect_timeout=2"
+	short := strings.Repeat("s", 31)
+	runWith := func(token string, args ...string) result {
+		var stdout, stderr bytes.Buffer
+		env := map[string]string{"DATABASE_URL": unreachable, "CO_OPERATOR_TOKEN": token}
+		code := run(context.Background(), args, func(k string) string { return env[k] }, &stdout, &stderr)
+		return result{code, stdout.String(), stderr.String()}
+	}
+	for name, token := range map[string]string{"no token": "", "31 bytes": short} {
+		r := runWith(token, "serve")
+		if r.code != 2 || !strings.Contains(r.stderr, "CO_OPERATOR_TOKEN") {
+			t.Errorf("serve with %s: exit %d, stderr %s; want exit 2 naming CO_OPERATOR_TOKEN", name, r.code, r.stderr)
+		}
+		if token != "" && strings.Contains(r.stdout+r.stderr, token) {
+			t.Errorf("serve with %s: the output holds the token", name)
+		}
+	}
+	// 32 bytes passes the check; serve then fails on the unreachable database.
+	if r := runWith(strings.Repeat("t", 32), "serve"); r.code != 1 {
+		t.Errorf("serve with a 32-byte token and no database: exit %d, stderr %s; want 1", r.code, r.stderr)
+	}
+	if r := runWith("", "site", "add", "site-1"); r.code != 1 {
+		t.Errorf("site add without CO_OPERATOR_TOKEN and no database: exit %d, stderr %s; want 1", r.code, r.stderr)
+	}
+}
+
 type pinger func(context.Context) error
 
 func (p pinger) Ping(ctx context.Context) error { return p(ctx) }
