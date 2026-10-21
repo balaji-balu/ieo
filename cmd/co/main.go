@@ -42,7 +42,6 @@ environment:
   CO_MARGO_ADDR         address of the Margo API (default ` + defaultMargoAddr + `)
   CO_OPERATOR_ADDR      address of the operator API (default ` + defaultOperatorAddr + `)
   CO_OPERATOR_TOKEN     the operator API's bearer token, at least 32 bytes (required by serve)
-  CO_PORT               port of the old API, served only when set (until roadmap slice E)
   CO_REGISTRY_INSECURE  true: import from registries over plain HTTP (default false)`
 
 const (
@@ -60,7 +59,6 @@ type config struct {
 	// OperatorToken is the SHA-256 of co.operator_token (SPEC §6.3, §15.6), CO_OPERATOR_TOKEN; nil
 	// when it is not set. The token itself is not kept.
 	OperatorToken *auth.TokenHash
-	LegacyPort    string // CO_PORT
 	// RegistryInsecure is co.registry.insecure (SPEC §6.3), CO_REGISTRY_INSECURE.
 	RegistryInsecure bool
 }
@@ -110,7 +108,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 func readConfig(getenv func(string) string) (config, error) {
 	cfg := config{
 		DatabaseURL: getenv("DATABASE_URL"), MargoAddr: cmp.Or(getenv("CO_MARGO_ADDR"), defaultMargoAddr),
-		OperatorAddr: cmp.Or(getenv("CO_OPERATOR_ADDR"), defaultOperatorAddr), LegacyPort: getenv("CO_PORT"),
+		OperatorAddr: cmp.Or(getenv("CO_OPERATOR_ADDR"), defaultOperatorAddr),
 	}
 	if cfg.DatabaseURL == "" {
 		return config{}, usageError("DATABASE_URL is not set")

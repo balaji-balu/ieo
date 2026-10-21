@@ -128,8 +128,7 @@ services:
       timeout: 3s
       retries: 20
 
-  # Central Orchestrator: Margo API (and /healthz) on 9002, operator API for edgectl on 8443; the
-  # old API on 9001 until roadmap slice E.
+  # Central Orchestrator: Margo API (and /healthz) on 9002, operator API for edgectl on 8443.
   co:
     build:
       <<: *ieo-build
@@ -140,15 +139,14 @@ services:
       CO_OPERATOR_ADDR: ":8443"
       # The operator API's bearer token (SPEC §15.6), from deploy/dev/.env as the NATS password is.
       CO_OPERATOR_TOKEN: ${CO_OPERATOR_TOKEN:?set CO_OPERATOR_TOKEN in deploy/dev/.env (docs/dev-setup.md)}
-      CO_PORT: "9001"
       CO_METRICS_PORT: "9200"
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/orchestration?sslmode=disable
-    ports: ["9001:9001", "9002:9002", "8443:8443"]
+    ports: ["9002:9002", "8443:8443"]
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
-      # Both APIs: the old one on 9001 runs until roadmap slice E.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9002/healthz && wget -qO- http://127.0.0.1:9001/api/v1/sites"]
+      # The operator API has no health endpoint: every request needs the token (SPEC §11.3).
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9002/healthz"]
       interval: 5s
       timeout: 3s
       retries: 30

@@ -1,5 +1,10 @@
 # Installation
 
+> **Out of date.** `edgectl init`, `start`, `stop`, `restart` and `status`, which this page
+> describes, were removed in roadmap step E5 (ADR 0002): `edgectl` is now only the client of the
+> CO's operator API (SPEC §11.3). Nothing installs the components as systemd services yet; run them
+> as in `docs/dev-setup.md`.
+
 Edge-Orch is composed of three independent components:
 
 | Component | Role                 |

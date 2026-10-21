@@ -55,9 +55,11 @@ podman ps
 * Use the CLI:
 
   ```bash
-  cd edgectl
-  go run main.go co status
+  go run ./cmd/edgectl --help
   ```
+
+  `edgectl` is the client of the CO's operator API (SPEC §11.3); its old `co`, `lo` and `en`
+  commands were removed in roadmap step E5.
 
 ### 4. Add a Sample App & Deploy
 
