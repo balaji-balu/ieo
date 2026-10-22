@@ -8,6 +8,11 @@ services:
     ports: ["5432:5432"]
     volumes:
       - pgdata1:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     networks:
       - edge-net
   # The site NATS server, with the site's one login until scoped credentials (SPEC §15.6).
@@ -34,7 +39,10 @@ services:
   # edgectl uses its operator API on 8443 (SPEC §11.3). It creates its tables at startup (ADR 0013).
   co:
     image: ghcr.io/balaji-balu/ieo-co:latest
-    depends_on: [postgres]
+    # The CO opens and migrates its store at startup, so it waits for Postgres to answer.
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
     ports: ["9002:9002", "8443:8443"]
     environment:
       DATABASE_URL: postgres://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=disable

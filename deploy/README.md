@@ -25,7 +25,7 @@ these keys from the environment and exits with code 2 if one is missing or inval
 | `CO_REGISTRY_INSECURE` | `co.registry.insecure` | default `false`; `true` imports from registries over plain HTTP |
 
 The Compose bundle takes `CO_OPERATOR_TOKEN` from its `.env`; the `ieo-co` Helm chart puts
-`co.operatorToken` in a Secret and refuses to install without it. `co --help` lists the commands.
+`co.operatorToken` in a Secret and refuses to install without it. `./ieo-co --help` in the container lists the commands.
 
 ### edgectl configuration
 
