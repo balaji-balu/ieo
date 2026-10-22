@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"oras.land/oras-go/v2/content/memory"
 	"oras.land/oras-go/v2/registry/remote"
 
+	"github.com/balaji-balu/ieo/internal/co/catalog"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
 	"github.com/balaji-balu/ieo/internal/co/store"
 	"github.com/balaji-balu/ieo/internal/contract"
@@ -147,22 +147,16 @@ func TestComposeFileUsesCopiedImage(t *testing.T) {
 	}
 }
 
-// One run pushes the image, the archive and the package, imports the application and creates a
-// directed deployment that the EN can pull (SPEC §5.1, §5.3, §8.1, §8.9 step 4.2).
-func TestDeployHarness(t *testing.T) {
+// One run pushes the image, the archive and the package that the CO imports and the EN pulls
+// (SPEC §5.1, §5.3, §8.9 step 4.2), and reports the site's gateway and the target host (SPEC
+// §8.3). It imports and deploys nothing: the golden path does, through edgectl (tests/harness).
+func TestPrepareHarness(t *testing.T) {
 	ctx := context.Background()
 	reg := &registry{}
 	h, s, img := newHarness(t, reg)
 
-	d, projects, created, err := h.deploy(ctx, s)
-	if err != nil {
-		t.Fatalf("deploy: %v", err)
-	}
-	if want := []string{contract.ComposeProjectName(d.ID, "web")}; !slices.Equal(projects, want) {
-		t.Errorf("projects = %q, want %q", projects, want)
-	}
-	if !created || d.Target != target || d.AppID != "org-ieo-harness-hello" || d.AppVersion != "1.0.0" {
-		t.Errorf("deployment %+v (created %v): want a new one of org-ieo-harness-hello 1.0.0 to %s", d, created, target)
+	if err := h.prepare(ctx, s); err != nil {
+		t.Fatalf("prepare: %v", err)
 	}
 
 	dst, _ := reg.open(ctx, harnessImage)
@@ -170,6 +164,20 @@ func TestDeployHarness(t *testing.T) {
 		t.Errorf("image %s@%s not copied (err %v)", harnessImage, img.Digest, err)
 	}
 
+	if apps, err := s.Apps(ctx); err != nil || len(apps) != 0 {
+		t.Errorf("prepare imported %d applications (err %v), want none", len(apps), err)
+	}
+	// The CO imports the package as `edgectl app import` asks it to.
+	app, _, err := catalog.New(reg.openReadOnly, s).Import(ctx, defaultAppRepository, "1.0.0")
+	if err != nil {
+		t.Fatalf("the CO can't import the package: %v", err)
+	}
+
+	// The CO accepts a directed deployment to the reported host, and the EN can pull its archive.
+	d, err := deploy.New(s).Create(ctx, deploy.Request{AppID: app.ID, Version: app.Version, Target: target})
+	if err != nil {
+		t.Fatalf("the CO refuses a deployment to %s: %v", target, err)
+	}
 	yaml, ok, err := s.Blob(ctx, d.Digest)
 	if err != nil || !ok {
 		t.Fatalf("deployment YAML %s not stored (err %v)", d.Digest, err)
@@ -191,42 +199,32 @@ func TestDeployHarness(t *testing.T) {
 	if _, err := archive.Extract(ctx, layer, t.TempDir(), archive.Limits{MaxEntries: 100, MaxExtractedBytes: 1 << 20}); err != nil {
 		t.Errorf("the EN rejects the pulled archive: %v", err)
 	}
-
-	if _, ok, err := s.Deployment(ctx, d.ID); err != nil || !ok {
-		t.Errorf("deployment %s not stored (err %v)", d.ID, err)
-	}
 }
 
-// A second run finds the deployment and creates no other.
-func TestDeployHarnessTwice(t *testing.T) {
+// A second run succeeds and leaves the site's manifest as it was: prepare deploys nothing.
+func TestPrepareHarnessTwice(t *testing.T) {
 	ctx := context.Background()
 	reg := &registry{}
 	h, s, _ := newHarness(t, reg)
-	first, _, _, err := h.deploy(ctx, s)
-	if err != nil {
-		t.Fatalf("first deploy: %v", err)
+	if err := h.prepare(ctx, s); err != nil {
+		t.Fatalf("first prepare: %v", err)
 	}
 	m1, _, _ := s.Manifest(ctx, target.Site)
-
-	again, _, created, err := h.deploy(ctx, s)
-	if err != nil {
-		t.Fatalf("second deploy: %v", err)
-	}
-	if created || again.ID != first.ID {
-		t.Errorf("second run: deployment %s (created %v), want %s again", again.ID, created, first.ID)
+	if err := h.prepare(ctx, s); err != nil {
+		t.Fatalf("second prepare: %v", err)
 	}
 	if m2, _, _ := s.Manifest(ctx, target.Site); m2.Version != m1.Version {
 		t.Errorf("manifest version %d after the second run, want %d", m2.Version, m1.Version)
 	}
 }
 
-// Without the site, nothing is pushed or deployed: the site is added with `co site add` first.
-func TestDeployHarnessUnknownSite(t *testing.T) {
+// Without the site, nothing is pushed: the site is added with `co site add` first.
+func TestPrepareHarnessUnknownSite(t *testing.T) {
 	reg := &registry{}
 	h, _, _ := newHarness(t, reg)
-	_, _, _, err := h.deploy(context.Background(), store.NewMemory())
+	err := h.prepare(context.Background(), store.NewMemory())
 	if !errors.Is(err, deploy.ErrUnknownSite) {
-		t.Errorf("deploy to a missing site: %v, want ErrUnknownSite", err)
+		t.Errorf("prepare for a missing site: %v, want ErrUnknownSite", err)
 	}
 	if len(reg.repos) != 0 {
 		t.Errorf("pushed to %d repositories for a missing site, want none", len(reg.repos))
