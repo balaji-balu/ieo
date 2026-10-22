@@ -13,8 +13,9 @@ nats:
 co:
   image: ghcr.io/balaji-balu/ieo-co:latest
   replicas: 1
-  port: 9001
-
-github:
-  token: ""   
+  margoPort: 9002 # the Margo API, which LOs poll
+  operatorPort: 8443 # the operator API, for edgectl (SPEC §11.3)
+  # The operator API's bearer token, at least 32 bytes (SPEC §6.3). Required: pass it with
+  # --set-file co.operatorToken=<file> or a values file kept out of version control.
+  operatorToken: ""
 

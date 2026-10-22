@@ -17,14 +17,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Git identity for container commits
-ENV GIT_AUTHOR_NAME="ieo-bot"
-ENV GIT_AUTHOR_EMAIL="bot@ieo.local"
-ENV GIT_COMMITTER_NAME="ieo-bot"
-ENV GIT_COMMITTER_EMAIL="bot@ieo.local"
-
 COPY --from=builder /go/bin/ieo-co .
-COPY ./configs/co.yaml ./configs/co.yaml
-#ENTRYPOINT ["/app/co"]
 
-CMD ["./ieo-co", "--config=./configs/co.yaml"]
+# Configured from the environment (deploy/README.md, "CO configuration").
+CMD ["./ieo-co", "serve"]

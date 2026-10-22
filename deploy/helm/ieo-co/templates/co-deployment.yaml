@@ -18,14 +18,18 @@ spec:
           env:
             - name: DATABASE_URL
               value: postgres://{{ .Values.postgres.user }}:{{ .Values.postgres.password }}@{{ .Release.Name }}-postgres:{{ .Values.postgres.port }}/{{ .Values.postgres.db }}?sslmode=disable
-            - name: CO_PORT
-              value: "{{ .Values.co.port }}"
-            - name: NATS_URL
-              value: nats://{{ .Release.Name }}-nats:{{ .Values.nats.port }}
-            - name: GITHUB_TOKEN
+            - name: CO_MARGO_ADDR
+              value: ":{{ .Values.co.margoPort }}"
+            - name: CO_OPERATOR_ADDR
+              value: ":{{ .Values.co.operatorPort }}"
+            # SPEC §6.3, §15.6: the operator API's bearer token, from a Secret, never a plain value.
+            - name: CO_OPERATOR_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-github
-                  key: GITHUB_TOKEN       
+                  name: {{ .Release.Name }}-co-operator
+                  key: CO_OPERATOR_TOKEN
           ports:
-            - containerPort: {{ .Values.co.port }}
+            - name: margo
+              containerPort: {{ .Values.co.margoPort }}
+            - name: operator
+              containerPort: {{ .Values.co.operatorPort }}

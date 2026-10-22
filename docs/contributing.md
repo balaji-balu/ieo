@@ -26,28 +26,8 @@ and NATS on `4222`.
 
 ### 2. Database schema
 
-The CO does not create its tables at startup. Postgres creates them from
-`deploy/compose/db/init.sql` (the Atlas migrations in `ent/migrate/migrations/`, concatenated) on
-its first start with an empty volume. Without them every site or host registration fails with
-`{"error":"db query failed"}`.
-
-**Check:** `docker compose -f deploy/dev/compose.yaml exec postgres psql -U postgres -d orchestration -c "\dt"`
-lists `sites` and `hosts`, among others.
-
-**Existing database with an older schema.** If `\dt` shows `site`/`host` but not `sites`/`hosts`,
-the volume was created from an older `init.sql`. Either reset it (dev only; deletes all data):
-
-```sh
-docker compose -f deploy/dev/compose.yaml down -v
-docker compose -f deploy/dev/compose.yaml up -d --wait nats postgres
-```
-
-or keep it and apply only the missing migrations with [Atlas](https://atlasgo.io/getting-started),
-naming the last migration it already has (the `local` env in `atlas.hcl` points at this Postgres):
-
-```sh
-atlas migrate apply --env local --baseline 20251129053632
-```
+The CO creates its `co_*` tables and applies any migration the database lacks when it starts
+(ADR 0013; "CO store schema" below). There is nothing to run by hand.
 
 ### 3. Configure the services
 
@@ -59,7 +39,6 @@ variables already set in the shell win). One `.env` in the repository root serve
 CO_MARGO_ADDR=:9002                # Margo API for LOs and /healthz (default :9002)
 CO_OPERATOR_ADDR=:8443             # operator API for edgectl (default :8443)
 CO_OPERATOR_TOKEN=                 # at least 32 bytes, made up per machine (docs/dev-setup.md, Start)
-CO_METRICS_PORT=9201
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
 
 # --- LO --- (keys: deploy/README.md, "LO configuration")
@@ -83,13 +62,7 @@ EN_NATS_USERNAME=site
 EN_NATS_PASSWORD=                   # the same as LO_NATS_PASSWORD
 EN_OTEL_HTTP_ENDPOINT=http://localhost:4318   # required; nothing listens there until roadmap slice M
 EN_REGISTRY_INSECURE=true           # the harness registry, localhost:5000, is plain HTTP
-
-# --- Git-based delivery (being replaced, Appendix B step 2) ---
-# GITHUB_TOKEN=                     # read access to the deployments repo; without it the
-                                    # CO and LO log Git errors but keep running
 ```
-
-Give the CO and LO metrics ports different values when both run on one machine.
 
 ### 4. Start the services, in order
 
@@ -121,52 +94,12 @@ they can start in any order. One `.env` holds the keys of all three, as their pr
 | LO or EN: `cannot connect to the site NATS server` | NATS not running, or the password is not the server's `SITE_NATS_PASSWORD` |
 | LO: `invalid configuration` naming a variable | That variable is missing or invalid in `.env` |
 | LO: `"outcome":"Unreachable"` with `status 401` | `LO_SITE_TOKEN` is not the site's token; `go run ./cmd/co site rotate-token <LO_SITE_ID>` prints a new one |
-| LO: `CO rejected: {"error":"db query failed"}` | Schema missing; see step 2 |
-| CO/LO: `clone failed: authentication required: Repository not found` | Git-based delivery without `GITHUB_TOKEN`; harmless for registration |
-
-### Data model changes
-
-Add or change schema files in `ent/schema`, then from the repository root:
-
-```sh
-ent generate ./ent/schema --feature sql/upsert
-atlas migrate diff <change_name> --env local --to "ent://ent/schema"
-atlas migrate apply --env local
-```
-
-`atlas.hcl` in the root holds the `local` env. `ent/` is generated: never edit it by hand.
-
-A new migration must also reach the deployment bundles, which create the schema from a single
-`init.sql` on first start (see [`deploy/README.md`](../deploy/README.md#database-schema)).
-Regenerate it from the migrations and keep the three copies identical:
-
-```powershell
-# PowerShell
-Get-Content (Get-ChildItem ent\migrate\migrations\*.sql | Sort-Object Name).FullName |
-  Set-Content deploy\helm\ieo-co\schemas\init.sql
-Copy-Item deploy\helm\ieo-co\schemas\init.sql deploy\compose\db\init.sql
-Copy-Item deploy\helm\ieo-co\schemas\init.sql db\init.sql
-```
-
-```sh
-# POSIX shell
-cat ent/migrate/migrations/*.sql > deploy/helm/ieo-co/schemas/init.sql
-cp deploy/helm/ieo-co/schemas/init.sql deploy/compose/db/init.sql
-cp deploy/helm/ieo-co/schemas/init.sql db/init.sql
-```
-
-| File | Used by |
-| --- | --- |
-| `deploy/helm/ieo-co/schemas/init.sql` | Helm chart `ieo-co` (Postgres init ConfigMap) |
-| `deploy/compose/db/init.sql` | `deploy/compose/docker-compose.yaml` |
-| `db/init.sql` | no bundle since `docker-compose-demo.yaml` was deleted (roadmap D5.6c); kept with the Git-based code's schema |
 
 ### CO store schema (`internal/co/store/postgres`)
 
 The CO's new store (roadmap B4, ADR 0013) has its own ent schema in
-`internal/co/store/postgres/ent/schema`, with `co_*` tables kept apart from the Git-based code's
-(ADR 0002). Its versioned SQL migrations live in `internal/co/store/postgres/migrations/` and are
-embedded in the binary: the store applies the ones a database lacks when it opens, so no
+`internal/co/store/postgres/ent/schema`, with `co_*` tables. Its versioned SQL migrations live in
+`internal/co/store/postgres/migrations/` and are embedded in the binary: the store applies the ones a database lacks when it opens, so no
 `init.sql` is involved. To change the schema:
 
 1. Edit `internal/co/store/postgres/ent/schema` and run `go generate ./internal/co/store/postgres/ent`.
@@ -197,9 +130,6 @@ docker exec -it postgres psql -U postgres -d orchestration    # CO (Postgres)
 boltbrowser <BOLTDB_PATH>                                      # LO (bbolt), e.g. C:\ProgramData\lo\db\bolt.db
 ```
 
-`tests/seeds/site.sql` targets the pre-`20251212095258` `site`/`host` tables and fails against the
-current schema. Local runs don't need it: the LO registers its own site.
-
 ## 💬 Ways to Contribute
 
 You can help the project in many ways:
@@ -221,7 +151,6 @@ ieo/
  ├── lo/           # Local orchestrator
  ├── en/           # Edge node runtime
  ├── deployments/  # Sample deployments definition
- ├── configs/      # App configs, YAMLs
  ├── Dockerfile
  ├── podman-compose.yml
  └── README.md

@@ -82,8 +82,6 @@ See [ADR 0001](docs/adr/0001-name-and-module-path.md) and
 | `cmd/co`, `cmd/lo`, `cmd/en`, `cmd/edgectl` | Entry points |
 | `internal/co`, `internal/lo`, `internal/en` | Component internals |
 | `pkg/` | Shared types and logging |
-| `ent/`, `db/`, `atlas.hcl` | Persistence: ent schema (generated code) and Atlas migrations |
-| `configs/` | Component configs |
 | `deploy/` | Compose and Helm deployment |
 | `tests/` | Fixtures and end-to-end tests |
 

@@ -6,4 +6,9 @@ spec:
   selector:
     app: co
   ports:
-    - port: {{ .Values.co.port }}
+    - name: margo
+      port: {{ .Values.co.margoPort }}
+      targetPort: margo
+    - name: operator
+      port: {{ .Values.co.operatorPort }}
+      targetPort: operator

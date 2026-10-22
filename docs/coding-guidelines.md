@@ -85,7 +85,7 @@ Mostly machine-checked (stage 6).
 | G-E5 | Every goroutine has an owner and a way to stop; no goroutine leaks. Shared state is protected; tests run with `-race`. |
 | G-E6 | Structured JSON logs with `log/slog` and the fields §13.1 requires: `deployment_id`, `digest`, `site_id`, `host_id`, `manifest_version`. |
 | G-E7 | No secrets in code, logs, tests or fixtures (§15.4). Credentials come from config or the environment. |
-| G-E8 | Generated code (`ent/`, protobuf) is regenerated with the tools, never edited by hand. |
+| G-E8 | Generated code (`internal/co/store/postgres/ent`) is regenerated with the tools, never edited by hand. |
 
 ## F. Tests
 

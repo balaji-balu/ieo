@@ -10,6 +10,23 @@ docker ps
 edgectl device list
 
 
+### CO configuration
+
+The CO serves the Margo API to LOs and the operator API to `edgectl` (SPEC §11.3). `co serve` reads
+these keys from the environment and exits with code 2 if one is missing or invalid (SPEC §6.1,
+§6.3):
+
+| Variable | Key | |
+| --- | --- | --- |
+| `DATABASE_URL` | | REQUIRED; the Postgres store |
+| `CO_MARGO_ADDR` | | default `:9002`; the Margo API |
+| `CO_OPERATOR_ADDR` | `co.operator_listen_addr` | default `:8443`; the operator API |
+| `CO_OPERATOR_TOKEN` | `co.operator_token` | REQUIRED; at least 32 bytes, `edgectl`'s `EDGECTL_TOKEN` (SPEC §15.6). Environment only |
+| `CO_REGISTRY_INSECURE` | `co.registry.insecure` | default `false`; `true` imports from registries over plain HTTP |
+
+The Compose bundle takes `CO_OPERATOR_TOKEN` from its `.env`; the `ieo-co` Helm chart puts
+`co.operatorToken` in a Secret and refuses to install without it. `./ieo-co --help` in the container lists the commands.
+
 ### edgectl configuration
 
 `edgectl` is the client of the CO's operator API (SPEC §11.3). It reads these keys from the
@@ -99,47 +116,16 @@ chart has no EN.
 
 ### Database schema
 
-The CO does not create its tables at startup. Both bundles create them from a single SQL file
-that Postgres runs on its **first start with an empty data volume**:
+The CO creates its `co_*` tables when it starts, and applies any migration the database lacks
+(ADR 0013), so neither bundle needs a schema file and an existing volume needs no manual step. The
+database role in `DATABASE_URL` needs the rights to create tables in its schema.
 
-| Bundle | Schema file | Mounted at |
-| --- | --- | --- |
-| Compose (`deploy/compose`) | `db/init.sql` | `/docker-entrypoint-initdb.d` (bind mount `./db`) |
-| Helm (`ieo-co` chart) | `schemas/init.sql` | `/docker-entrypoint-initdb.d` (ConfigMap `<release>-postgres-schema`) |
+A database created by an older bundle also holds the tables of the Git-based CO (`sites`, `hosts`,
+`application_descs`, …), which nothing reads any more. They can be dropped by hand; the CO's
+tables all start with `co_`.
 
-Each file is the Atlas migrations in `ent/migrate/migrations/` concatenated in name order (latest
-included: `20251212095258`). Check after the first start that the list includes `sites` and `hosts`:
-
-```sh
-docker compose exec postgres psql -U $PG_USER -d $PG_DB -c "\dt"       # Compose
-kubectl exec deploy/<release>-postgres -- psql -U <user> -d <db> -c "\dt"   # Helm
-```
-
-If `sites` and `hosts` are missing, every LO and EN registration fails with
-`{"error":"db query failed"}`.
-
-**Existing volume.** Postgres skips the init file when the data volume already holds a database,
-so a newer `init.sql` never reaches an existing deployment. Apply the missing migrations with
-[Atlas](https://atlasgo.io/getting-started) from a checkout of the release you're upgrading to,
-naming the last migration the volume already has as `--baseline`:
-
-```sh
-atlas migrate apply \
-  --url "postgres://$PG_USER:$PG_PASSWORD@<postgres-host>:5432/$PG_DB?sslmode=disable" \
-  --dir file://ent/migrate/migrations \
-  --baseline <last applied version>
-```
-
-Volumes created by the Compose bundle before `init.sql` included `20251212095258` have only
-`20251129053632`; use that as the baseline. `--baseline` is needed only on the first Atlas run
-against a volume; Atlas records revisions from then on.
-
-For a test install you can instead delete the volume and start again (deletes all data):
-`docker compose down -v`, then `docker compose up -d`. For Helm, delete the
-`<release>-postgres-pvc` PersistentVolumeClaim before reinstalling.
-
-Developers: see [`docs/contributing.md`](../docs/contributing.md#data-model-changes) for keeping
-the schema files in step with new migrations.
+Developers: see [`docs/contributing.md`](../docs/contributing.md) ("CO store schema") for changing
+the schema.
 
 ### Restoring the CO database
 
@@ -151,8 +137,8 @@ the new token. Likewise run `co site rotate-token` for any site whose token was 
 backup. Then run:
 
 ```sh
-docker compose exec co /app/orchestrator sites raise-versions --by 1000000            # Compose
-kubectl exec deploy/<release>-co -- /app/orchestrator sites raise-versions --by 1000000   # Helm
+docker compose exec co ./ieo-co sites raise-versions --by 1000000            # Compose
+kubectl exec deploy/<release>-co -- ./ieo-co sites raise-versions --by 1000000   # Helm
 ```
 
 `--by N` must exceed the number of manifest versions any site may have published since the backup:
