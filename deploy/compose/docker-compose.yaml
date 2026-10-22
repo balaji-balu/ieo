@@ -8,7 +8,6 @@ services:
     ports: ["5432:5432"]
     volumes:
       - pgdata1:/var/lib/postgresql/data
-      - ./db:/docker-entrypoint-initdb.d
     networks:
       - edge-net
   # The site NATS server, with the site's one login until scoped credentials (SPEC §15.6).

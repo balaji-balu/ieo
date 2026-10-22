@@ -28,9 +28,7 @@ linters:
         - name: var-naming
         - name: context-as-argument
   exclusions:
-    generated: strict # G-E8: never lint generated code (ent/)
-    paths:
-      - ent/
+    generated: strict # G-E8: never lint generated code (internal/co/store/postgres/ent)
 
 formatters:
   enable:
@@ -38,5 +36,3 @@ formatters:
     - goimports
   exclusions:
     generated: strict
-    paths:
-      - ent/

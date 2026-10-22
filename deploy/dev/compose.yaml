@@ -97,8 +97,7 @@ services:
       timeout: 3s
       retries: 20
 
-  # CO database. The schema is created from deploy/compose/db/init.sql on the first start with an
-  # empty volume (deploy/README.md). Same credentials as atlas.hcl's local env.
+  # CO database. The CO creates and migrates its tables when it starts (ADR 0013).
   postgres:
     image: postgres:16-alpine
     environment:
@@ -108,7 +107,6 @@ services:
     ports: ["5432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../compose/db:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "orchestration"]
       interval: 5s
