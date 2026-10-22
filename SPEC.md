@@ -1012,6 +1012,10 @@ On **Apply** (deployment ID, digest, deployment YAML):
    directory. Invalid → ack
    `accepted: false` with error code `IEO-INVALID-COMMAND` (§10), and nothing else.
 3. Ack `accepted: true`. The rest runs asynchronously; outcomes are reported as status events.
+   `[IEO]` When `applied[deployment_id].digest == digest` and every component of the profile is
+   recorded `installed`, so that step 1 did not skip only because other components are recorded,
+   the EN deletes the recorded state of every other component, in one write and without publishing
+   it, skips step 4 and goes to step 5. Nothing is pulled or brought up again.
 4. For each component, in listed order:
    1. Publish `installing`.
    2. Pull the Compose Archive from `repository` at tag `revision` (§4.2 tag rule). Verify the layer
@@ -1062,8 +1066,8 @@ brings down the other projects, keeps the deployment in `applied` with its compo
 and publishes nothing after `removing`. The host still reports the deployment, so the LO sends
 Remove again, or Apply if the deployment is wanted again (§8.5).
 
-`[IEO]` An Apply records every component of the deployment as `pending` before its first component
-starts, and deletes the recorded state of every component the deployment no longer has, in one
+`[IEO]` An Apply that runs step 4 records every component of the deployment as `pending` before
+its first component starts, and deletes the recorded state of every component the deployment no longer has, in one
 write and without publishing it. So inventory never shows a state from an earlier Apply for a
 component this one has not reached, or for one it no longer has: a component left `failed` or
 `removing` that is not in the new profile would otherwise get Apply forever (§8.5 step 3). Its
@@ -1074,8 +1078,9 @@ call that was cut short, records `applied` (step 6) and publishes nothing more; 
 `[IEO]` When step 5 cannot bring a project down, the EN still brings down the others, keeps that
 project recorded, and records a component named after the project's `<component>` part (§4.2) as
 `removing`, without publishing it. So the host's next Inventory lists the deployment at this digest
-with a component `removing`, the LO sends Apply again (§8.5 step 3), step 1 does not skip it, and
-step 5 tries again. The component is not one of the deployment YAML's, so the LO's DeploymentStatus
+with a component `removing`, the LO sends Apply again (§8.5 step 3), step 1 does not skip it, and,
+with every component of the profile still `installed`, it runs step 5 alone (step 3), which tries
+again. The other components are not pulled, brought up or reported again. The component is not one of the deployment YAML's, so the LO's DeploymentStatus
 does not list it (§8.7).
 
 `[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
@@ -1395,8 +1400,11 @@ Resources:
 - An update request names only what changes. A field left out keeps the deployment's current value
   (`profile` keeps its `id`, also when `version` changes). `parameters` merges by name: each name it
   gives replaces that parameter's value, a `null` value removes the parameter, and names it does
-  not give keep their values. The CO applies the result as a create request with the deployment's
-  `appId` and `id` (§8.1, §16.1), so §8.1.1 checks the merged parameters against the new version.
+  not give keep their values, except those the new version's Application Description does not
+  define, which are dropped. `null` always means remove: a parameter can be set to JSON `null` only
+  at create. The CO applies the result as a create request with the deployment's `appId` and `id`
+  (§8.1, §16.1), so §8.1.1 checks the merged parameters against the new version: a name the
+  request gives that the new version does not define is still rejected.
   It reads the deployment it merges onto in the same transaction as the write (§8.1), so
   concurrent updates do not undo each other's fields.
   `appId` is not a field of the request: by the common rules it is a `400`, since another
@@ -1833,24 +1841,28 @@ function remove_deployment(cmd):
   publish_removal(cmd, digest, removed)
 
 function apply_deployment(cmd):
-  store.reset_components(cmd.deploymentId, component_names(cmd))   # pending; others deleted; one write
-  for c in cmd.deployment.spec.deploymentProfile.components:
-    publish_status(cmd, c.name, installing)
-    layer = oci_pull(c.repository, c.revision,   # revision is the tag (§4.2)
-                     max_bytes=cfg.pull.max_bytes, timeout=cfg.pull.timeout)
-    if layer failed:                          return fail(cmd, c, "IEO-PULL-FAILED")
-    if sha256(layer.bytes) != layer.digest:   return fail(cmd, c, "IEO-DIGEST-MISMATCH")
-    dir = safe_extract(layer, component_dir(cmd, c), cfg.archive)   # §5.2 rules and limits
-    if dir failed:                            return fail(cmd, c, "IEO-ARCHIVE-INVALID")
-    write_override(dir, parameters_for(cmd, c) + otel_env())   # compose.ieo.yaml (§5.4)
-    store.put_applied(cmd.deploymentId, cmd.digest, project_names + [this project])
-    r = compose_up(project_name(cmd.deploymentId, c.name), dir, wait=c.wait,
-                   timeout=c.timeout or cfg.start_timeout)
-    if r timed out:                           return fail(cmd, c, "IEO-START-TIMEOUT")
-    if r failed:                              return fail(cmd, c, "IEO-COMPOSE-FAILED")
-    publish_status(cmd, c.name, installed)
-    if superseded(cmd):                       # §8.9: step 5 is skipped
-      return store.put_applied(cmd.deploymentId, cmd.digest, project_names)
+  if applied.get(cmd.deploymentId).digest == cmd.digest and profile_installed(cmd):
+    # §8.9 step 3: only other components are recorded; step 4 is skipped
+    store.delete_other_components(cmd.deploymentId, component_names(cmd))   # one write, not published
+  else:
+    store.reset_components(cmd.deploymentId, component_names(cmd))   # pending; others deleted; one write
+    for c in cmd.deployment.spec.deploymentProfile.components:
+      publish_status(cmd, c.name, installing)
+      layer = oci_pull(c.repository, c.revision,   # revision is the tag (§4.2)
+                       max_bytes=cfg.pull.max_bytes, timeout=cfg.pull.timeout)
+      if layer failed:                          return fail(cmd, c, "IEO-PULL-FAILED")
+      if sha256(layer.bytes) != layer.digest:   return fail(cmd, c, "IEO-DIGEST-MISMATCH")
+      dir = safe_extract(layer, component_dir(cmd, c), cfg.archive)   # §5.2 rules and limits
+      if dir failed:                            return fail(cmd, c, "IEO-ARCHIVE-INVALID")
+      write_override(dir, parameters_for(cmd, c) + otel_env())   # compose.ieo.yaml (§5.4)
+      store.put_applied(cmd.deploymentId, cmd.digest, project_names + [this project])
+      r = compose_up(project_name(cmd.deploymentId, c.name), dir, wait=c.wait,
+                     timeout=c.timeout or cfg.start_timeout)
+      if r timed out:                           return fail(cmd, c, "IEO-START-TIMEOUT")
+      if r failed:                              return fail(cmd, c, "IEO-COMPOSE-FAILED")
+      publish_status(cmd, c.name, installed)
+      if superseded(cmd):                       # §8.9: step 5 is skipped
+        return store.put_applied(cmd.deploymentId, cmd.digest, project_names)
   # §8.9 step 5: every component installed; recorded projects of components the profile lacks
   stuck = []
   for p in project_names not in profile_project_names(cmd):
@@ -1965,7 +1977,8 @@ endpoints (§11.3 holds IEO-specific operations).
   status `{current: null, history: []}` before the first report, and every report after, oldest
   first.
 - An update through the operator API keeps every field it does not name, merges `parameters` by
-  name with `null` removing one, and returns the deployment with its new digest.
+  name with `null` removing one, drops kept parameters the new version does not define, and returns
+  the deployment with its new digest.
 
 ### 17.3 LO: Sync
 
@@ -2060,7 +2073,7 @@ endpoints (§11.3 holds IEO-specific operations).
   the deployment's directory.
 - A dropped component's project that cannot be brought down stays recorded, the Inventory lists
   that component `removing`, and the next Apply at the same digest is not skipped and brings it
-  down.
+  down without pulling, bringing up or reporting the profile's components again.
 - An Apply at the applied digest after a Remove that did not finish brings down the project of a
   component the profile does not have.
 - An Apply after a Remove that did not finish, at a digest whose profile drops a component, leaves
