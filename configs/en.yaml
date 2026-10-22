@@ -1,6 +1,0 @@
-nats:
-  url: nats://nats:4222
-poll_interval_seconds: 20
-git:
-  repo: https://github.com/edge-orchestration-platform/deployments
-  path_filter: sites/tiruvannamalai/desiredstate.

@@ -1,9 +1,7 @@
 # PR gate for docs/process.md stage 6 (Verify). Mirrors the local commands in CLAUDE.md.
 #
-# Ratchet: legacy code is not yet clean, so
-#  - build and test skip the broken packages listed in scripts/go-packages.sh;
-#  - lint and format checks apply only to lines a change adds or modifies.
-# Both tighten as the baseline is fixed. Never loosen them to get green.
+# Ratchet: legacy code is not yet clean, so lint and format checks apply only to lines a change adds
+# or modifies. It tightens as the baseline is fixed. Never loosen it to get green.
 name: CI
 
 on:
@@ -99,9 +97,6 @@ jobs:
 
       - name: golangci-lint (includes gofmt, goimports, govet)
         run: golangci-lint run ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh test)
-
-      - name: golangci-lint, packages with broken tests (production code only)
-        run: golangci-lint run --tests=false ${{ steps.base.outputs.flag }} $(scripts/go-packages.sh no-test)
 
   # The laptop harness (ADR 0009, roadmap 0.5) must come up on a clean machine. §17.8 tests will run
   # against this same stack.
