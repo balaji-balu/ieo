@@ -164,37 +164,54 @@ docker push localhost:5000/hello-world:1.0
 docker compose -f deploy/dev/compose.yaml exec host1 docker pull registry:5000/hello-world:1.0
 ```
 
-## Deploying the test application
+## The golden path
 
-`tools/harnessdeploy` deploys the test application in `tests/harness/hello` (one Compose component,
-`web`, running busybox) to `host-1`, as CI's "Dev harness" job does. It copies busybox, pinned by
-digest, from Docker Hub into the registry, so it needs internet access. It pushes the
-application's Compose archive and package to `localhost:5000`, imports the application into the
-CO's Postgres and creates a directed deployment to `00000000-0000-4000-8000-000000000001/host-1`.
-Roadmap step E6 replaces it with `edgectl app import` and `edgectl deploy`.
-Until slice H, it also records the capabilities of the site's gateway and of `host-1`, which an
-LO would report: the CO creates a deployment only to a host it knows.
+The golden path (SPEC §17.8, part 1) imports the test application in `tests/harness/hello` (one
+Compose component, `web`, running busybox), deploys it to `host-1` and waits until `edgectl
+deployment status` shows it `installed` there, as CI's "Dev harness" job does. Roadmap slices F and
+G add its update and delete.
+
+It runs in two steps:
+
+1. `tools/harnessdeploy` readies the harness. It copies busybox, pinned by digest, from Docker Hub
+   into the registry, so it needs internet access, and pushes the application's Compose archive
+   and package to `localhost:5000`. Until slice H, it also records the capabilities of the site's
+   gateway and of `host-1`, which the LO would report: the CO creates a deployment only to a host
+   it knows. It imports and deploys nothing.
+2. `TestSpec_17_8_GoldenPath` in `tests/harness` runs `edgectl` in-process: `app import --repo
+   registry:5000/ieo-harness/hello` (the name the CO reaches the registry by), then `deploy --target
+   00000000-0000-4000-8000-000000000001/host-1`, then `deployment status` until the deployment is
+   `installed` on `host-1` with one component, for up to 4 minutes. It skips unless
+   `IEO_HARNESS_CO_URL` is set, and takes the other `EDGECTL_*` settings from the environment (see
+   "The operator API"). With `IEO_HARNESS_ENV_FILE` set, it appends `DEPLOYMENT_ID=<id>` and
+   `COMPOSE_PROJECT=<project>` to that file.
 
 With the stack up (above), from the repository root in PowerShell:
 
 ```powershell
 $env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable"
-go run ./tools/harnessdeploy | Tee-Object -Variable out
-$project = ($out | Select-String '^COMPOSE_PROJECT=(.*)').Matches.Groups[1].Value
+go run ./tools/harnessdeploy
+$env:IEO_HARNESS_CO_URL = "http://localhost:8443"
+$env:EDGECTL_CO_INSECURE = "true"
+$env:EDGECTL_TOKEN = (Select-String -Path deploy/dev/.env -Pattern '^CO_OPERATOR_TOKEN=(.*)').Matches[0].Groups[1].Value
+$env:IEO_HARNESS_ENV_FILE = Join-Path $env:TEMP "ieo-golden-path.env"
+Remove-Item $env:IEO_HARNESS_ENV_FILE -ErrorAction Ignore
+go test -count=1 -v -run TestSpec_17_8_GoldenPath ./tests/harness
+$out = Get-Content $env:IEO_HARNESS_ENV_FILE
+$id = ($out | Select-String '^DEPLOYMENT_ID=(.*)').Matches[0].Groups[1].Value
+$project = ($out | Select-String '^COMPOSE_PROJECT=(.*)').Matches[0].Groups[1].Value
+go run ./cmd/edgectl deployment status $id
 docker compose -f deploy/dev/compose.yaml exec -T host1 docker ps --filter "label=com.docker.compose.project=$project"
 docker compose -f deploy/dev/compose.yaml exec -T host2 docker ps -a --filter label=com.docker.compose.project
 docker compose -f deploy/dev/compose.yaml logs en1 | Select-String '"component installed"'
-$id = ($out | Select-String '^DEPLOYMENT_ID=(.*)').Matches.Groups[1].Value
-docker compose -f deploy/dev/compose.yaml exec -T postgres psql -U postgres -d orchestration -tAc "SELECT convert_from(status, 'UTF8') FROM co_statuses WHERE deployment_id = '$id' ORDER BY id DESC LIMIT 1"
 ```
 
-The tool prints `DEPLOYMENT_ID=<id>` and `COMPOSE_PROJECT=<project>`. Within seconds (the LO
-polls every 5 s in the harness) `host1` runs one container of the project and `host2` runs
-none, and `en1` logs `component installed` with the deployment ID. The last query prints the
-latest DeploymentStatus the LO sent the CO: `installed`, from `deviceId` `<site>/host-1`, with
-one entry for `web`; `edgectl deployment status $id` (see "The operator API") shows the same. Running the tool again creates
-no second deployment: it prints the first. To check that an EN restart leaves the container
-alone, note its ID, then:
+The test passes once the LO has reported the deployment `installed` (the LO polls every 5 s in
+the harness). `edgectl deployment status` shows the same, from `deviceId` `<site>/host-1`; `host1`
+runs one container of the project and `host2` runs none, and `en1` logs `component installed`
+with the deployment ID. Each run of the test creates a new deployment; rerunning
+`tools/harnessdeploy` only pushes the same content again. To check that an EN restart leaves the
+container alone, note its ID, then:
 
 ```powershell
 docker compose -f deploy/dev/compose.yaml restart en1
@@ -202,7 +219,7 @@ Start-Sleep 15
 docker compose -f deploy/dev/compose.yaml exec -T host1 docker ps -q --filter "label=com.docker.compose.project=$project"
 ```
 
-The ID is the same. `down -v` deletes the deployment with everything else.
+The ID is the same. `down -v` deletes the deployments with everything else.
 
 ## Only NATS and Postgres
 

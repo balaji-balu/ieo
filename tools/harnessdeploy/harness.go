@@ -3,7 +3,6 @@ package main
 import (
 	"archive/tar"
 	"bytes"
-	"cmp"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -12,7 +11,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -21,7 +19,6 @@ import (
 	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote"
 
-	"github.com/balaji-balu/ieo/internal/co/catalog"
 	"github.com/balaji-balu/ieo/internal/co/deploy"
 	"github.com/balaji-balu/ieo/internal/contract"
 )
@@ -29,7 +26,8 @@ import (
 const (
 	// harnessRegistry is the registry as the hosts and the CO's packages name it (compose.yaml).
 	harnessRegistry = "registry:5000"
-	// defaultAppRepository is where the test application's package is pushed and imported from.
+	// defaultAppRepository is where the test application's package is pushed; the golden path
+	// imports it from there (tests/harness).
 	defaultAppRepository = harnessRegistry + "/ieo-harness/hello"
 	// sourceImage is the image the test application runs, pinned by the digest of its index.
 	sourceImage = "registry-1.docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
@@ -53,19 +51,13 @@ type image struct {
 	dest   string
 }
 
-// harness deploys the test application in appDir to target.
+// harness pushes the test application in appDir and reports target's capabilities.
 type harness struct {
 	appDir        string
 	appRepository string
 	target        contract.DeviceID
 	open          openFunc
 	image         image
-}
-
-// coStore is the CO store the tool writes, as the CO's own commands do.
-type coStore interface {
-	catalog.Store
-	deploy.Store
 }
 
 // description reads and parses the application's description.
@@ -78,16 +70,15 @@ func (h harness) description() ([]byte, contract.ApplicationDescription, error) 
 	return b, desc, err
 }
 
-// deploy pushes the image, the application's Compose archives and its package, imports it (SPEC
-// §5.3), stands in for the LO's capability reports (SPEC §8.3, until roadmap slice H) and creates
-// a directed deployment of it to h.target (SPEC §8.1). When the site already has a deployment of
-// this application version to h.target, it returns that one and creates none: created is false.
-// projects are the Compose projects of the deployment's components, in order (SPEC §4.2). A site
-// that does not exist wraps deploy.ErrUnknownSite, and nothing is pushed.
-func (h harness) deploy(ctx context.Context, s coStore) (d deploy.Deployment, projects []string, created bool, err error) {
+// prepare readies the harness for the golden path (tests/harness): it pushes the image, the
+// application's Compose archives and its package, and stands in for the LO's capability reports
+// of the site's gateway and h.target (SPEC §8.3, until roadmap slice H). It imports nothing and
+// deploys nothing: `edgectl app import` and `edgectl deploy` do. A site that does not exist wraps
+// deploy.ErrUnknownSite, and nothing is pushed.
+func (h harness) prepare(ctx context.Context, s deploy.Store) error {
 	descBytes, desc, err := h.description()
 	if err != nil {
-		return deploy.Deployment{}, nil, false, err
+		return err
 	}
 	err = s.ChangeSite(ctx, h.target.Site, func(_ deploy.SiteState, exists bool) (deploy.SiteChange, error) {
 		if !exists {
@@ -96,10 +87,10 @@ func (h harness) deploy(ctx context.Context, s coStore) (d deploy.Deployment, pr
 		return deploy.SiteChange{}, nil // a read: nothing is written
 	})
 	if err != nil {
-		return deploy.Deployment{}, nil, false, err
+		return err
 	}
 	if err := h.copyImage(ctx); err != nil {
-		return deploy.Deployment{}, nil, false, err
+		return err
 	}
 	for _, p := range desc.DeploymentProfiles {
 		if p.Type != contract.ProfileTypeCompose {
@@ -107,36 +98,14 @@ func (h harness) deploy(ctx context.Context, s coStore) (d deploy.Deployment, pr
 		}
 		for _, c := range p.Components {
 			if err := h.pushComponent(ctx, c); err != nil {
-				return deploy.Deployment{}, nil, false, err
+				return err
 			}
 		}
 	}
 	if err := h.pushPackage(ctx, desc.Metadata.Version, descBytes); err != nil {
-		return deploy.Deployment{}, nil, false, err
+		return err
 	}
-	readOnly := func(ctx context.Context, repository string) (oras.ReadOnlyTarget, error) {
-		return h.open(ctx, repository)
-	}
-	app, _, err := catalog.New(readOnly, s).Import(ctx, h.appRepository, desc.Metadata.Version)
-	if err != nil {
-		return deploy.Deployment{}, nil, false, err
-	}
-	svc := deploy.New(s)
-	if err := reportDevices(ctx, svc, h.target); err != nil {
-		return deploy.Deployment{}, nil, false, err
-	}
-	d, created, err = deployOnce(ctx, s, svc, deploy.Request{AppID: app.ID, Version: app.Version, Target: h.target})
-	if err != nil {
-		return deploy.Deployment{}, nil, false, err
-	}
-	for _, p := range desc.DeploymentProfiles {
-		if p.ID == d.Profile {
-			for _, c := range p.Components {
-				projects = append(projects, contract.ComposeProjectName(d.ID, c.Name))
-			}
-		}
-	}
-	return d, projects, created, nil
+	return reportDevices(ctx, deploy.New(s), h.target)
 }
 
 // copyImage copies h.image, every platform of it, into the harness registry. It is pushed by
@@ -266,28 +235,6 @@ func reportDevices(ctx context.Context, svc *deploy.Service, target contract.Dev
 		}
 	}
 	return nil
-}
-
-// deployOnce creates the deployment req asks for, unless the site has one of the same application
-// version to the same target that is not deleted: then it returns that one, and created is false.
-func deployOnce(ctx context.Context, s deploy.Store, svc *deploy.Service, req deploy.Request) (d deploy.Deployment, created bool, err error) {
-	var found []deploy.Deployment
-	err = s.ChangeSite(ctx, req.Target.Site, func(state deploy.SiteState, _ bool) (deploy.SiteChange, error) {
-		for _, d := range state.Deployments {
-			if !d.Deleted && d.AppID == req.AppID && d.AppVersion == req.Version && d.Target == req.Target {
-				found = append(found, d)
-			}
-		}
-		return deploy.SiteChange{}, nil // a read: nothing is written
-	})
-	if err != nil {
-		return deploy.Deployment{}, false, err
-	}
-	if len(found) > 0 {
-		return slices.MinFunc(found, func(a, b deploy.Deployment) int { return cmp.Compare(a.ID.String(), b.ID.String()) }), false, nil
-	}
-	d, err = svc.Create(ctx, req)
-	return d, err == nil, err
 }
 
 // openThrough returns an openFunc that reaches the harness registry at addr (the laptop's
