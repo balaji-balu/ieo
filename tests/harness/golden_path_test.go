@@ -88,6 +88,14 @@ func TestSpec_17_8_GoldenPath(t *testing.T) {
 	if len(cur.Components) != 1 || cur.Components[0].State != contract.StateInstalled {
 		t.Errorf("components %+v, want one, installed", cur.Components)
 	}
+
+	// SPEC §11.3: the operator sees the same in edgectl's text output.
+	text := run.ok(ctx, t, "deployment", "status", d.ID.String())
+	for _, want := range []string{"STATE", string(contract.StateInstalled), "DEVICE", target} {
+		if !strings.Contains(text, want) {
+			t.Errorf("edgectl deployment status prints\n%s\nwithout %q", text, want)
+		}
+	}
 }
 
 // waitInstalled polls edgectl deployment status until the deployment's current status is
