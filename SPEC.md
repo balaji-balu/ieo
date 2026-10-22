@@ -1032,8 +1032,14 @@ On **Apply** (deployment ID, digest, deployment YAML):
       component with `wait` true and no `timeout`, or a `timeout` of zero, is given
       `en.start_timeout`, so no wait is without end. Without `wait`, `timeout` and `en.start_timeout` are not used.
    6. Publish `installed`, or `failed` with an error and stop processing later components.
-5. If the deployment previously ran at a different digest, bring down Compose projects of
-   components that no longer exist.
+5. Bring down the Compose projects of components that no longer exist, as when the deployment
+   previously ran at a different digest. `[IEO]` This step runs once every component is `installed`,
+   and is skipped by an Apply that failed or was superseded. It brings down every recorded project
+   whose name is not `<deployment_id>-<component>` (§4.2) for a component of the profile, at
+   whatever digest it was recorded, so it also covers a project left by a Remove that did not
+   finish. Each project brought down leaves `applied[deployment_id].compose_projects`. Once none is
+   left, the EN deletes every directory under `<en.data_dir>/deployments/<deployment_id>/` other
+   than this digest's (§9.1); a directory it cannot delete is logged and left.
 6. Durably record `applied[deployment_id] = {digest, compose_projects}` whether processing succeeded
    or failed, so inventory reports the digest with its component states and the LO can retry.
 
@@ -1064,6 +1070,13 @@ component this one has not reached, or for one it no longer has: a component lef
 Compose project stays recorded until step 5 or a Remove brings it down. When the EN is stopped during an Apply, the Apply ends at the
 call that was cut short, records `applied` (step 6) and publishes nothing more; the component stays
 `installing`.
+
+`[IEO]` When step 5 cannot bring a project down, the EN still brings down the others, keeps that
+project recorded, and records a component named after the project's `<component>` part (§4.2) as
+`removing`, without publishing it. So the host's next Inventory lists the deployment at this digest
+with a component `removing`, the LO sends Apply again (§8.5 step 3), step 1 does not skip it, and
+step 5 tries again. The component is not one of the deployment YAML's, so the LO's DeploymentStatus
+does not list it (§8.7).
 
 `[IEO]` Apply step 1 and Remove step 1 are checked when the command runs, not when it arrives: a
 command for a deployment with a command in flight waits for it (below), then checks `applied` as the
@@ -1106,6 +1119,9 @@ step 2); its steps 1 run later, as above. If several arrive, only the latest run
 place of `:` (`sha256-<hex>`), since `:` is not allowed in a file name on every system; and
 `<component>` is the component's name as it appears in the Compose project name (§4.2: lowercased,
 characters outside `[a-z0-9_-]` replaced with `-`).
+
+`[IEO]` A deployment's directory holds the digests it was applied at since an Apply last finished
+§8.9 step 5, which deletes the others; a Remove deletes the whole directory.
 
 ### 9.2 Safety Invariants
 
@@ -1345,7 +1361,7 @@ authenticates with a static bearer token (`co.operator_token`; transport and tok
 - Lists are JSON arrays, `[]` when empty, in the order given per operation.
 
 `[IEO]` Operations specified so far. The CO serves only these until a later revision specifies the
-others in the table (update and delete: roadmap slices F and G; sites: slice N). By the common
+others in the table (delete: roadmap slice G; sites: slice N). By the common
 rules, another method on a path below gets `405`, and any other path `404`:
 
 | Request | Success | Errors |
@@ -1357,6 +1373,7 @@ rules, another method on a path below gets `405`, and any other path `404`:
 | `POST /api/v1/deployments` `{appId, version, profile?, target, name?, namespace?, parameters?}` | `201` Deployment | `404` the application version is not imported; `422` no such compose profile, several and none named, or a failed §8.1.1 check (unknown or retired site, unknown host, constraints, parameters), with its reason |
 | `GET /api/v1/deployments[?site=<site_id>]` | `200` [Deployment], by `id` | `404` unknown site |
 | `GET /api/v1/deployments/{id}` | `200` Deployment | `404` |
+| `PATCH /api/v1/deployments/{id}` `{version?, profile?, target?, name?, namespace?, parameters?}` | `200` Deployment, also when nothing changed (§8.1) | `404` no such deployment, or the application version is not imported; `422` the deployment is deleted, the new version has no compose profile of that `id`, a target at another site (§8.1), or a failed §8.1.1 check, with its reason |
 | `GET /api/v1/deployments/{id}/status` | `200` `{current, history}` | `404` |
 
 Resources:
@@ -1368,12 +1385,19 @@ Resources:
   (§4.1.3). The gateway is listed with `deviceId` `<site_id>`.
 - Deployment: `{id, appId, version, profile, target, name, namespace, parameters, digest,
   deleted}`. `profile` is the selected profile's `id`; `target` is its current target, a Margo
-  device ID (§4.2); `parameters` holds the request's values by name; `digest` is the current
-  deployment YAML's (§4.1.5).
+  device ID (§4.2); `parameters` holds the requested values by name, as created and updated;
+  `digest` is the current deployment YAML's (§4.1.5).
 - Status: `current` is the deployment's current DeploymentStatus (§8.1.2), `null` before its first
   report; `history` is every DeploymentStatus received for it, oldest first, `[]` before the first.
 - In a create request, `parameters` maps parameter names to JSON values (§5.4) and defaults to
   `{}`; `name` and `namespace` default as in §4.1.5; `profile` defaults to the only compose profile.
+- An update request names only what changes. A field left out keeps the deployment's current value
+  (`profile` keeps its `id`, also when `version` changes). `parameters` merges by name: each name it
+  gives replaces that parameter's value, a `null` value removes the parameter, and names it does
+  not give keep their values. The CO applies the result as a create request with the deployment's
+  `appId` and `id` (§8.1, §16.1), so §8.1.1 checks the merged parameters against the new version.
+  `appId` is not a field of the request: by the common rules it is a `400`, since another
+  application is a delete and a create.
 
 Minimum CLI commands:
 
@@ -1386,7 +1410,9 @@ edgectl device list [--site <site-id>]
 edgectl deploy --app <app-id> --version <v> [--profile <profile-id>] \
               --target <site-id>/<host-id>|<site-id>/* [--param k=v]...
               # --profile defaults to the only compose profile; required if there are several
-edgectl deployment list | get <id> | update <id> ... | delete <id>
+edgectl deployment list | get <id> | delete <id>
+edgectl deployment update <id> [--version <v>] [--profile <profile-id>] \
+              [--target <site-id>/<host-id>|<site-id>/*] [--param k=v]...
 edgectl deployment status <id> [--watch]
 ```
 
@@ -1397,6 +1423,8 @@ edgectl deployment status <id> [--watch]
 - `--version` is REQUIRED on `app import`: the CO imports one tag (§5.3) and does not choose one.
 - `--param k=v` splits at the first `=` and sends `v` as a JSON string; the EN writes a string as
   it is (§5.4). A repeated name is a usage error.
+- `deployment update` sends only the flags given, and `--param` merges by name as the update
+  request does. With no flag besides `--output` it is a usage error.
 - Every command takes `--output text|json`, default `text`. `json` prints the response body as the
   CO sent it, on stdout; `text` is implementation-defined. `deploy` prints the new deployment's
   `id` on the first line of its `text` output.
@@ -1818,8 +1846,15 @@ function apply_deployment(cmd):
     if r timed out:                           return fail(cmd, c, "IEO-START-TIMEOUT")
     if r failed:                              return fail(cmd, c, "IEO-COMPOSE-FAILED")
     publish_status(cmd, c.name, installed)
-  remove_orphan_projects(cmd)
-  store.put_applied(cmd.deploymentId, cmd.digest, project_names)
+  # §8.9 step 5: every component installed; recorded projects of components the profile lacks
+  stuck = []
+  for p in project_names not in profile_project_names(cmd):
+    if compose_down(p) failed:
+      stuck += [p]
+      store.put_component_status(cmd.deploymentId, component_part(p), removing)   # not published
+  if stuck is empty:
+    delete_dirs_except(deployment_dir(cmd.deploymentId), digest_dir(cmd.digest))
+  store.put_applied(cmd.deploymentId, cmd.digest, profile_project_names(cmd) + stuck)
 
 function fail(cmd, c, code):
   publish_status(cmd, c.name, failed, error={code, source: c.name, message})
@@ -1919,8 +1954,13 @@ endpoints (§11.3 holds IEO-specific operations).
 - The operator API answers each §11.3 operation with the status codes and resources given there:
   import `201` then `200` for the same version, `409` for other content, `422` for a §5.3 rejection;
   create `201`, `404` for an application version not imported, `422` for a failed §8.1.1 check;
+  update `200`, `404` for an unknown deployment or a version not imported, `422` for a deleted
+  deployment, a profile the new version lacks, a target at another site or a failed §8.1.1 check,
+  `400` for an `appId`;
   status `{current: null, history: []}` before the first report, and every report after, oldest
   first.
+- An update through the operator API keeps every field it does not name, merges `parameters` by
+  name with `null` removing one, and returns the deployment with its new digest.
 
 ### 17.3 LO: Sync
 
@@ -2009,6 +2049,15 @@ endpoints (§11.3 holds IEO-specific operations).
 - A tag that holds anything but a Margo Compose Archive (§5.1) fails the component with
   `IEO-PULL-FAILED`.
 - Updating to a new digest removes Compose projects of components that no longer exist.
+- An update brings down the projects of dropped components only after every component of the new
+  profile is `installed`; a failed or superseded update leaves them up and recorded.
+- Once every dropped component's project is down, only the current digest's directory is left under
+  the deployment's directory.
+- A dropped component's project that cannot be brought down stays recorded, the Inventory lists
+  that component `removing`, and the next Apply at the same digest is not skipped and brings it
+  down.
+- An Apply at the applied digest after a Remove that did not finish brings down the project of a
+  component the profile does not have.
 - An Apply after a Remove that did not finish, at a digest whose profile drops a component, leaves
   no state for that component, so the Inventory lists only the profile's components.
 - An Apply at the applied digest with every component of the profile `installed` and a recorded
@@ -2046,6 +2095,8 @@ endpoints (§11.3 holds IEO-specific operations).
 - The EN sends a registry credential only to the registry it is listed for and to the token service
   that registry names, never to the target of a redirect (ADR 0021).
 - `edgectl` exits non-zero on failure and prints the problem `title` and `detail`.
+- `edgectl deployment update` sends only the fields its flags give, and with no flag exits `2`
+  without a request.
 - The operator API answers a request without the operator token, or with another, with `401` and
   `WWW-Authenticate: Bearer`; the CO does not start with a token shorter than 32 bytes.
 - `edgectl` sends its token to an `http://` CO URL only when `edgectl.co_insecure` is set, exits 2
