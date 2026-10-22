@@ -117,7 +117,7 @@ jobs:
       - name: The Compose bundle is valid
         run: |
           SITE_NATS_PASSWORD=abc SITE_ID=site-1 LO_SITE_TOKEN=t EN_OTEL_HTTP_ENDPOINT=http://otel.test:4318 \
-            PG_USER=u PG_PASSWORD=p PG_DB=d PG_HOST=postgres GITHUB_TOKEN= \
+            PG_USER=u PG_PASSWORD=p PG_DB=d PG_HOST=postgres CO_OPERATOR_TOKEN=t \
             docker compose -f deploy/compose/docker-compose.yaml config -q
 
       # SPEC §15.6: the site's NATS password and the CO's operator token, new for each run. Compose
