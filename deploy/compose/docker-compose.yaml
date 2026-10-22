@@ -30,19 +30,17 @@ services:
     networks:
       - edge-net
 
-  # The old CO (CO_PORT, until roadmap slice E). The LO uses its Margo API, on :9002 by default.
+  # The CO (keys: deploy/README.md, "CO configuration"). The LO uses its Margo API on 9002;
+  # edgectl uses its operator API on 8443 (SPEC §11.3). It creates its tables at startup (ADR 0013).
   co:
     image: ghcr.io/balaji-balu/ieo-co:latest
     depends_on: [postgres]
-    ports: ["9001:9001", "9002:9002"]
-    expose:
-      - "9200"
+    ports: ["9002:9002", "8443:8443"]
     environment:
-      APP_ENV: prod
       DATABASE_URL: postgres://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=disable
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      CO_PORT: 9001
-      CO_METRICS_PORT: 9200
+      CO_MARGO_ADDR: ":9002"
+      CO_OPERATOR_ADDR: ":8443"
+      CO_OPERATOR_TOKEN: ${CO_OPERATOR_TOKEN:?set CO_OPERATOR_TOKEN in .env, at least 32 bytes}
     networks:
       - edge-net
 
