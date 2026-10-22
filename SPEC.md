@@ -1037,8 +1037,8 @@ On **Apply** (deployment ID, digest, deployment YAML):
    and is skipped by an Apply that failed or was superseded. It brings down every recorded project
    whose name is not `<deployment_id>-<component>` (§4.2) for a component of the profile, at
    whatever digest it was recorded, so it also covers a project left by a Remove that did not
-   finish. Each project brought down leaves `applied[deployment_id].compose_projects`. Once none is
-   left, the EN deletes every directory under `<en.data_dir>/deployments/<deployment_id>/` other
+   finish. Each project brought down leaves `applied[deployment_id].compose_projects`. Once none of
+   these projects is left, the EN deletes every directory under `<en.data_dir>/deployments/<deployment_id>/` other
    than this digest's (§9.1); a directory it cannot delete is logged and left.
 6. Durably record `applied[deployment_id] = {digest, compose_projects}` whether processing succeeded
    or failed, so inventory reports the digest with its component states and the LO can retry.
@@ -1121,7 +1121,8 @@ place of `:` (`sha256-<hex>`), since `:` is not allowed in a file name on every 
 characters outside `[a-z0-9_-]` replaced with `-`).
 
 `[IEO]` A deployment's directory holds the digests it was applied at since an Apply last finished
-§8.9 step 5, which deletes the others; a Remove deletes the whole directory.
+§8.9 step 5, which deletes the others, and any directory a step 5 could not delete; a Remove
+deletes the whole directory.
 
 ### 9.2 Safety Invariants
 
@@ -1373,7 +1374,7 @@ rules, another method on a path below gets `405`, and any other path `404`:
 | `POST /api/v1/deployments` `{appId, version, profile?, target, name?, namespace?, parameters?}` | `201` Deployment | `404` the application version is not imported; `422` no such compose profile, several and none named, or a failed §8.1.1 check (unknown or retired site, unknown host, constraints, parameters), with its reason |
 | `GET /api/v1/deployments[?site=<site_id>]` | `200` [Deployment], by `id` | `404` unknown site |
 | `GET /api/v1/deployments/{id}` | `200` Deployment | `404` |
-| `PATCH /api/v1/deployments/{id}` `{version?, profile?, target?, name?, namespace?, parameters?}` | `200` Deployment, also when nothing changed (§8.1) | `404` no such deployment, or the application version is not imported; `422` the deployment is deleted, the new version has no compose profile of that `id`, a target at another site (§8.1), or a failed §8.1.1 check, with its reason |
+| `PATCH /api/v1/deployments/{id}` `{version?, profile?, target?, name?, namespace?, parameters?}` | `200` Deployment, also when nothing changed (§8.1) | `404` no such deployment, or the application version is not imported; `422` the deployment is deleted (whatever else the request holds), the new version has no compose profile of that `id`, a target at another site (§8.1), or a failed §8.1.1 check, with its reason |
 | `GET /api/v1/deployments/{id}/status` | `200` `{current, history}` | `404` |
 
 Resources:
@@ -1396,6 +1397,8 @@ Resources:
   gives replaces that parameter's value, a `null` value removes the parameter, and names it does
   not give keep their values. The CO applies the result as a create request with the deployment's
   `appId` and `id` (§8.1, §16.1), so §8.1.1 checks the merged parameters against the new version.
+  It reads the deployment it merges onto in the same transaction as the write (§8.1), so
+  concurrent updates do not undo each other's fields.
   `appId` is not a field of the request: by the common rules it is a `400`, since another
   application is a delete and a create.
 
@@ -1846,6 +1849,8 @@ function apply_deployment(cmd):
     if r timed out:                           return fail(cmd, c, "IEO-START-TIMEOUT")
     if r failed:                              return fail(cmd, c, "IEO-COMPOSE-FAILED")
     publish_status(cmd, c.name, installed)
+    if superseded(cmd):                       # §8.9: step 5 is skipped
+      return store.put_applied(cmd.deploymentId, cmd.digest, project_names)
   # §8.9 step 5: every component installed; recorded projects of components the profile lacks
   stuck = []
   for p in project_names not in profile_project_names(cmd):
