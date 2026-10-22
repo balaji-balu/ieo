@@ -114,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5 # tools/harnessdeploy
+      - uses: actions/setup-go@v5 # tools/harnessdeploy, tests/harness
         with:
           go-version-file: go.mod
 
@@ -215,19 +215,29 @@ jobs:
           fi
           test "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$($COMPOSE ps -q en1)")" = "true 0"
 
-      # Roadmap D5.7: a deployment to host-1 runs on host1's engine, and only there.
-      - name: Deploy the test application to host-1
+      # The test application and the stand-in for the LO's capability reports (until roadmap H).
+      - name: Push the test application and report host-1
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/orchestration?sslmode=disable
-        run: |
-          go run ./tools/harnessdeploy > "$RUNNER_TEMP/deployment.env"
-          cat "$RUNNER_TEMP/deployment.env"
-          cat "$RUNNER_TEMP/deployment.env" >> "$GITHUB_ENV"
+        run: go run ./tools/harnessdeploy
 
-      # SPEC §8.5, §8.9, §16.6: the LO sends the Apply to en1, which brings the project up on host1.
+      # SPEC §17.8 golden path, part 1: edgectl imports the application, deploys it to host-1 and
+      # sees it installed (§8.7, §8.8, §11.3). The test also checks that the operator API refuses a
+      # request without the operator token, and writes DEPLOYMENT_ID and COMPOSE_PROJECT for the
+      # checks below. Roadmap D5.7: a deployment to host-1 runs on host1's engine, and only there.
+      - name: The golden path (edgectl)
+        env:
+          IEO_HARNESS_CO_URL: http://localhost:8443
+          EDGECTL_CO_INSECURE: "true" # the harness CO's operator API is plain HTTP
+        run: |
+          EDGECTL_TOKEN="$CO_OPERATOR_TOKEN" IEO_HARNESS_ENV_FILE="$GITHUB_ENV" \
+            go test -count=1 -v -run TestSpec_17_8_GoldenPath ./tests/harness
+
+      # SPEC §8.5, §8.9, §16.6: the LO sent the Apply to en1, which brought the project up on host1.
       - name: The deployment's Compose project runs on host1
         run: |
-          for i in $(seq 90); do
+          test -n "$COMPOSE_PROJECT" || { echo "the golden path wrote no COMPOSE_PROJECT"; exit 1; }
+          for i in $(seq 30); do
             id=$($COMPOSE exec -T host1 docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT")
             if [ -n "$id" ]; then break; fi
             sleep 2
@@ -241,27 +251,6 @@ jobs:
       - name: en1 logs the component installed
         run: |
           $COMPOSE logs --no-color en1 | grep '"msg":"component installed"' | grep -F "\"deployment_id\":\"$DEPLOYMENT_ID\"" | grep -qF '"host_id":"host-1"'
-
-      # SPEC §8.7, §8.8, §11.3: the LO maps host-1's reports to a DeploymentStatus, the CO takes it,
-      # and the operator API serves it, only with the operator token. Roadmap E6 reads it with
-      # `edgectl deployment status` instead.
-      - name: The operator API serves the deployment's installed status
-        run: |
-          url="http://localhost:8443/api/v1/deployments/$DEPLOYMENT_ID/status"
-          code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
-          test "$code" = 401 || { echo "without the operator token: $code, want 401"; exit 1; }
-          # A failed request or a body that is not JSON is retried, not the end of the step.
-          for i in $(seq 30); do
-            status=$(curl -sS -H "Authorization: Bearer $CO_OPERATOR_TOKEN" "$url" || true)
-            current=$(echo "$status" | jq -c .current 2>/dev/null || echo null)
-            test "$(echo "$current" | jq -r '.status.state // empty')" = installed && break
-            sleep 2
-          done
-          echo "$status"
-          test "$(echo "$current" | jq -r '.status.state // empty')" = installed ||
-            { echo "no installed status for $DEPLOYMENT_ID"; $COMPOSE logs --no-color lo | tail -40; exit 1; }
-          test "$(echo "$current" | jq -r .deviceId)" = 00000000-0000-4000-8000-000000000001/host-1
-          test "$(echo "$current" | jq '.components | length')" = 1
 
       - name: The token appears in no log (SPEC §15.4)
         run: |
