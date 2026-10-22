@@ -208,7 +208,7 @@ sudo rm -rf /opt/ieo
 ## Development Mode (no install)
 
 ```bash
-go run ./cmd/en --config configs/en/dev.yaml
+go run ./cmd/en    # configured from the environment or ./.env: docs/contributing.md, Get Started
 ```
 
 ---

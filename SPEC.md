@@ -34,8 +34,8 @@ Relationship to other documents:
   implementation contract. A coding agent SHOULD be able to build a conforming implementation from
   this document alone.
 - A change to behavior described here MUST update this document in the same change.
-- The reference implementation in this repository uses Go (Gin, ent/Postgres, BoltDB, NATS, Cobra,
-  zap). Those choices are not part of conformance.
+- The reference implementation in this repository uses Go (ent/Postgres, BoltDB, NATS, Cobra,
+  slog). Those choices are not part of conformance.
 
 ## 1. Problem Statement
 

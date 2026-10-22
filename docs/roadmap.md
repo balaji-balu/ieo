@@ -39,7 +39,8 @@ Goal: `edgectl` imports an app, deploys it to a named host, and sees `installed`
 | D | LO plan + EN execute: pure planner over all deployments; EN Apply/Remove via Compose CLI (ADR 0003); inventory; NATS credentials; fake container runtime for tests | §8.5, §8.9, §16.4, §16.6, §17.4 (diff rules), §17.6 (idempotency, order, archive safety) | `internal/lo/{plan,reconcile,sitelink}`, `internal/sitenats`, `internal/en/{archive,pull,registry,override,exec,compose,store,agent}` |
 | E | Status to CO and `edgectl`: mapping, `edgectl deploy` and `status`; golden-path integration test on the laptop harness | §7.2, §8.7, §10, §11.3, §17.5 (mapping), §17.8 bullet 1 part 1 | `internal/lo/outbox` (send only), `cmd/edgectl` |
 
-After E, delete the Git-based code paths still left (ADR 0002).
+After E, delete the Git-based code paths still left (ADR 0002). Done in the cleanup PR after E6
+(#104, #98, #16).
 
 ## Milestone 2 — Golden path complete
 

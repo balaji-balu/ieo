@@ -40,7 +40,7 @@ of truth.
 ## Guardrails
 
 - Never push to `main`, merge, skip/disable tests, or weaken a test to make it pass.
-- Never edit generated code by hand (`ent/` and `internal/co/store/postgres/ent/` are generated; see
+- Never edit generated code by hand (`internal/co/store/postgres/ent/` is generated; see
   `docs/contributing.md`).
 - No secrets in prompts, code, logs, tests or fixtures.
 - §15 areas (TLS, credentials, enrollment, archive extraction, §9.2 safety invariants) always get
@@ -54,18 +54,13 @@ Go module `github.com/balaji-balu/ieo` (Go 1.25).
 
 | Path | Contents |
 | --- | --- |
-| `cmd/co`, `internal/co`, `pkg/co` | Central Orchestrator (CO); `internal/co/store/postgres` is its Postgres store (own ent schema, `co_*` tables, embedded migrations) |
+| `cmd/co`, `internal/co` | Central Orchestrator (CO); `internal/co/store/postgres` is its Postgres store (own ent schema, `co_*` tables, embedded migrations) |
 | `cmd/lo`, `internal/lo` | Local Orchestrator (LO): sync (Margo API), store, plan, reconcile, sitelink (site messages) |
 | `cmd/en`, `internal/en` | Edge Node agent (EN): agent (site messages), exec (Apply/Remove), store, compose, registry, pull, archive |
-| `cmd/edgectl` | Operator CLI |
-| `internal/sitenats`, `internal/streammanager` | Site NATS client (ADR 0020); the old CO's stream manager |
-| `internal/git*`, `internal/ocifetch` | Git-based delivery (being replaced, Appendix B step 2) and OCI fetch |
-| `ent/`, `db/`, `atlas.hcl` | ent schema (generated) and migrations of the Git-based code |
-| `pkg/model`, `pkg/deployment`, `pkg/application` | Shared domain types |
-| `proto/` | Protobuf definitions |
-| `configs/` | Component configs and FSM definitions |
+| `cmd/edgectl`, `internal/edgectl` | Operator CLI |
+| `internal/sitenats` | Site NATS client (ADR 0020) |
 | `deploy/` | Compose and Helm deployment; `deploy/dev/` is the laptop harness |
-| `tests/` | e2e tests, fixtures, seeds |
+| `tests/` | `harness` (the §17.8 golden path on the dev harness), fixtures |
 | `tools/` | Go helper programs (ADR 0009): `conformance` (§17 gap list), `sessionstart` (cloud SessionStart hook), `harnessdeploy` (pushes the dev harness's test application, until slice H) |
 
 ## Commands
@@ -80,7 +75,6 @@ go test -race -vet=off -count=1 $(scripts/go-packages.sh test)
 # gofmt, goimports, govet, … on changed lines only. CI passes the same lines as a patch that
 # ignores CR at end of line, so a line-ending-only change is not "new" (.gitattributes keeps Go LF):
 golangci-lint run --new-from-merge-base=origin/main $(scripts/go-packages.sh test)
-golangci-lint run --tests=false --new-from-merge-base=origin/main $(scripts/go-packages.sh no-test)
 # §17 bullets without a TestSpec_ test (report only; -strict fails on gaps, ADR 0011):
 go run ./tools/conformance
 ```
@@ -92,10 +86,9 @@ Local stack (ADR 0009, `docs/dev-setup.md`): `docker compose -f deploy/dev/compo
 runs everything, including two simulated hosts; add `nats postgres` to start only those and
 `go run ./cmd/co`, `./cmd/lo`, `./cmd/en` from source. Schema changes: see `docs/contributing.md`.
 
-Known baseline issues: in `scripts/go-packages.sh`, `KNOWN_BROKEN` packages don't compile and
-`BROKEN_TESTS` packages have test files that don't compile; the rest of the legacy code has lint and
-`go vet` findings. CI is a ratchet: it skips what is broken and lints only changed lines. Never add a
-package to either list; a slice that fixes one removes it.
+Known baseline issues: some legacy code has lint and `go vet` findings. CI is a ratchet: it lints
+only changed lines. Every package builds and its tests compile; never make `scripts/go-packages.sh`
+skip one.
 
 ## Pull requests
 
