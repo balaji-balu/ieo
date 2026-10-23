@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -373,6 +374,39 @@ func (b *Bolt) ResetComponents(_ context.Context, id uuid.UUID, names []string) 
 	})
 	if err != nil {
 		return fmt.Errorf("record %s components as pending: %w", id, err)
+	}
+	return nil
+}
+
+// DeleteOtherComponents deletes every component state of the deployment whose name is not in keep,
+// in one transaction, and leaves the kept states as they are (SPEC §8.9 step 3). The EN calls it
+// without publishing it. A deployment with no recorded component is left as it is.
+func (b *Bolt) DeleteOtherComponents(_ context.Context, id uuid.UUID, keep []string) error {
+	err := b.db.Update(func(tx *bolt.Tx) error {
+		states := tx.Bucket(bucketComponents).Bucket([]byte(id.String()))
+		if states == nil {
+			return nil
+		}
+		var others [][]byte
+		err := states.ForEach(func(name, _ []byte) error {
+			if !slices.Contains(keep, string(name)) {
+				others = append(others, slices.Clone(name))
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		// Deleted after the walk: bbolt does not allow a bucket to change while ForEach reads it.
+		for _, name := range others {
+			if err := states.Delete(name); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("delete other component states of %s: %w", id, err)
 	}
 	return nil
 }
