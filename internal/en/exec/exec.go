@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -51,6 +52,7 @@ type Store interface {
 	PutApplied(ctx context.Context, id uuid.UUID, a store.Applied) error
 	PutComponentStatus(ctx context.Context, id uuid.UUID, s contract.ComponentStatus) error
 	ResetComponents(ctx context.Context, id uuid.UUID, names []string) error
+	DeleteOtherComponents(ctx context.Context, id uuid.UUID, keep []string) error
 	MarkRemoving(ctx context.Context, id uuid.UUID) error
 	DeleteDeployment(ctx context.Context, id uuid.UUID) error
 }
@@ -86,6 +88,13 @@ func New(cfg Config, p Puller, r compose.Runner, s Store, pub Publisher, clock p
 // component that fails is reported `failed` with its error code (SPEC §10), and later ones are
 // not started. Whatever happens, the digest and the projects brought up are recorded, each
 // project before it is brought up.
+//
+// Once every component is `installed`, Apply brings down every recorded project of a component
+// the profile does not have, then deletes the directories of other digests (SPEC §8.9 step 5).
+// A project that can't be brought down is logged and stays recorded, and its component is
+// recorded `removing` without a report, so the LO sends Apply again. When the deployment is
+// applied at cmd.Digest with every component of the profile `installed` and other components
+// recorded, Apply deletes their states and runs only step 5 (§8.9 step 3).
 //
 // superseded, if not nil, is asked after each component: when it returns true a newer command for
 // the deployment is waiting, and Apply ends there. The component just finished has been reported;
@@ -131,20 +140,34 @@ func (e *Executor) apply(ctx context.Context, cmd contract.Command, superseded f
 		}
 		names = append(names, c.Name)
 	}
-	if err := e.store.ResetComponents(ctx, cmd.DeploymentID, names); err != nil {
-		return err
-	}
-	// Projects recorded by an earlier Apply stay recorded, so a Remove brings them down too.
+	// Projects recorded by an earlier Apply stay recorded until step 5 or a Remove brings them down.
 	r := &applyRun{Executor: e, cmd: cmd, log: e.logFor(cmd.DeploymentID, cmd.Digest), projects: current.Applied.ComposeProjects}
 	var runErr error
-	for _, c := range components {
-		installed, err := r.component(ctx, c)
-		runErr = err
-		if err != nil || !installed {
-			break // SPEC §8.9 step 4.6: later components are not started
+	if current.Applied.Digest == cmd.Digest && profileInstalled(current, components) {
+		// SPEC §8.9 step 3: only other components are recorded, so step 4 is skipped.
+		if err := e.store.DeleteOtherComponents(ctx, cmd.DeploymentID, names); err != nil {
+			return err
 		}
-		if superseded != nil && superseded() {
-			break // SPEC §8.9: a newer command waits; it runs once this Apply is recorded
+		runErr = r.removeDropped(ctx, components)
+	} else {
+		if err := e.store.ResetComponents(ctx, cmd.DeploymentID, names); err != nil {
+			return err
+		}
+		done := true
+		for _, c := range components {
+			installed, err := r.component(ctx, c)
+			runErr = err
+			if err != nil || !installed {
+				done = false
+				break // SPEC §8.9 step 4.6: later components are not started
+			}
+			if superseded != nil && superseded() {
+				done = false
+				break // SPEC §8.9: a newer command waits; it runs once this Apply is recorded
+			}
+		}
+		if done {
+			runErr = r.removeDropped(ctx, components) // SPEC §8.9 step 5: skipped by a failed or superseded Apply
 		}
 	}
 	// SPEC §8.9 step 6: recorded whether the Apply succeeded or not.
@@ -167,6 +190,84 @@ func allInstalled(d store.Deployment, components []contract.Component) bool {
 		}
 	}
 	return true
+}
+
+// profileInstalled reports whether every component of the profile is recorded `installed`,
+// whatever else is recorded (SPEC §8.9 step 3).
+func profileInstalled(d store.Deployment, components []contract.Component) bool {
+	for _, c := range components {
+		if d.Components[c.Name].State != contract.StateInstalled {
+			return false
+		}
+	}
+	return true
+}
+
+// removeDropped runs SPEC §8.9 step 5. It brings down every recorded project that is not the
+// project of a component of the profile, at whatever digest it was recorded, and drops it from
+// the projects. A project that can't be brought down is logged and kept, and the component named
+// after its <component> part (§4.2) is recorded `removing` without a report. Once none is kept,
+// the directories of other digests are deleted. The error ends the Apply: the store failed, or ctx
+// ended; the projects not brought down are still kept.
+func (r *applyRun) removeDropped(ctx context.Context, components []contract.Component) error {
+	profile := make(map[string]bool, len(components))
+	for _, c := range components {
+		profile[contract.ComposeProjectName(r.cmd.DeploymentID, c.Name)] = true
+	}
+	kept := make([]string, 0, len(r.projects))
+	stuck := false
+	for i, project := range r.projects {
+		if profile[project] {
+			kept = append(kept, project)
+			continue
+		}
+		err := r.runner.Down(ctx, project)
+		if err == nil {
+			continue
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			kept = append(kept, r.projects[i:]...)
+			r.projects = kept
+			return ctxErr
+		}
+		// The others are still brought down; the LO sends Apply again (SPEC §8.9).
+		r.log.Error("project not brought down", "project", project, "reason", err.Error())
+		kept = append(kept, project)
+		stuck = true
+		component := strings.TrimPrefix(project, r.cmd.DeploymentID.String()+"-")
+		if err := r.store.PutComponentStatus(ctx, r.cmd.DeploymentID, contract.ComponentStatus{Name: component, State: contract.StateRemoving}); err != nil {
+			kept = append(kept, r.projects[i+1:]...)
+			r.projects = kept
+			return err
+		}
+	}
+	r.projects = kept
+	if !stuck {
+		r.deleteOtherDigests()
+	}
+	return nil
+}
+
+// deleteOtherDigests deletes every directory under the deployment's directory other than this
+// digest's (SPEC §8.9 step 5, §9.1). One it can't delete is logged and left.
+func (r *applyRun) deleteOtherDigests() {
+	dir := r.deploymentDir(r.cmd.DeploymentID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			r.log.Error("working directory not read", "reason", err.Error())
+		}
+		return
+	}
+	current := digestDir(r.cmd.Digest)
+	for _, e := range entries {
+		if e.Name() == current {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			r.log.Error("directory of another digest not deleted", "directory", e.Name(), "reason", err.Error())
+		}
+	}
 }
 
 // record writes the digest and projects of the Apply to the store.
@@ -318,7 +419,13 @@ func (e *Executor) deploymentDir(id uuid.UUID) string {
 // componentDir is the directory of one component of a deployment at a digest (SPEC §9.1): the
 // digest with `-` for `:`, and the component slug.
 func (e *Executor) componentDir(id uuid.UUID, digest contract.Digest, component string) string {
-	return filepath.Join(e.deploymentDir(id), strings.ReplaceAll(digest.String(), ":", "-"), contract.ComponentSlug(component))
+	return filepath.Join(e.deploymentDir(id), digestDir(digest), contract.ComponentSlug(component))
+}
+
+// digestDir is the name of a digest's directory under a deployment's (SPEC §9.1): the digest with
+// `-` for `:`.
+func digestDir(digest contract.Digest) string {
+	return strings.ReplaceAll(digest.String(), ":", "-")
 }
 
 // Remove runs a Remove command. If the deployment is not applied, it reports `removed` with
