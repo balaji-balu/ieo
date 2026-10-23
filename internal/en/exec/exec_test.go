@@ -110,9 +110,12 @@ func (h *hookedRunner) Up(ctx context.Context, p compose.Project, o compose.UpOp
 // failingStore is the EN store with writes that can be made to fail, and a hook after a read.
 type failingStore struct {
 	*store.Bolt
-	putApplied      error
-	resetComponents error
-	markRemoving    error
+	putApplied            error
+	resetComponents       error
+	deleteOtherComponents error
+	markRemoving          error
+	// putComponentStatus, if set, is asked before each status is recorded; its error is returned.
+	putComponentStatus func(s contract.ComponentStatus) error
 	// afterLoad, if set, runs when Load has read the store and before it returns.
 	afterLoad func()
 }
@@ -137,6 +140,22 @@ func (s *failingStore) ResetComponents(ctx context.Context, id uuid.UUID, names 
 		return s.resetComponents
 	}
 	return s.Bolt.ResetComponents(ctx, id, names)
+}
+
+func (s *failingStore) DeleteOtherComponents(ctx context.Context, id uuid.UUID, keep []string) error {
+	if s.deleteOtherComponents != nil {
+		return s.deleteOtherComponents
+	}
+	return s.Bolt.DeleteOtherComponents(ctx, id, keep)
+}
+
+func (s *failingStore) PutComponentStatus(ctx context.Context, id uuid.UUID, st contract.ComponentStatus) error {
+	if s.putComponentStatus != nil {
+		if err := s.putComponentStatus(st); err != nil {
+			return err
+		}
+	}
+	return s.Bolt.PutComponentStatus(ctx, id, st)
 }
 
 func (s *failingStore) MarkRemoving(ctx context.Context, id uuid.UUID) error {
@@ -331,8 +350,7 @@ func (f *fixture) assertCalls(want ...string) {
 
 // componentDir is where SPEC §9.1 puts a component of the deployment at digest.
 func (f *fixture) componentDir(digest contract.Digest, component string) string {
-	return filepath.Join(f.dataDir, "deployments", deploymentID.String(),
-		strings.Replace(digest.String(), ":", "-", 1), contract.ComponentSlug(component))
+	return filepath.Join(f.dataDir, "deployments", deploymentID.String(), digestDir(digest), contract.ComponentSlug(component))
 }
 
 func exists(t *testing.T, path string) bool {
@@ -1167,6 +1185,58 @@ func TestSpec_17_6_ApplyAfterUnfinishedRemoveBringsDownDroppedProject(t *testing
 		t.Errorf("projects up = %v, want %v", got, want)
 	}
 	f.assertStored(digestA, []string{project("web")}, "web installed")
+}
+
+// When step 5 can't record a dropped component `removing`, the Apply ends with the store's error,
+// still records its projects with the one not brought down (SPEC §8.9 step 6), and keeps the old
+// directories.
+func TestApplyStopsWhenRemovingRecordFails(t *testing.T) {
+	f := newFixture(t)
+	errDisk := errors.New("disk full")
+	f.runner.Fail(composetest.OpDown, project("db"), errors.New("engine not reachable"))
+	f.store.putComponentStatus = func(s contract.ComponentStatus) error {
+		if s.State == contract.StateRemoving {
+			return errDisk
+		}
+		return nil
+	}
+	f.push("web", "db", "cache")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+
+	err := f.exec.Apply(ctx, applyCommand(digestB, deployment("web", "cache")), nil)
+
+	if !errors.Is(err, errDisk) {
+		t.Errorf("Apply error = %v, want %v", err, errDisk)
+	}
+	f.assertStored(digestB, []string{project("web"), project("db"), project("cache")}, "web installed", "cache installed")
+	if got, want := f.digestDirs(), []string{digestDir(digestA), digestDir(digestB)}; !reflect.DeepEqual(got, want) {
+		t.Errorf("digest directories = %q, want %q", got, want)
+	}
+}
+
+// When step 3 can't delete the other components' states, the Apply ends with the store's error
+// and brings nothing down (SPEC §8.9 step 3 runs before step 5).
+func TestApplyStopsWhenDeleteOtherComponentsFails(t *testing.T) {
+	f := newFixture(t)
+	f.runner.Fail(composetest.OpDown, project("db"), errors.New("engine not reachable"))
+	f.update()
+	f.pub.take()
+	f.runner.Fail(composetest.OpDown, project("db"), nil)
+	errDisk := errors.New("disk full")
+	f.store.deleteOtherComponents = errDisk
+	calls := len(f.runner.Calls())
+
+	err := f.exec.Apply(ctx, applyCommand(digestB, deployment("web", "cache")), nil)
+
+	if !errors.Is(err, errDisk) {
+		t.Errorf("Apply error = %v, want %v", err, errDisk)
+	}
+	if got := f.calls()[calls:]; len(got) != 0 {
+		t.Errorf("runtime calls = %q, want none", got)
+	}
+	f.assertEvents()
+	f.assertStored(digestB, []string{project("web"), project("db"), project("cache")}, "web installed", "cache installed", "db removing")
 }
 
 // When the EN is stopped while SPEC §8.9 step 5 runs, the Apply records the projects not known to
