@@ -43,6 +43,12 @@ func (c *client) post(ctx context.Context, p string, v any, ok ...int) ([]byte, 
 	return c.body(http.MethodPost, p, resp, rerr, ok...)
 }
 
+// patch sends PATCH p with v as JSON and returns the body of a 200 response.
+func (c *client) patch(ctx context.Context, p string, v any) ([]byte, error) {
+	resp, rerr := c.api.PatchJSON(ctx, p, v)
+	return c.body(http.MethodPatch, p, resp, rerr, http.StatusOK)
+}
+
 // body returns resp's body if its status is one of ok, and a failure otherwise.
 func (c *client) body(method, p string, resp bearer.Response, rerr *bearer.RequestError, ok ...int) ([]byte, error) {
 	if rerr == nil {

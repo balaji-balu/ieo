@@ -35,9 +35,10 @@ type Importer interface {
 	Import(ctx context.Context, repository, version string) (catalog.App, bool, error)
 }
 
-// Creator creates a deployment (SPEC §8.1); deploy.Service is one.
-type Creator interface {
+// Deployer creates and updates deployments (SPEC §8.1); deploy.Service is one.
+type Deployer interface {
 	Create(ctx context.Context, req deploy.Request) (deploy.Deployment, error)
+	Patch(ctx context.Context, id uuid.UUID, p deploy.Patch) (deploy.Deployment, error)
 }
 
 // Reader reads what the operator API lists and gets. Lists come in any order.
@@ -73,7 +74,7 @@ type Config struct {
 	// Token is the SHA-256 of co.operator_token (SPEC §15.6).
 	Token   auth.TokenHash
 	Catalog Importer
-	Deploy  Creator
+	Deploy  Deployer
 	Store   Reader
 	// ImportTimeout bounds an import; 0 is DefaultImportTimeout.
 	ImportTimeout time.Duration
@@ -102,13 +103,14 @@ func New(cfg Config) http.Handler {
 	s.mux.HandleFunc("POST /api/v1/deployments", s.create)
 	s.mux.HandleFunc("GET /api/v1/deployments", s.listDeployments)
 	s.mux.HandleFunc("GET /api/v1/deployments/{id}", s.getDeployment)
+	s.mux.HandleFunc("PATCH /api/v1/deployments/{id}", s.update)
 	s.mux.HandleFunc("GET /api/v1/deployments/{id}/status", s.status)
 	// Other methods on a known path (SPEC §11.3: 405).
 	s.mux.HandleFunc("/api/v1/apps", methodNotAllowed("GET, HEAD, POST"))
 	s.mux.HandleFunc("/api/v1/apps/{appId}", methodNotAllowed("GET, HEAD"))
 	s.mux.HandleFunc("/api/v1/devices", methodNotAllowed("GET, HEAD"))
 	s.mux.HandleFunc("/api/v1/deployments", methodNotAllowed("GET, HEAD, POST"))
-	s.mux.HandleFunc("/api/v1/deployments/{id}", methodNotAllowed("GET, HEAD"))
+	s.mux.HandleFunc("/api/v1/deployments/{id}", methodNotAllowed("GET, HEAD, PATCH"))
 	s.mux.HandleFunc("/api/v1/deployments/{id}/status", methodNotAllowed("GET, HEAD"))
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, http.StatusNotFound, "no such resource")
@@ -229,6 +231,35 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		AppID: req.AppID, Version: req.Version, Profile: req.Profile, Target: target,
 		Name: req.Name, Namespace: req.Namespace, Parameters: params,
 	})
+	s.answerDeployment(w, r, d, err, http.StatusCreated)
+}
+
+// update merges an update request onto a deployment (SPEC §8.1, §11.3).
+func (s *server) update(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req operatorapi.UpdateRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	p := deploy.Patch{Version: req.Version, Profile: req.Profile, Name: req.Name, Namespace: req.Namespace, Parameters: req.Parameters}
+	if req.Target != nil {
+		target, err := contract.ParseDeviceID(*req.Target)
+		if err != nil {
+			problem(w, r, http.StatusBadRequest, "target: "+err.Error())
+			return
+		}
+		p.Target = &target
+	}
+	d, err := s.Deploy.Patch(r.Context(), id, p)
+	s.answerDeployment(w, r, d, err, http.StatusOK)
+}
+
+// answerDeployment answers a create or update with d and status code, or with the problem of err
+// (SPEC §11.3).
+func (s *server) answerDeployment(w http.ResponseWriter, r *http.Request, d deploy.Deployment, err error, code int) {
 	switch {
 	case errors.Is(err, deploy.ErrInvalidTarget): // SPEC §11.3: a site is not a target
 		problem(w, r, http.StatusBadRequest, err.Error())
@@ -239,7 +270,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.internalError(w, r, err)
 	default:
-		writeJSON(w, http.StatusCreated, deploymentOf(d))
+		writeJSON(w, code, deploymentOf(d))
 	}
 }
 
@@ -298,9 +329,8 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 
 // deployment returns the deployment the path names, or answers 400 or 404.
 func (s *server) deployment(w http.ResponseWriter, r *http.Request) (deploy.Deployment, bool) {
-	id, err := uuid.Parse(r.PathValue("id"))
-	if err != nil || id.String() != r.PathValue("id") {
-		problem(w, r, http.StatusBadRequest, "not a deployment ID in canonical form (SPEC §4.2)")
+	id, ok := pathID(w, r)
+	if !ok {
 		return deploy.Deployment{}, false
 	}
 	d, ok, err := s.Store.Deployment(r.Context(), id)
@@ -313,6 +343,16 @@ func (s *server) deployment(w http.ResponseWriter, r *http.Request) (deploy.Depl
 		return deploy.Deployment{}, false
 	}
 	return d, true
+}
+
+// pathID returns the deployment ID the path names, or answers 400.
+func pathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil || id.String() != r.PathValue("id") {
+		problem(w, r, http.StatusBadRequest, "not a deployment ID in canonical form (SPEC §4.2)")
+		return uuid.Nil, false
+	}
+	return id, true
 }
 
 // siteQuery returns the site ?site= names, "" when there is none, or answers 400 or 404.

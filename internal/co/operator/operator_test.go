@@ -233,6 +233,7 @@ func TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes(t *testing.
 		{"create", createDeployments},
 		{"list and get deployments", listAndGetDeployments},
 		{"status", getStatus},
+		{"update", updateDeployments},
 		{"other methods and paths", otherMethodsAndPaths},
 	}
 	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
@@ -460,6 +461,110 @@ func getStatus(t *testing.T, f fixture, created *operatorapi.Deployment) {
 		http.StatusNotFound)
 }
 
+// updateDeployments is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
+// It runs after "status", whose reports adopt the manifest that created the deployment.
+func updateDeployments(t *testing.T, f fixture, created *operatorapi.Deployment) {
+	f.reg.PushApp(t, repo, "3.0.0", description(appID, "3.0.0", "other-compose"))
+	f.want("import 3.0.0", f.do(http.MethodPost, "/api/v1/apps", importBody(repo, "3.0.0")), http.StatusCreated)
+	path := "/api/v1/deployments/" + created.ID.String()
+	patch := func(body string) response { return f.do(http.MethodPatch, path, body) }
+
+	var updated operatorapi.Deployment
+	f.wantJSON("update", patch(`{"parameters":{"greeting":"Hey"}}`), http.StatusOK, &updated)
+	want := *created
+	want.Parameters, want.Digest = map[string]any{"greeting": "Hey"}, updated.Digest
+	if !reflect.DeepEqual(updated, want) || updated.Digest == created.Digest {
+		t.Errorf("update:\n got %+v\nwant %+v with a new digest", updated, want)
+	}
+	var same operatorapi.Deployment
+	f.wantJSON("update that changes nothing", patch(`{}`), http.StatusOK, &same)
+	if !reflect.DeepEqual(same, updated) {
+		t.Errorf("update that changes nothing:\n got %+v\nwant %+v", same, updated)
+	}
+	*created = updated
+
+	var gone operatorapi.Deployment
+	f.wantJSON("create another", f.do(http.MethodPost, "/api/v1/deployments",
+		`{"appId":"`+appID+`","version":"`+version+`","target":"site-1/host-1"}`), http.StatusCreated, &gone)
+	if err := f.deploy.Delete(context.Background(), gone.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	f.wantProblem("no such deployment", f.do(http.MethodPatch, "/api/v1/deployments/"+uuid.NewString(), `{}`), http.StatusNotFound)
+	f.wantProblem("version not imported", patch(`{"version":"7.7.7"}`), http.StatusNotFound, "7.7.7")
+	f.wantProblem("deleted deployment, whatever else the request holds",
+		f.do(http.MethodPatch, "/api/v1/deployments/"+gone.ID.String(), `{"version":"7.7.7"}`), http.StatusUnprocessableEntity, "deleted")
+	f.wantProblem("profile the new version lacks", patch(`{"version":"3.0.0"}`), http.StatusUnprocessableEntity, "hello-compose")
+	f.wantProblem("target at another site", patch(`{"target":"site-2/host-1"}`), http.StatusUnprocessableEntity, "site-2")
+	f.wantProblem("unknown host", patch(`{"target":"site-1/host-9"}`), http.StatusUnprocessableEntity, "host-9")
+	f.wantProblem("parameter not in the description", patch(`{"parameters":{"nope":"x"}}`), http.StatusUnprocessableEntity, "nope")
+	for name, body := range map[string]string{
+		"appId":                   `{"appId":"com-example-other"}`,
+		"not JSON":                `{"version":`,
+		"target names a site":     `{"target":"site-1"}`,
+		"target does not parse":   `{"target":"site 1/host-1"}`,
+		"unknown field":           `{"replicas":2}`,
+		"parameters not a object": `{"parameters":[]}`,
+		"version a number":        `{"version":2}`,
+	} {
+		f.wantProblem("update, "+name, patch(body), http.StatusBadRequest)
+	}
+	f.wantProblem("update, ID that does not parse", f.do(http.MethodPatch, "/api/v1/deployments/nope", `{}`), http.StatusBadRequest)
+
+	var stored operatorapi.Deployment
+	f.wantJSON("GET after rejected updates", f.do(http.MethodGet, path, ""), http.StatusOK, &stored)
+	if !reflect.DeepEqual(stored, updated) {
+		t.Errorf("after rejected updates:\n got %+v\nwant %+v", stored, updated)
+	}
+}
+
+// SPEC §17.2: "An update through the operator API keeps every field it does not name"
+//
+// Version 2.0.0 has no greeting parameter and a new color one; its compose profile keeps its `id`.
+func TestSpec_17_2_OperatorAPIUpdateKeepsFieldsItDoesNotName(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		v2 := bytes.Replace(description(appID, "2.0.0", "hello-compose"),
+			[]byte("  greeting:\n    value: Hello\n"), []byte("  color:\n    value: blue\n"), 1)
+		f.reg.PushApp(t, repo, version, hello)
+		f.reg.PushApp(t, repo, "2.0.0", v2)
+		for _, v := range []string{version, "2.0.0"} {
+			f.want("import "+v, f.do(http.MethodPost, "/api/v1/apps", importBody(repo, v)), http.StatusCreated)
+		}
+		var d operatorapi.Deployment
+		f.wantJSON("create", f.do(http.MethodPost, "/api/v1/deployments", `{"appId":"`+appID+`","version":"`+version+
+			`","target":"site-1/host-1","name":"hello-1","namespace":"ns","parameters":{"greeting":"Hi"}}`), http.StatusCreated, &d)
+		path := "/api/v1/deployments/" + d.ID.String()
+
+		last := d
+		for _, step := range []struct {
+			body    string
+			version string
+			params  map[string]any
+		}{
+			{`{"parameters":{"greeting":null}}`, version, map[string]any{}},
+			{`{"parameters":{"greeting":"Hey"}}`, version, map[string]any{"greeting": "Hey"}},
+			{`{"version":"2.0.0","parameters":{"color":"red"}}`, "2.0.0", map[string]any{"color": "red"}},
+		} {
+			var u operatorapi.Deployment
+			f.wantJSON("PATCH "+step.body, f.do(http.MethodPatch, path, step.body), http.StatusOK, &u)
+			want := d
+			want.Version, want.Parameters, want.Digest = step.version, step.params, u.Digest
+			if !reflect.DeepEqual(u, want) || u.Digest == last.Digest {
+				t.Errorf("PATCH %s:\n got %+v\nwant %+v with a digest other than %s", step.body, u, want, last.Digest)
+			}
+			last = u
+		}
+		f.wantProblem("a name the new version lacks", f.do(http.MethodPatch, path, `{"parameters":{"greeting":"x"}}`),
+			http.StatusUnprocessableEntity, "greeting")
+		var stored operatorapi.Deployment
+		f.wantJSON("GET", f.do(http.MethodGet, path, ""), http.StatusOK, &stored)
+		if !reflect.DeepEqual(stored, last) {
+			t.Errorf("GET:\n got %+v\nwant %+v", stored, last)
+		}
+	})
+}
+
 // otherMethodsAndPaths is a step of TestSpec_17_2_OperatorAPIAnswersEachOperationWithItsStatusCodes.
 func otherMethodsAndPaths(t *testing.T, f fixture, created *operatorapi.Deployment) {
 	id := created.ID.String()
@@ -468,8 +573,8 @@ func otherMethodsAndPaths(t *testing.T, f fixture, created *operatorapi.Deployme
 		{http.MethodPost, "/api/v1/apps/" + appID, "GET, HEAD"},
 		{http.MethodPost, "/api/v1/devices", "GET, HEAD"},
 		{http.MethodPut, "/api/v1/deployments", "GET, HEAD, POST"},
-		{http.MethodPut, "/api/v1/deployments/" + id, "GET, HEAD"},
-		{http.MethodDelete, "/api/v1/deployments/" + id, "GET, HEAD"},
+		{http.MethodPut, "/api/v1/deployments/" + id, "GET, HEAD, PATCH"},
+		{http.MethodDelete, "/api/v1/deployments/" + id, "GET, HEAD, PATCH"},
 		{http.MethodPost, "/api/v1/deployments/" + id + "/status", "GET, HEAD"},
 	} {
 		r := f.do(c.method, c.path, "")

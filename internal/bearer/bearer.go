@@ -99,11 +99,20 @@ func (c *Client) Get(ctx context.Context, p string, header http.Header) (Respons
 // PostJSON sends POST p with body encoded as JSON and the token, and reads the whole response
 // body. As with Get, only a transport error, or a body that does not encode, is a *RequestError.
 func (c *Client) PostJSON(ctx context.Context, p string, body any) (Response, *RequestError) {
+	return c.sendJSON(ctx, http.MethodPost, p, body)
+}
+
+// PatchJSON sends PATCH p with body encoded as JSON and the token, as PostJSON does POST.
+func (c *Client) PatchJSON(ctx context.Context, p string, body any) (Response, *RequestError) {
+	return c.sendJSON(ctx, http.MethodPatch, p, body)
+}
+
+func (c *Client) sendJSON(ctx context.Context, method, p string, body any) (Response, *RequestError) {
 	b, err := json.Marshal(body)
 	if err != nil {
-		return Response{}, &RequestError{Method: http.MethodPost, Path: p, Err: err}
+		return Response{}, &RequestError{Method: method, Path: p, Err: err}
 	}
-	return c.do(ctx, http.MethodPost, p, http.Header{"Content-Type": {"application/json"}}, b)
+	return c.do(ctx, method, p, http.Header{"Content-Type": {"application/json"}}, b)
 }
 
 func (c *Client) do(ctx context.Context, method, p string, header http.Header, body []byte) (Response, *RequestError) {

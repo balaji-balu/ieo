@@ -123,9 +123,9 @@ func parseParams(raw []string) (map[string]any, error) {
 	return params, nil
 }
 
-// SPEC §11.3: edgectl deployment list | get <id>, edgectl deployment status <id> [--watch].
+// SPEC §11.3: edgectl deployment list | get <id> | update <id>, edgectl deployment status <id> [--watch].
 func (c cli) deploymentCommand(ctx context.Context) *cobra.Command {
-	dep := &cobra.Command{Use: "deployment", Short: "List deployments and show their status", RunE: needSubcommand}
+	dep := &cobra.Command{Use: "deployment", Short: "List, show and update deployments, and show their status", RunE: needSubcommand}
 
 	list := &cobra.Command{
 		Use: "list [--site <site-id>]", Short: "List deployments", Args: args(),
@@ -161,8 +161,54 @@ func (c cli) deploymentCommand(ctx context.Context) *cobra.Command {
 	}
 	status.Flags().Bool("watch", false, "poll the status until interrupted, printing each new one")
 
-	dep.AddCommand(list, get, status)
+	dep.AddCommand(list, get, c.updateCommand(ctx), status)
 	return dep
+}
+
+// SPEC §11.3: edgectl deployment update <id> [--version <v>] [--profile <profile-id>]
+// [--target <site-id>/<host-id>|<site-id>/*] [--param k=v]...
+func (c cli) updateCommand(ctx context.Context) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update <id> [--version <v>] [--profile <profile-id>] [--target <site-id>/<host-id>|<site-id>/*] [--param k=v]...",
+		Short: "Update a deployment; only the fields given change, and --param merges by name",
+		Args:  args("<id>"),
+		RunE: func(cmd *cobra.Command, a []string) error {
+			id, err := parseID(a[0])
+			if err != nil {
+				return err
+			}
+			// SPEC §11.3: only the flags given are sent; with none, there is nothing to send.
+			f := cmd.Flags()
+			given := func(name string) *string {
+				if !f.Changed(name) {
+					return nil
+				}
+				v, _ := f.GetString(name)
+				return &v
+			}
+			req := operatorapi.UpdateRequest{Version: given("version"), Profile: given("profile"), Target: given("target")}
+			raw, _ := f.GetStringArray("param")
+			params, err := parseParams(raw)
+			if err != nil {
+				return err
+			}
+			if len(params) > 0 {
+				req.Parameters = params
+			}
+			if req.Version == nil && req.Profile == nil && req.Target == nil && req.Parameters == nil {
+				return usageError("deployment update: give at least one of --version, --profile, --target and --param")
+			}
+			return c.send(ctx, cmd, func(ctx context.Context, cl *client) ([]byte, error) {
+				return cl.patch(ctx, operatorapi.DeploymentPath(id), req)
+			}, printDeployment)
+		},
+	}
+	f := cmd.Flags()
+	f.String("version", "", "application version to update to")
+	f.String("profile", "", "compose profile id")
+	f.String("target", "", "<site-id>/<host-id>, or <site-id>/* for the LO to choose; at the deployment's site")
+	f.StringArray("param", nil, "parameter value k=v, sent as a string; repeatable, once per name; others keep their values")
+	return cmd
 }
 
 // SPEC §11.3: edgectl device list [--site <site-id>].
