@@ -424,6 +424,40 @@ func TestPatchKeepsAConcurrentVersionChange(t *testing.T) {
 	})
 }
 
+// A Patch whose version changes before every one of its transactions gives up after a few
+// attempts rather than holding the request, and writes nothing.
+func TestPatchGivesUpWhenTheVersionKeepsChanging(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		f.importVersion("2.0.0", descriptionV2)
+		d := f.create(request())
+		hooked := &hookedStore{Store: f.store}
+		changes := 0
+		var change func()
+		change = func() {
+			v := []string{"2.0.0", version}[changes%2]
+			changes++
+			if _, err := f.deploy.Patch(f.ctx, d.ID, deploy.Patch{Version: &v}); err != nil {
+				t.Errorf("concurrent patch to %s: %v", v, err)
+			}
+			hooked.beforeChange = change
+		}
+		hooked.beforeChange = change
+
+		_, err := deploy.New(hooked).Patch(f.ctx, d.ID, deploy.Patch{Parameters: map[string]any{"token": "t-2"}})
+
+		if err == nil || errors.Is(err, deploy.ErrNotFound) || errors.Is(err, deploy.ErrInvalidRequest) {
+			t.Errorf("patch: err = %v, want an error that is not the caller's", err)
+		}
+		if changes != 5 {
+			t.Errorf("the patch tried %d times, want 5", changes)
+		}
+		if stored, _, _ := f.store.Deployment(f.ctx, d.ID); stored.Parameters["token"] != "t-1" {
+			t.Errorf("stored token %v, want t-1 unchanged", stored.Parameters["token"])
+		}
+	})
+}
+
 // SPEC §17.2: "Deleting a deployment removes it from the manifest and increments
 // `manifestVersion`."
 //

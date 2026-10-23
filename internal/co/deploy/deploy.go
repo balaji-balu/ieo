@@ -334,13 +334,21 @@ func (s *Service) Patch(ctx context.Context, id uuid.UUID, p Patch) (Deployment,
 }
 
 // errVersionChanged ends a Patch transaction that found another version than the one whose
-// application Patch read before it: Patch then starts again.
+// application Patch read before it: Patch then starts again, up to maxPatchAttempts times.
 var errVersionChanged = errors.New("the deployment's version changed")
 
+// maxPatchAttempts bounds how often Patch starts again. Each new attempt follows another update
+// of the version, so reaching it means the version changes faster than updates finish, or the
+// store's two reads of a deployment disagree.
+const maxPatchAttempts = 5
+
 func (s *Service) patch(ctx context.Context, id uuid.UUID, p Patch) (Deployment, error) {
-	for {
+	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return Deployment{}, err
+		}
+		if attempt > maxPatchAttempts {
+			return Deployment{}, fmt.Errorf("%w %d times in a row", errVersionChanged, maxPatchAttempts)
 		}
 		current, ok, err := s.store.Deployment(ctx, id)
 		if err != nil {
