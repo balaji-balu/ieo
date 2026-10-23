@@ -445,12 +445,8 @@ func TestApplyRunsAgain(t *testing.T) {
 		f.apply(digestB, deployment("api"))
 
 		f.assertEvents("api installing", "api installed")
-		// The project of the dropped component stays recorded, so a Remove still brings it down;
-		// bringing it down on update is roadmap F (SPEC §8.9 step 5).
-		d, _ := f.stored()
-		if d.Applied.Digest != digestB || !reflect.DeepEqual(d.Applied.ComposeProjects, []string{project("web"), project("api")}) {
-			t.Errorf("recorded %+v, want digest B and both projects", d.Applied)
-		}
+		// SPEC §8.9 step 5: the project of the dropped component is brought down once api is installed.
+		f.assertStored(digestB, []string{project("api")}, "api installed")
 		if !exists(t, filepath.Join(f.componentDir(digestB, "api"), "app", archive.ComposeFile)) {
 			t.Error("the new digest's component was not extracted under its own directory")
 		}
@@ -871,14 +867,15 @@ func TestSpec_17_6_ApplyDropsStateOfRemovedComponent(t *testing.T) {
 	f.apply(digestB, deployment("web"))
 
 	f.assertEvents("web installing", "web installed")
-	// The db project stays recorded until SPEC §8.9 step 5 or a Remove brings it down.
-	f.assertStored(digestB, []string{project("web"), project("db")}, "web installed")
+	// SPEC §8.9 step 5 brings the db project down, so it leaves the record too.
+	f.assertStored(digestB, []string{project("web")}, "web installed")
 	f.assertInventoryStates(digestB, "web installed")
 }
 
 // SPEC §17.6: "An Apply at the applied digest with every component of the profile `installed` and
 // a recorded state for another component is not skipped, and deletes that state." An EN store
-// written before the Apply deleted such states can hold one (SPEC §8.9 step 1).
+// written before the Apply deleted such states can hold one (SPEC §8.9 step 1). With every
+// component of the profile `installed`, nothing is pulled, brought up or reported (§8.9 step 3).
 func TestSpec_17_6_ApplyNotSkippedWithStaleComponent(t *testing.T) {
 	f := newFixture(t)
 	f.push("web")
@@ -887,10 +884,18 @@ func TestSpec_17_6_ApplyNotSkippedWithStaleComponent(t *testing.T) {
 	if err := f.store.PutComponentStatus(ctx, deploymentID, contract.ComponentStatus{Name: "db", State: contract.StateRemoving}); err != nil {
 		t.Fatal(err)
 	}
+	calls := len(f.runner.Calls())
+	served := f.reg.BytesServed(repository("web"))
 
 	f.apply(digestA, deployment("web"))
 
-	f.assertEvents("web installing", "web installed")
+	f.assertEvents()
+	if got := f.calls()[calls:]; len(got) != 0 {
+		t.Errorf("runtime calls = %q, want none", got)
+	}
+	if got := f.reg.BytesServed(repository("web")); got != served {
+		t.Errorf("the Apply read %d bytes from the registry, want none", got-served)
+	}
 	f.assertStored(digestA, []string{project("web")}, "web installed")
 	f.assertInventoryStates(digestA, "web installed")
 }
@@ -975,5 +980,213 @@ func TestRemoveStopsWhenContextEnds(t *testing.T) {
 		if e == "removed" {
 			t.Error("reported removed although the projects were not brought down")
 		}
+	}
+}
+
+// digestDirs returns the names of the digest directories under the deployment's directory
+// (SPEC §9.1), sorted.
+func (f *fixture) digestDirs() []string {
+	f.t.Helper()
+	entries, err := os.ReadDir(filepath.Join(f.dataDir, "deployments", deploymentID.String()))
+	if err != nil {
+		f.t.Fatalf("read the deployment directory: %v", err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// digestDir is the name SPEC §9.1 gives a digest's directory.
+func digestDir(digest contract.Digest) string {
+	return strings.Replace(digest.String(), ":", "-", 1)
+}
+
+// update applies {web, db} at digest A, then {web, cache} at digest B, which drops db.
+func (f *fixture) update() {
+	f.t.Helper()
+	f.push("web", "db", "cache")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+	f.apply(digestB, deployment("web", "cache"))
+}
+
+// SPEC §17.6: "Updating to a new digest removes Compose projects of components that no longer
+// exist." (SPEC §8.9 step 5)
+func TestSpec_17_6_UpdateRemovesProjectsOfDroppedComponents(t *testing.T) {
+	f := newFixture(t)
+	f.push("web", "db", "cache")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+	calls := len(f.runner.Calls())
+
+	f.apply(digestB, deployment("web", "cache"))
+
+	f.assertEvents("web installing", "web installed", "cache installing", "cache installed")
+	if got, want := f.calls()[calls:], []string{"services web", "up web", "services cache", "up cache", "down db"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("runtime calls = %q, want %q", got, want)
+	}
+	if got, want := f.runner.Projects(), []string{project("cache"), project("web")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("projects up = %v, want %v", got, want)
+	}
+	f.assertStored(digestB, []string{project("web"), project("cache")}, "web installed", "cache installed")
+	f.assertInventoryStates(digestB, "cache installed", "web installed")
+}
+
+// SPEC §17.6: "An update brings down the projects of dropped components only after every component
+// of the new profile is `installed`; a failed or superseded update leaves them up and recorded."
+func TestSpec_17_6_UpdateBringsDownDroppedComponentsOnlyWhenInstalled(t *testing.T) {
+	t.Run("after every component is installed", func(t *testing.T) {
+		f := newFixture(t)
+		downs := 0
+		f.runner.beforeDown = func(p string) {
+			downs++
+			d, _ := f.stored()
+			if d.Components["web"].State != contract.StateInstalled || d.Components["cache"].State != contract.StateInstalled {
+				t.Errorf("%s brought down with recorded states %+v, want web and cache installed", p, d.Components)
+			}
+		}
+
+		f.update()
+
+		if downs != 1 {
+			t.Errorf("%d projects brought down, want 1", downs)
+		}
+	})
+	t.Run("failed", func(t *testing.T) {
+		f := newFixture(t)
+		f.runner.Fail(composetest.OpUp, project("cache"), errors.New("port in use"))
+
+		f.update()
+
+		f.assertEvents("web installing", "web installed", "cache installing", "cache failed IEO-COMPOSE-FAILED")
+		if got, want := f.runner.Projects(), []string{project("cache"), project("db"), project("web")}; !reflect.DeepEqual(got, want) {
+			t.Errorf("projects up = %v, want %v", got, want)
+		}
+		f.assertStored(digestB, []string{project("web"), project("db"), project("cache")}, "web installed", "cache failed")
+		if got, want := f.digestDirs(), []string{digestDir(digestA), digestDir(digestB)}; !reflect.DeepEqual(got, want) {
+			t.Errorf("digest directories = %q, want %q", got, want)
+		}
+	})
+	t.Run("superseded after its last component", func(t *testing.T) {
+		f := newFixture(t)
+		f.push("web", "db")
+		f.apply(digestA, deployment("web", "db"))
+		f.pub.take()
+
+		if err := f.exec.Apply(ctx, applyCommand(digestB, deployment("web")), func() bool { return true }); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+
+		f.assertEvents("web installing", "web installed")
+		if got, want := f.runner.Projects(), []string{project("db"), project("web")}; !reflect.DeepEqual(got, want) {
+			t.Errorf("projects up = %v, want %v", got, want)
+		}
+		f.assertStored(digestB, []string{project("web"), project("db")}, "web installed")
+	})
+}
+
+// SPEC §17.6: "Once every dropped component's project is down, only the current digest's
+// directory is left under the deployment's directory." (SPEC §8.9 step 5, §9.1)
+func TestSpec_17_6_UpdateLeavesOnlyCurrentDigestDirectory(t *testing.T) {
+	t.Run("every dropped project down", func(t *testing.T) {
+		f := newFixture(t)
+
+		f.update()
+
+		if got, want := f.digestDirs(), []string{digestDir(digestB)}; !reflect.DeepEqual(got, want) {
+			t.Errorf("digest directories = %q, want %q", got, want)
+		}
+	})
+	t.Run("a dropped project not brought down", func(t *testing.T) {
+		f := newFixture(t)
+		f.runner.Fail(composetest.OpDown, project("db"), errors.New("engine not reachable"))
+
+		f.update()
+
+		if got, want := f.digestDirs(), []string{digestDir(digestA), digestDir(digestB)}; !reflect.DeepEqual(got, want) {
+			t.Errorf("digest directories = %q, want %q", got, want)
+		}
+	})
+}
+
+// SPEC §17.6: "A dropped component's project that cannot be brought down stays recorded, the
+// Inventory lists that component `removing`, and the next Apply at the same digest is not skipped
+// and brings it down without pulling, bringing up or reporting the profile's components again."
+func TestSpec_17_6_DroppedProjectNotBroughtDown(t *testing.T) {
+	f := newFixture(t)
+	f.runner.Fail(composetest.OpDown, project("db"), errors.New("engine not reachable"))
+
+	f.update()
+
+	f.assertEvents("web installing", "web installed", "cache installing", "cache installed")
+	f.assertStored(digestB, []string{project("web"), project("db"), project("cache")}, "web installed", "cache installed", "db removing")
+	f.assertInventoryStates(digestB, "cache installed", "db removing", "web installed")
+	if got := f.logs.lines(t, "project not brought down"); len(got) != 1 || got[0]["project"] != project("db") {
+		t.Errorf("log lines about the project = %v, want one for %s", got, project("db"))
+	}
+
+	f.runner.Fail(composetest.OpDown, project("db"), nil)
+	calls := len(f.runner.Calls())
+	served := f.reg.BytesServed(repository("web")) + f.reg.BytesServed(repository("cache"))
+
+	f.apply(digestB, deployment("web", "cache"))
+
+	f.assertEvents()
+	if got, want := f.calls()[calls:], []string{"down db"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("runtime calls = %q, want %q", got, want)
+	}
+	if got := f.reg.BytesServed(repository("web")) + f.reg.BytesServed(repository("cache")); got != served {
+		t.Errorf("the second Apply read %d bytes from the registry, want none", got-served)
+	}
+	f.assertStored(digestB, []string{project("web"), project("cache")}, "web installed", "cache installed")
+	if got, want := f.digestDirs(), []string{digestDir(digestB)}; !reflect.DeepEqual(got, want) {
+		t.Errorf("digest directories = %q, want %q", got, want)
+	}
+}
+
+// SPEC §17.6: "An Apply at the applied digest after a Remove that did not finish brings down the
+// project of a component the profile does not have."
+func TestSpec_17_6_ApplyAfterUnfinishedRemoveBringsDownDroppedProject(t *testing.T) {
+	f := newFixture(t)
+	f.push("web", "db")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+	f.runner.Fail(composetest.OpDown, project("db"), errors.New("engine not reachable"))
+	if err := f.exec.Remove(ctx, removeCommand(digestA)); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	f.pub.take()
+	f.runner.Fail(composetest.OpDown, project("db"), nil)
+
+	f.apply(digestA, deployment("web"))
+
+	f.assertEvents("web installing", "web installed")
+	if got, want := f.runner.Projects(), []string{project("web")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("projects up = %v, want %v", got, want)
+	}
+	f.assertStored(digestA, []string{project("web")}, "web installed")
+}
+
+// When the EN is stopped while SPEC §8.9 step 5 runs, the Apply records the projects not known to
+// be down (step 6), keeps the old directories and reports nothing more.
+func TestApplyStopsWhenContextEndsDuringTeardown(t *testing.T) {
+	f := newFixture(t)
+	f.push("web", "db", "cache")
+	f.apply(digestA, deployment("web", "db"))
+	f.pub.take()
+	runCtx, cancel := context.WithCancel(ctx)
+	f.runner.beforeDown = func(string) { cancel() }
+
+	err := f.exec.Apply(runCtx, applyCommand(digestB, deployment("web", "cache")), nil)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Apply error = %v, want context.Canceled", err)
+	}
+	f.assertEvents("web installing", "web installed", "cache installing", "cache installed")
+	f.assertStored(digestB, []string{project("web"), project("db"), project("cache")}, "web installed", "cache installed")
+	if got, want := f.digestDirs(), []string{digestDir(digestA), digestDir(digestB)}; !reflect.DeepEqual(got, want) {
+		t.Errorf("digest directories = %q, want %q", got, want)
 	}
 }
