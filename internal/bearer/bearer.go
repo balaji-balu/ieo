@@ -106,6 +106,11 @@ func (c *Client) PostJSON(ctx context.Context, p string, body any) (Response, *R
 	return c.do(ctx, http.MethodPost, p, http.Header{"Content-Type": {"application/json"}}, b)
 }
 
+// PatchJSON sends PATCH p with body encoded as JSON and the token, as PostJSON does POST.
+func (c *Client) PatchJSON(ctx context.Context, p string, body any) (Response, *RequestError) {
+	return Response{}, &RequestError{Method: http.MethodPatch, Path: p, Err: errors.New("not implemented")}
+}
+
 func (c *Client) do(ctx context.Context, method, p string, header http.Header, body []byte) (Response, *RequestError) {
 	var r io.Reader
 	if body != nil {

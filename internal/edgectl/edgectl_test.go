@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -360,7 +361,7 @@ func TestSpec_17_7_EdgectlSendsTokenToHTTPOnlyWhenInsecure(t *testing.T) {
 // error; errors go to stderr.
 func TestSpec_17_7_EdgectlExitsNonZeroAndPrintsProblemTitleAndDetail(t *testing.T) {
 	f := newFixture(t)
-	f.importHello()
+	d := f.createHello()
 	importBody := func(repository, v string) string {
 		return fmt.Sprintf(`{"repository":%q,"version":%q}`, repository, v)
 	}
@@ -388,6 +389,10 @@ func TestSpec_17_7_EdgectlExitsNonZeroAndPrintsProblemTitleAndDetail(t *testing.
 			http.MethodGet, operatorapi.DeploymentPath(unknown), ""},
 		{"404 deployment status", []string{"deployment", "status", unknown.String()},
 			http.MethodGet, operatorapi.StatusPath(unknown), ""},
+		{"404 deployment update", []string{"deployment", "update", unknown.String(), "--version", version},
+			http.MethodPatch, operatorapi.DeploymentPath(unknown), `{"version":"` + version + `"}`},
+		{"422 deployment update to an unknown host", []string{"deployment", "update", d.ID.String(), "--target", "site-1/host-9"},
+			http.MethodPatch, operatorapi.DeploymentPath(d.ID), `{"target":"site-1/host-9"}`},
 		{"404 deployment list of an unknown site", []string{"deployment", "list", "--site", "site-9"},
 			http.MethodGet, operatorapi.DeploymentsPath + "?site=site-9", ""},
 		{"404 device list of an unknown site", []string{"device", "list", "--site", "site-9"},
@@ -440,6 +445,7 @@ func TestSpec_17_7_EdgectlExitsNonZeroAndPrintsProblemTitleAndDetail(t *testing.
 			{"missing argument", f.env(), []string{"app", "get"}},
 			{"deploy without --target", f.env(), []string{"deploy", "--app", appID, "--version", version}},
 			{"deployment id that is not a UUID", f.env(), []string{"deployment", "get", "not-a-uuid"}},
+			{"deployment update without a flag", f.env(), []string{"deployment", "update", d.ID.String()}},
 			{"app id ..", f.env(), []string{"app", "get", ".."}},
 			{"--output yaml", f.env(), []string{"app", "list", "--output", "yaml"}},
 			{"no EDGECTL_CO_URL", f.env("EDGECTL_CO_URL", ""), []string{"app", "list"}},
@@ -556,6 +562,7 @@ func TestSpec_17_7_NoCredentialOrTokenInEdgectlOutput(t *testing.T) {
 		{"deployment", "list"},
 		{"deployment", "get", id},
 		{"deployment", "status", id},
+		{"deployment", "update", id, "--version", version, "--param", "greeting=hi"},
 		{"device", "list", "--site", "site-1"},
 	}
 	echo := func(w http.ResponseWriter, req *http.Request) {
@@ -658,6 +665,75 @@ func TestDeployParams(t *testing.T) {
 	}
 }
 
+// SPEC §17.7: "`edgectl deployment update` sends only the fields its flags give, and with no flag
+// exits `2` without a request."
+//
+// --param merges by name on the CO, as the update request does (SPEC §11.3), so edgectl sends only
+// the names given; a repeated name is a usage error, as on deploy.
+func TestSpec_17_7_EdgectlDeploymentUpdateSendsOnlyGivenFields(t *testing.T) {
+	id := uuid.New()
+	type request struct {
+		method, path string
+		body         map[string]any
+	}
+	var mu sync.Mutex
+	var got []request
+	co := newRecorder(t, true, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		got = append(got, request{r.Method, r.URL.Path, body})
+		mu.Unlock()
+		answerJSON(http.StatusOK, `{"id":"`+id.String()+`","appId":"`+appID+`","version":"2.0.0","target":"site-1/host-1"}`)(w, r)
+	})
+	env := map[string]string{"EDGECTL_CO_URL": co.srv.URL, "EDGECTL_TOKEN": rand.Text(), "EDGECTL_TLS_CA_FILE": caFile(t, co.srv)}
+	update := []string{"deployment", "update", id.String()}
+
+	for _, tc := range []struct {
+		flags []string
+		want  map[string]any
+	}{
+		{[]string{"--version", "2.0.0"}, map[string]any{"version": "2.0.0"}},
+		{[]string{"--profile", "hello-compose"}, map[string]any{"profile": "hello-compose"}},
+		{[]string{"--target", "site-1/*"}, map[string]any{"target": "site-1/*"}},
+		{[]string{"--param", "greeting=a=b", "--param", "color=red"},
+			map[string]any{"parameters": map[string]any{"greeting": "a=b", "color": "red"}}},
+		{[]string{"--version", "2.0.0", "--target", "site-1/host-1", "--param", "color=", "--output", "json"},
+			map[string]any{"version": "2.0.0", "target": "site-1/host-1", "parameters": map[string]any{"color": ""}}},
+	} {
+		mu.Lock()
+		got = nil
+		mu.Unlock()
+		r := run(env, append(update, tc.flags...)...)
+		if r.code != 0 {
+			t.Errorf("%v: %v\nwant exit 0", tc.flags, r)
+			continue
+		}
+		want := []request{{http.MethodPatch, operatorapi.DeploymentPath(id), tc.want}}
+		mu.Lock()
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%v: requests %+v, want %+v", tc.flags, got, want)
+		}
+		mu.Unlock()
+	}
+
+	for name, flags := range map[string][]string{
+		"no flag":               nil,
+		"only --output":         {"--output", "json"},
+		"repeated --param name": {"--param", "greeting=a", "--param", "greeting=b"},
+		"--param without =":     {"--param", "greeting"},
+	} {
+		before, _ := co.requests()
+		r := run(env, append(update, flags...)...)
+		if r.code != 2 || r.stderr == "" {
+			t.Errorf("%s: %v\nwant exit 2 with an error on stderr", name, r)
+		}
+		if after, _ := co.requests(); after != before {
+			t.Errorf("%s: the CO got %d requests, want none", name, after-before)
+		}
+	}
+}
+
 // SPEC §11.3: "json prints the response body as the CO sent it, on stdout", and "deploy prints the
 // new deployment's id on the first line of its text output".
 func TestOutput(t *testing.T) {
@@ -688,6 +764,9 @@ func jsonOutput(t *testing.T, f *fixture, d operatorapi.Deployment) {
 		{[]string{"deployment", "list", "--site", "site-1"}, http.MethodGet, operatorapi.DeploymentsPath + "?site=site-1", ""},
 		{[]string{"deployment", "get", d.ID.String()}, http.MethodGet, operatorapi.DeploymentPath(d.ID), ""},
 		{[]string{"deployment", "status", d.ID.String()}, http.MethodGet, operatorapi.StatusPath(d.ID), ""},
+		// The same update each time: the CO answers each with the same Deployment.
+		{[]string{"deployment", "update", d.ID.String(), "--param", "greeting=hi"},
+			http.MethodPatch, operatorapi.DeploymentPath(d.ID), `{"parameters":{"greeting":"hi"}}`},
 	} {
 		want := f.raw(tc.method, tc.path, tc.body).Body.String()
 		r := run(f.env(), append(tc.args, "--output", "json")...)
@@ -716,6 +795,8 @@ func textOutput(t *testing.T, f *fixture, d operatorapi.Deployment) {
 		{[]string{"deployment", "list"}, []string{d.ID.String(), appID, "site-1/host-1"}},
 		{[]string{"deployment", "get", d.ID.String()}, []string{d.ID.String(), appID, "hello-compose", "site-1/host-1"}},
 		{[]string{"deployment", "status", d.ID.String()}, []string{"installed", "site-1/host-1", "web"}},
+		{[]string{"deployment", "update", d.ID.String(), "--param", "greeting=hey"},
+			[]string{d.ID.String(), appID, "hello-compose", "site-1/host-1", "DIGEST", `greeting="hey"`}},
 	} {
 		r := run(f.env(), tc.args...)
 		for _, w := range tc.want {

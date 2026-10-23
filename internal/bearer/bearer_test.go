@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,6 +39,45 @@ func TestGetHeader(t *testing.T) {
 		if a != "Bearer "+token {
 			t.Error("a request did not carry the token")
 		}
+	}
+}
+
+// PatchJSON sends PATCH with the body as JSON and the token, and follows no redirect (SPEC §11.3,
+// §15.6): a 303 would otherwise turn it into a GET of wherever the server names.
+func TestPatchJSON(t *testing.T) {
+	type got struct{ method, path, contentType, auth, body string }
+	var reqs []got
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		reqs = append(reqs, got{r.Method, r.URL.Path, r.Header.Get("Content-Type"), r.Header.Get("Authorization"), string(b)})
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "/elsewhere", http.StatusSeeOther)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	token := hex.EncodeToString(b)
+	c := bearer.New(srv.URL, token, nil)
+
+	resp, err := c.PatchJSON(context.Background(), "/x", map[string]string{"version": "2.0.0"})
+	if err != nil || resp.Status != http.StatusOK {
+		t.Fatalf("PatchJSON: %+v, %v", resp, err)
+	}
+	want := got{http.MethodPatch, "/x", "application/json", "Bearer " + token, `{"version":"2.0.0"}`}
+	if len(reqs) != 1 || reqs[0] != want {
+		t.Errorf("requests = %+v, want [%+v]", reqs, want)
+	}
+
+	reqs = nil
+	resp, err = c.PatchJSON(context.Background(), "/redirect", map[string]string{})
+	if err != nil || resp.Status != http.StatusSeeOther {
+		t.Errorf("PatchJSON to a redirect: %+v, %v; want the 303 itself", resp, err)
+	}
+	if len(reqs) != 1 {
+		t.Errorf("%d requests, want 1: the redirect is not followed", len(reqs))
 	}
 }
 

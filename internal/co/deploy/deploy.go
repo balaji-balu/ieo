@@ -309,6 +309,20 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req Request) (Deploy
 	return d, nil
 }
 
+// Patch is an update request that names only what changes (SPEC §11.3). A nil field keeps the
+// deployment's value. Parameters merge by name: a value replaces that parameter's, and a nil value
+// removes it.
+type Patch struct {
+	Version, Profile, Name, Namespace *string
+	Target                            *contract.DeviceID
+	Parameters                        map[string]any
+}
+
+// Patch merges p onto deployment id and applies the result as Update does (SPEC §8.1, §11.3).
+func (s *Service) Patch(ctx context.Context, id uuid.UUID, p Patch) (Deployment, error) {
+	return Deployment{}, errors.New("not implemented")
+}
+
 // Delete removes deployment id from its site's manifest (SPEC §8.1). Deleting a deleted
 // deployment changes nothing; an unknown one wraps ErrNotFound.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {

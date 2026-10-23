@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -70,9 +71,24 @@ var (
 	host1 = contract.DeviceID{Site: site1, Host: "host-1"}
 )
 
+// descriptionV2 is version 2.0.0 of the application: greeting is gone, and color, with a default
+// value, is new. Its compose profile keeps the `id` hello-compose.
+var descriptionV2 = strings.NewReplacer(
+	"  version: 1.2.3\n", "  version: 2.0.0\n",
+	"  greeting:\n    value: Hello\n    targets:\n      - pointer: GREETING\n",
+	"  color:\n    value: blue\n    targets:\n      - pointer: COLOR\n",
+).Replace(description)
+
+// descriptionV3 is version 3.0.0, whose only compose profile has another `id`.
+var descriptionV3 = strings.NewReplacer(
+	"  version: 1.2.3\n", "  version: 3.0.0\n",
+	"id: hello-compose", "id: other-compose",
+).Replace(description)
+
 type fixture struct {
 	t      *testing.T
 	ctx    context.Context
+	reg    *ocitest.Registry
 	store  storetest.Store
 	deploy *deploy.Service
 }
@@ -87,7 +103,7 @@ func newFixture(t *testing.T, newStore storetest.New) fixture {
 	if _, _, err := catalog.New(reg.Open, s).Import(ctx, repo, version); err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	f := fixture{t: t, ctx: ctx, store: s, deploy: deploy.New(s)}
+	f := fixture{t: t, ctx: ctx, reg: reg, store: s, deploy: deploy.New(s)}
 	for _, site := range []contract.SiteID{site1, site2} {
 		if _, err := f.deploy.AddSite(ctx, site); err != nil {
 			t.Fatalf("add site %s: %v", site, err)
@@ -108,6 +124,17 @@ func (f fixture) putHost(id contract.DeviceID, memory, line string) {
 		f.t.Fatalf("put device %s: %v", id, err)
 	}
 }
+
+// importVersion imports another version of the application, with its description.
+func (f fixture) importVersion(v, desc string) {
+	f.t.Helper()
+	f.reg.PushApp(f.t, repo, v, []byte(desc))
+	if _, _, err := catalog.New(f.reg.Open, f.store).Import(f.ctx, repo, v); err != nil {
+		f.t.Fatalf("import %s: %v", v, err)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
 
 // request is a valid directed request to host-1.
 func request() deploy.Request {
@@ -240,6 +267,156 @@ func TestSpec_17_2_UpdateKeepsIDChangesDigestIncrementsManifestVersion(t *testin
 		moved.Target = contract.DeviceID{Site: site2, Autonomous: true}
 		if _, err := f.deploy.Update(f.ctx, d.ID, moved); !errors.Is(err, deploy.ErrInvalidRequest) {
 			t.Errorf("update to another site: err = %v, want ErrInvalidRequest", err)
+		}
+
+		// The same through Patch, which the operator API's update calls (SPEC §11.3).
+		p, err := f.deploy.Patch(f.ctx, d.ID, deploy.Patch{Parameters: map[string]any{"greeting": "Hey"}})
+		if err != nil {
+			t.Fatalf("patch: %v", err)
+		}
+		if p.ID != d.ID || p.Digest == u.Digest {
+			t.Fatalf("patch: ID %s digest %s; want ID %s and a digest other than %s", p.ID, p.Digest, d.ID, u.Digest)
+		}
+		patched, body := f.manifest(site1)
+		if patched.Version != after.Version+1 || len(body.Deployments) != 1 || body.Deployments[0].Digest != p.Digest {
+			t.Errorf("after patch: manifestVersion %d, deployments %+v; want %d and only %s", patched.Version, body.Deployments,
+				after.Version+1, p.Digest)
+		}
+		none, err := f.deploy.Patch(f.ctx, d.ID, deploy.Patch{})
+		if err != nil {
+			t.Fatalf("empty patch: %v", err)
+		}
+		if again, _ := f.manifest(site1); none.Digest != p.Digest || again.Version != patched.Version {
+			t.Errorf("empty patch: digest %s, manifestVersion %d; want %s and %d", none.Digest, again.Version, p.Digest, patched.Version)
+		}
+	})
+}
+
+// Patch merges onto the stored deployment (SPEC §11.3): a field left out keeps its value, the
+// profile keeps its `id` across versions, parameters merge by name with nil removing one, and a
+// kept parameter the new version does not define is dropped. The merged parameters are checked
+// against the new version (SPEC §8.1.1).
+func TestPatchMergesOntoTheStoredDeployment(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		f.importVersion("2.0.0", descriptionV2)
+		req := request()
+		req.Name, req.Namespace = "hello-1", "ns"
+		req.Parameters["greeting"] = "Hi"
+		d := f.create(req)
+
+		p, err := f.deploy.Patch(f.ctx, d.ID, deploy.Patch{Version: ptr("2.0.0"), Parameters: map[string]any{"color": "red"}})
+		if err != nil {
+			t.Fatalf("patch to 2.0.0: %v", err)
+		}
+		want := d
+		want.AppVersion, want.Digest, want.DigestVersion = "2.0.0", p.Digest, p.DigestVersion
+		want.Parameters = map[string]any{"token": "t-1", "color": "red"}
+		if !reflect.DeepEqual(p, want) {
+			t.Errorf("patch to 2.0.0:\n got %+v\nwant %+v", p, want)
+		}
+		if stored, _, _ := f.store.Deployment(f.ctx, d.ID); !reflect.DeepEqual(stored, p) {
+			t.Errorf("stored after patch:\n got %+v\nwant %+v", stored, p)
+		}
+
+		p, err = f.deploy.Patch(f.ctx, d.ID, deploy.Patch{Parameters: map[string]any{"color": nil}})
+		if err != nil {
+			t.Fatalf("patch removing color: %v", err)
+		}
+		if want := map[string]any{"token": "t-1"}; !reflect.DeepEqual(p.Parameters, want) || p.AppVersion != "2.0.0" {
+			t.Errorf("patch removing color: version %s parameters %v; want 2.0.0 and %v", p.AppVersion, p.Parameters, want)
+		}
+
+		for name, params := range map[string]map[string]any{
+			"removing a REQUIRED parameter": {"token": nil},
+			"a name the version lacks":      {"greeting": "x"},
+		} {
+			if _, err := f.deploy.Patch(f.ctx, d.ID, deploy.Patch{Parameters: params}); !errors.Is(err, deploy.ErrCheckFailed) {
+				t.Errorf("%s: err = %v, want ErrCheckFailed", name, err)
+			}
+		}
+	})
+}
+
+// Patch rejects what SPEC §11.3 rejects, and then writes nothing.
+func TestPatchRejects(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		f.importVersion("3.0.0", descriptionV3)
+		d := f.create(request())
+		gone := f.create(request())
+		if err := f.deploy.Delete(f.ctx, gone.ID); err != nil {
+			t.Fatal(err)
+		}
+		before, _ := f.manifest(site1)
+
+		for _, tc := range []struct {
+			name  string
+			id    uuid.UUID
+			patch deploy.Patch
+			want  error
+		}{
+			{"unknown deployment", uuid.New(), deploy.Patch{}, deploy.ErrNotFound},
+			{"version not imported", d.ID, deploy.Patch{Version: ptr("7.7.7")}, deploy.ErrNotFound},
+			{"deleted, whatever else the request holds", gone.ID, deploy.Patch{Version: ptr("7.7.7")}, deploy.ErrInvalidRequest},
+			{"profile the new version lacks", d.ID, deploy.Patch{Version: ptr("3.0.0")}, deploy.ErrInvalidRequest},
+			{"target at another site", d.ID, deploy.Patch{Target: &contract.DeviceID{Site: site2, Autonomous: true}}, deploy.ErrInvalidRequest},
+			{"target that names a site", d.ID, deploy.Patch{Target: &contract.DeviceID{Site: site1}}, deploy.ErrInvalidTarget},
+			{"unknown host", d.ID, deploy.Patch{Target: &contract.DeviceID{Site: site1, Host: "host-9"}}, deploy.ErrCheckFailed},
+		} {
+			_, err := f.deploy.Patch(f.ctx, tc.id, tc.patch)
+			if !errors.Is(err, tc.want) {
+				t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+			}
+			if tc.want == deploy.ErrInvalidRequest && errors.Is(err, deploy.ErrNotFound) {
+				t.Errorf("%s: err = %v, want no ErrNotFound", tc.name, err)
+			}
+		}
+		if after, _ := f.manifest(site1); after.Version != before.Version {
+			t.Errorf("manifestVersion %d after rejected patches, want %d", after.Version, before.Version)
+		}
+		if stored, _, _ := f.store.Deployment(f.ctx, d.ID); !reflect.DeepEqual(stored, d) {
+			t.Errorf("stored after rejected patches:\n got %+v\nwant %+v", stored, d)
+		}
+	})
+}
+
+// hookedStore runs beforeChange once, before the next ChangeSite.
+type hookedStore struct {
+	storetest.Store
+	beforeChange func()
+}
+
+func (h *hookedStore) ChangeSite(ctx context.Context, site contract.SiteID,
+	change func(state deploy.SiteState, exists bool) (deploy.SiteChange, error)) error {
+	if hook := h.beforeChange; hook != nil {
+		h.beforeChange = nil
+		hook()
+	}
+	return h.Store.ChangeSite(ctx, site, change)
+}
+
+// A Patch that names no version merges onto the version the deployment has when it is written
+// (SPEC §11.3: the merge reads the deployment in the same transaction as the write), so a
+// concurrent update of the version is not undone.
+func TestPatchKeepsAConcurrentVersionChange(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, newStore storetest.New) {
+		f := newFixture(t, newStore)
+		f.importVersion("2.0.0", descriptionV2)
+		d := f.create(request())
+		hooked := &hookedStore{Store: f.store}
+		hooked.beforeChange = func() {
+			if _, err := f.deploy.Patch(f.ctx, d.ID, deploy.Patch{Version: ptr("2.0.0")}); err != nil {
+				t.Errorf("concurrent patch: %v", err)
+			}
+		}
+
+		p, err := deploy.New(hooked).Patch(f.ctx, d.ID, deploy.Patch{Parameters: map[string]any{"color": "red"}})
+		if err != nil {
+			t.Fatalf("patch: %v", err)
+		}
+		if want := map[string]any{"token": "t-1", "color": "red"}; p.AppVersion != "2.0.0" || !reflect.DeepEqual(p.Parameters, want) {
+			t.Errorf("patch: version %s parameters %v; want 2.0.0 and %v", p.AppVersion, p.Parameters, want)
 		}
 	})
 }
