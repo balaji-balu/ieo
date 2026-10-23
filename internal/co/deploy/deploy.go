@@ -163,6 +163,8 @@ type Store interface {
 	App(ctx context.Context, id, version string) (catalog.App, bool, error)
 	// DeploymentSite returns the site of a deployment, and whether the deployment exists.
 	DeploymentSite(ctx context.Context, id uuid.UUID) (contract.SiteID, bool, error)
+	// Deployment returns a deployment, and whether it exists.
+	Deployment(ctx context.Context, id uuid.UUID) (Deployment, bool, error)
 	// ChangeSite calls change with the current state of site and whether the site exists, and
 	// writes the change it returns, all atomically: no other change to site runs in between. If
 	// change returns an error, nothing is written and ChangeSite returns that error.
@@ -318,9 +320,132 @@ type Patch struct {
 	Parameters                        map[string]any
 }
 
-// Patch merges p onto deployment id and applies the result as Update does (SPEC §8.1, §11.3).
+// Patch merges p onto deployment id and applies the result as Update does (SPEC §8.1, §11.3):
+// a field p leaves out keeps its value, the profile keeps its `id` when the version changes, and
+// a kept parameter the new version does not define is dropped. The merge reads the deployment in
+// the transaction that writes it, so a concurrent change is not undone. A deleted deployment wraps
+// ErrInvalidRequest, whatever p holds.
 func (s *Service) Patch(ctx context.Context, id uuid.UUID, p Patch) (Deployment, error) {
-	return Deployment{}, errors.New("not implemented")
+	d, err := s.patch(ctx, id, p)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("update deployment %s: %w", id, err)
+	}
+	return d, nil
+}
+
+// errVersionChanged ends a Patch transaction that found another version than the one whose
+// application Patch read before it: Patch then starts again.
+var errVersionChanged = errors.New("the deployment's version changed")
+
+func (s *Service) patch(ctx context.Context, id uuid.UUID, p Patch) (Deployment, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return Deployment{}, err
+		}
+		current, ok, err := s.store.Deployment(ctx, id)
+		if err != nil {
+			return Deployment{}, err
+		}
+		if !ok {
+			return Deployment{}, ErrNotFound
+		}
+		if current.Deleted {
+			return Deployment{}, deletedError(id)
+		}
+		version := current.AppVersion
+		if p.Version != nil {
+			version = *p.Version
+		}
+		// The application is read outside the transaction: an imported version never changes.
+		app, desc, err := s.app(ctx, current.AppID, version)
+		if err != nil {
+			return Deployment{}, err
+		}
+		var d Deployment
+		err = s.store.ChangeSite(ctx, current.Target.Site, func(state SiteState, exists bool) (SiteChange, error) {
+			stored, ok := state.Deployments[id]
+			switch {
+			case !ok:
+				return SiteChange{}, ErrNotFound
+			case stored.Deleted:
+				return SiteChange{}, deletedError(id)
+			case p.Version == nil && stored.AppVersion != version:
+				return SiteChange{}, errVersionChanged
+			}
+			req, err := merge(stored, p, version, desc)
+			if err != nil {
+				return SiteChange{}, err
+			}
+			var yamlBytes []byte
+			var c contract.DeviceConstraints
+			if d, yamlBytes, c, err = build(id, app, desc, req); err != nil {
+				return SiteChange{}, err
+			}
+			return change(state, exists, &d, yamlBytes, c, &stored)
+		})
+		if errors.Is(err, errVersionChanged) {
+			continue
+		}
+		if err != nil {
+			return Deployment{}, err
+		}
+		return d, nil
+	}
+}
+
+func deletedError(id uuid.UUID) error {
+	return fmt.Errorf("%w: deployment %s is deleted", ErrInvalidRequest, id)
+}
+
+// merge returns the request that applies p to stored at version, whose description is desc (SPEC
+// §11.3). Parameters keep the stored values desc defines, then each p names is replaced, or
+// removed when its value is nil.
+func merge(stored Deployment, p Patch, version string, desc contract.ApplicationDescription) (Request, error) {
+	req := Request{
+		AppID: stored.AppID, Version: version, Profile: stored.Profile, Target: stored.Target,
+		Name: stored.Name, Namespace: stored.Namespace, Parameters: map[string]any{},
+	}
+	if p.Profile != nil {
+		req.Profile = *p.Profile
+	}
+	if p.Target != nil {
+		req.Target = *p.Target
+	}
+	if p.Name != nil {
+		req.Name = *p.Name
+	}
+	if p.Namespace != nil {
+		req.Namespace = *p.Namespace
+	}
+	if err := checkUpdateTarget(stored.Target.Site, req.Target); err != nil {
+		return Request{}, err
+	}
+	for name, v := range stored.Parameters {
+		if _, ok := desc.Parameters[name]; ok {
+			req.Parameters[name] = v
+		}
+	}
+	for name, v := range p.Parameters {
+		if v == nil {
+			delete(req.Parameters, name)
+		} else {
+			req.Parameters[name] = v
+		}
+	}
+	return req, nil
+}
+
+// checkUpdateTarget checks the target of an update: a host or `<site>/*` (SPEC §11.3), at the
+// deployment's site (SPEC §8.1).
+func checkUpdateTarget(site contract.SiteID, target contract.DeviceID) error {
+	if target.Host == "" && !target.Autonomous {
+		return fmt.Errorf("%w: %s names a site; want `<site>/<host>` or `<site>/*`", ErrInvalidTarget, target)
+	}
+	if target.Site != site {
+		return fmt.Errorf("%w: the deployment is at site %s, not %s; delete it and create another",
+			ErrInvalidRequest, site, target.Site)
+	}
+	return nil
 }
 
 // Delete removes deployment id from its site's manifest (SPEC §8.1). Deleting a deleted
@@ -361,25 +486,58 @@ func (s *Service) put(ctx context.Context, id uuid.UUID, req Request, update boo
 		if !ok {
 			return Deployment{}, ErrNotFound
 		}
-		if site != req.Target.Site {
-			return Deployment{}, fmt.Errorf("%w: the deployment is at site %s, not %s; delete it and create another",
-				ErrInvalidRequest, site, req.Target.Site)
+		if err := checkUpdateTarget(site, req.Target); err != nil {
+			return Deployment{}, err
 		}
 	}
-	app, ok, err := s.store.App(ctx, req.AppID, req.Version)
+	app, desc, err := s.app(ctx, req.AppID, req.Version)
 	if err != nil {
 		return Deployment{}, err
 	}
+	d, yamlBytes, deviceConstraints, err := build(id, app, desc, req)
+	if err != nil {
+		return Deployment{}, err
+	}
+	err = s.store.ChangeSite(ctx, req.Target.Site, func(state SiteState, exists bool) (SiteChange, error) {
+		var old *Deployment
+		if update {
+			stored, ok := state.Deployments[id]
+			if !ok || stored.Deleted {
+				return SiteChange{}, ErrNotFound
+			}
+			old = &stored
+		}
+		return change(state, exists, &d, yamlBytes, deviceConstraints, old)
+	})
+	if err != nil {
+		return Deployment{}, err
+	}
+	return d, nil
+}
+
+// app returns an imported application version and its parsed description.
+func (s *Service) app(ctx context.Context, id, version string) (catalog.App, contract.ApplicationDescription, error) {
+	app, ok, err := s.store.App(ctx, id, version)
+	if err != nil {
+		return catalog.App{}, contract.ApplicationDescription{}, err
+	}
 	if !ok {
-		return Deployment{}, fmt.Errorf("%w: application %s version %s", ErrNotFound, req.AppID, req.Version)
+		return catalog.App{}, contract.ApplicationDescription{}, fmt.Errorf("%w: application %s version %s", ErrNotFound, id, version)
 	}
 	desc, err := contract.ParseApplicationDescription(app.Description)
 	if err != nil {
-		return Deployment{}, fmt.Errorf("stored application %s %s: %w", req.AppID, req.Version, err)
+		return catalog.App{}, contract.ApplicationDescription{}, fmt.Errorf("stored application %s %s: %w", id, version, err)
 	}
+	return app, desc, nil
+}
+
+// build builds deployment id of app from req (SPEC §8.1 steps 1 and 3) and returns it with its
+// YAML and the device constraints of its profile. Only the parameter checks of SPEC §8.1.1 run
+// here; the target's run in the transaction that writes it.
+func build(id uuid.UUID, app catalog.App, desc contract.ApplicationDescription, req Request) (Deployment, []byte, contract.DeviceConstraints, error) {
 	profile, err := selectProfile(desc, req.Profile)
 	if err != nil {
-		return Deployment{}, err
+		return Deployment{}, nil, contract.DeviceConstraints{}, err
 	}
 	var deviceConstraints contract.DeviceConstraints
 	if profile.DeviceConstraints != nil {
@@ -399,33 +557,27 @@ func (s *Service) put(ctx context.Context, id uuid.UUID, req Request, update boo
 		ID: id, Name: d.Name, Namespace: d.Namespace, DeviceID: d.Target, Profile: profile.ID, Parameters: d.Parameters,
 	})
 	if errors.Is(err, contract.ErrDeploymentParameter) {
-		return Deployment{}, fmt.Errorf("%w: %w", ErrCheckFailed, err) // SPEC §8.1.1
+		return Deployment{}, nil, contract.DeviceConstraints{}, fmt.Errorf("%w: %w", ErrCheckFailed, err) // SPEC §8.1.1
 	}
 	if err != nil {
-		return Deployment{}, err
+		return Deployment{}, nil, contract.DeviceConstraints{}, err
 	}
 	d.Digest = contract.DigestOf(yamlBytes) // SPEC §8.1 step 3
+	return d, yamlBytes, deviceConstraints, nil
+}
 
-	err = s.store.ChangeSite(ctx, req.Target.Site, func(state SiteState, exists bool) (SiteChange, error) {
-		if err := checkTarget(state, exists, req.Target, deviceConstraints); err != nil {
-			return SiteChange{}, err
-		}
-		if update {
-			old, ok := state.Deployments[id]
-			if !ok || old.Deleted {
-				return SiteChange{}, ErrNotFound
-			}
-			if old.Digest == d.Digest {
-				d.DigestVersion = old.DigestVersion    // SPEC §8.1.2
-				return SiteChange{Deployment: &d}, nil // same (ID, digest): no new manifest (SPEC §8.1)
-			}
-		}
-		return republish(state, d, yamlBytes)
-	})
-	if err != nil {
-		return Deployment{}, err
+// change is the write of SPEC §8.1 for d, built with yamlBytes and constraints c: the target
+// checks, then the site's new manifest. On update, old is the stored deployment; when d has its
+// digest, d keeps old's DigestVersion and no manifest is published.
+func change(state SiteState, exists bool, d *Deployment, yamlBytes []byte, c contract.DeviceConstraints, old *Deployment) (SiteChange, error) {
+	if err := checkTarget(state, exists, d.Target, c); err != nil {
+		return SiteChange{}, err
 	}
-	return d, nil
+	if old != nil && old.Digest == d.Digest {
+		d.DigestVersion = old.DigestVersion   // SPEC §8.1.2
+		return SiteChange{Deployment: d}, nil // same (ID, digest): no new manifest (SPEC §8.1)
+	}
+	return republish(state, *d, yamlBytes)
 }
 
 // selectProfile returns the requested compose profile, or the only one when none is requested

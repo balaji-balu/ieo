@@ -58,6 +58,18 @@ type CreateRequest struct {
 	Parameters map[string]any `json:"parameters,omitempty"`
 }
 
+// UpdateRequest is the body of PATCH /api/v1/deployments/{id}: it names only what changes, and a
+// nil field keeps the deployment's value. Target is `<site>/<host>` or `<site>/*`. Parameters merge
+// by name: a value replaces that parameter's, and a nil value (JSON null) removes it.
+type UpdateRequest struct {
+	Version    *string        `json:"version,omitempty"`
+	Profile    *string        `json:"profile,omitempty"`
+	Target     *string        `json:"target,omitempty"`
+	Name       *string        `json:"name,omitempty"`
+	Namespace  *string        `json:"namespace,omitempty"`
+	Parameters map[string]any `json:"parameters,omitempty"`
+}
+
 // Deployment is a deployment as the CO keeps it. Profile is the selected profile's `id`, Target
 // its current target, Parameters the request's values by name, and Digest its current YAML's.
 type Deployment struct {

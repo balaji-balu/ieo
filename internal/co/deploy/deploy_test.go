@@ -315,7 +315,9 @@ func TestPatchMergesOntoTheStoredDeployment(t *testing.T) {
 		if !reflect.DeepEqual(p, want) {
 			t.Errorf("patch to 2.0.0:\n got %+v\nwant %+v", p, want)
 		}
-		if stored, _, _ := f.store.Deployment(f.ctx, d.ID); !reflect.DeepEqual(stored, p) {
+		stored, _, _ := f.store.Deployment(f.ctx, d.ID)
+		stored.DigestVersion = 0 // the store sets it; Patch, like Create, returns the deployment it built
+		if !reflect.DeepEqual(stored, p) {
 			t.Errorf("stored after patch:\n got %+v\nwant %+v", stored, p)
 		}
 
@@ -349,6 +351,7 @@ func TestPatchRejects(t *testing.T) {
 			t.Fatal(err)
 		}
 		before, _ := f.manifest(site1)
+		storedBefore, _, _ := f.store.Deployment(f.ctx, d.ID)
 
 		for _, tc := range []struct {
 			name  string
@@ -368,15 +371,15 @@ func TestPatchRejects(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
 			}
-			if tc.want == deploy.ErrInvalidRequest && errors.Is(err, deploy.ErrNotFound) {
+			if !errors.Is(tc.want, deploy.ErrNotFound) && errors.Is(err, deploy.ErrNotFound) {
 				t.Errorf("%s: err = %v, want no ErrNotFound", tc.name, err)
 			}
 		}
 		if after, _ := f.manifest(site1); after.Version != before.Version {
 			t.Errorf("manifestVersion %d after rejected patches, want %d", after.Version, before.Version)
 		}
-		if stored, _, _ := f.store.Deployment(f.ctx, d.ID); !reflect.DeepEqual(stored, d) {
-			t.Errorf("stored after rejected patches:\n got %+v\nwant %+v", stored, d)
+		if stored, _, _ := f.store.Deployment(f.ctx, d.ID); !reflect.DeepEqual(stored, storedBefore) {
+			t.Errorf("stored after rejected patches:\n got %+v\nwant %+v", stored, storedBefore)
 		}
 	})
 }
